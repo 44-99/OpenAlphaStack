@@ -1,7 +1,16 @@
+# Secrets
 .env
+
+# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Claude Code local data
+.claude/
+
+# Runtime data (conversations, logs, caches)
 data/*.json
+data/*.log
 *.log
