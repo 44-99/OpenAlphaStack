@@ -7,24 +7,43 @@ import re
 from config import CLAUDE_CMD, CLAUDE_TIMEOUT
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SESSIONS_DIR = os.path.join(
+    os.path.expanduser("~"), ".claude", "projects", "E--Project-AlphaClaude"
+)
 
 
-def ask_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT) -> str:
-    """Run claude -p and return plain text response."""
+def _session_exists(session_id: str) -> bool:
+    return os.path.exists(os.path.join(SESSIONS_DIR, f"{session_id}.jsonl"))
+
+
+def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOUT) -> str:
+    """Run claude -p. If session_id given, use --resume or --session-id for persistent context."""
     try:
+        prompt = prompt.strip()
+        if not prompt:
+            return "抱歉，无法处理空消息。"
+
+        if session_id:
+            if _session_exists(session_id):
+                cmd = [CLAUDE_CMD, "--resume", session_id, "-p", prompt]
+            else:
+                cmd = [CLAUDE_CMD, "--session-id", session_id, "-p", prompt]
+        else:
+            cmd = [CLAUDE_CMD, "-p", prompt]
+
         result = subprocess.run(
-            [CLAUDE_CMD, "-p", prompt],
+            cmd,
             capture_output=True,
-            text=True,
             timeout=timeout,
             cwd=PROJECT_DIR,
-            encoding="utf-8",
         )
         output = ""
         if result.stdout:
-            output += result.stdout
+            output += result.stdout.decode("utf-8", errors="replace")
         if result.stderr:
-            output += "\n" + result.stderr
+            stderr_text = result.stderr.decode("utf-8", errors="replace")
+            if "Input must be provided" not in stderr_text:
+                output += "\n" + stderr_text
 
         # Strip ANSI escape codes
         output = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
@@ -84,24 +103,3 @@ def build_trading_prompt(market_data: str, context: str = "") -> str:
 5. 用中文回复，表达简洁有力
 """
     return prompt
-
-
-def build_chat_prompt(user_message: str, history: list = None) -> str:
-    """Build a conversational prompt for group chat / DM."""
-    context = ""
-    if history:
-        recent = history[-10:]  # last 10 exchanges
-        for entry in recent:
-            role = "用户" if entry["role"] == "user" else "分析师"
-            context += f"{role}: {entry['content']}\n"
-
-    return f"""你是飞书群里的A股股票分析助手，帮助用户分析股票和给出交易建议。
-
-Recent conversation:
-{context}
-
-用户提问: {user_message}
-
-请基于你的知识给出专业分析。如果问题涉及具体股票，请分析其技术面、基本面和短期走势。
-如果问题关于大盘，请给出趋势判断和操作建议。
-用中文简洁回复，直接给结论，不要啰嗦。"""

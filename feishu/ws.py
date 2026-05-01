@@ -1,64 +1,63 @@
 """
-Feishu WebSocket long-connection client.
-Connects directly to Feishu servers — no ngrok or public URL needed.
+Feishu WebSocket long-connection client using official lark-oapi SDK.
+The SDK handles protobuf decoding automatically.
 """
-import asyncio
-import json
-import httpx
-import websockets
+import threading
+from lark_oapi.ws import Client as LarkWSClient
+from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
+from lark_oapi.core.enum import LogLevel
 from config import FEISHU_APP_ID, FEISHU_APP_SECRET
 
-FEISHU_DOMAIN = "https://open.feishu.cn"
-WS_ENDPOINT = "/callback/ws/endpoint"
+_event_handler = None
 
 
-async def _get_ws_url() -> str:
-    """Get WebSocket connection URL from Feishu."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{FEISHU_DOMAIN}{WS_ENDPOINT}",
-            headers={"locale": "zh"},
-            json={"AppID": FEISHU_APP_ID, "AppSecret": FEISHU_APP_SECRET},
-            timeout=15,
-        )
-        data = resp.json()
-        if data.get("code") != 0:
-            raise RuntimeError(f"获取WebSocket连接失败: {data}")
-        return data.get("data", {}).get("URL", "")
-
-
-async def listen(event_handler, reconnect_delay: int = 3):
+def listen(event_handler, reconnect_delay: int = 3):
     """
-    Connect to Feishu WebSocket and call event_handler(data) for each event.
+    Connect to Feishu WebSocket via official SDK.
+    Runs in a daemon thread since SDK's Client.start() is blocking.
     Auto-reconnects on disconnect.
     """
+    global _event_handler
+    _event_handler = event_handler
+
+    def on_event(event_obj):
+        """Called by SDK when an im.message.receive_v1 event arrives."""
+        try:
+            _event_handler(event_obj)
+        except Exception as e:
+            print(f"[WS] 事件处理异常: {e}")
+            import traceback
+            traceback.print_exc()
+
+    builder = EventDispatcherHandlerBuilder("", "")
+    builder.register_p2_im_message_receive_v1(on_event)
+    dispatcher = builder.build()
+
     while True:
         try:
-            ws_url = await _get_ws_url()
-            print(f"[WS] 连接飞书长连接...")
-            async with websockets.connect(ws_url, ping_interval=None) as ws:
-                print(f"[WS] 已连接")
-                async for message in ws:
-                    try:
-                        data = json.loads(message)
-                    except json.JSONDecodeError:
-                        continue
-
-                    msg_type = data.get("type", "")
-                    if msg_type == "ping":
-                        await ws.send(json.dumps({"type": "pong"}))
-                        continue
-
-                    try:
-                        await event_handler(data)
-                    except Exception as e:
-                        print(f"[WS] 事件处理异常: {e}")
-                        import traceback
-                        traceback.print_exc()
-
-        except asyncio.CancelledError:
-            print("[WS] 连接已取消")
-            break
+            print(f"[WS] 连接飞书长连接...", flush=True)
+            client = LarkWSClient(
+                app_id=FEISHU_APP_ID,
+                app_secret=FEISHU_APP_SECRET,
+                log_level=LogLevel.ERROR,
+                event_handler=dispatcher,
+                auto_reconnect=False,  # we handle reconnection ourselves
+            )
+            print(f"[WS] 已连接", flush=True)
+            client.start()
         except Exception as e:
-            print(f"[WS] 连接断开: {e}，{reconnect_delay}秒后重连...")
-            await asyncio.sleep(reconnect_delay)
+            print(f"[WS] 连接断开: {e}，{reconnect_delay}秒后重连...", flush=True)
+            import time
+            time.sleep(reconnect_delay)
+
+
+def start_ws_listener(event_handler):
+    """Start WebSocket listener in a daemon thread."""
+    t = threading.Thread(
+        target=listen,
+        args=(event_handler,),
+        daemon=True,
+        name="feishu-ws",
+    )
+    t.start()
+    return t

@@ -4,7 +4,7 @@ Feishu Bot — send messages, handle events.
 import json
 import httpx
 from feishu.auth import get_tenant_token
-from config import FEISHU_API_BASE
+from config import FEISHU_API_BASE, FEISHU_BOT_NAME, FEISHU_BOT_OPEN_ID
 
 
 def _headers() -> dict:
@@ -70,24 +70,43 @@ def reply_message(message_id: str, text: str) -> dict:
     return resp.json()
 
 
+BOT_NAMES = [n.strip() for n in FEISHU_BOT_NAME.split(",") if n.strip()] + ["stock bot", "stock-bot"]
+
+
 def parse_event(raw: dict) -> dict | None:
-    """Parse a Feishu webhook event. Returns normalized event dict or None if irrelevant."""
-    # URL verification challenge
+    """Parse a Feishu event (webhook or WebSocket). Returns normalized event dict or None if irrelevant."""
+    # URL verification challenge (webhook only)
     if raw.get("type") == "url_verification":
         return {"type": "challenge", "challenge": raw.get("challenge", "")}
 
-    header = raw.get("header", {})
+    # WebSocket v2 wraps event inside "data"
+    if raw.get("type") == "event" and "data" in raw:
+        inner = raw["data"]
+        header = inner.get("header", {})
+        event = inner.get("event", {})
+    else:
+        # Webhook or WebSocket v1 format
+        header = raw.get("header", {})
+        event = raw.get("event", {})
+
     event_type = header.get("event_type", "")
+
+    # Member added to chat (bot added to group, or new user joins)
+    if event_type == "im.chat.member.user.added_v1":
+        chat_id = event.get("chat_id", "")
+        if chat_id:
+            return {"type": "member_added", "chat_id": chat_id}
+        return None
+
     if event_type != "im.message.receive_v1":
         return None
 
-    event = raw.get("event", {})
     message = event.get("message", {})
     sender = event.get("sender", {})
     sender_id = (sender.get("sender_id") or {}).get("open_id", "")
 
     # Ignore bot's own messages
-    if sender_id == "":
+    if sender_id == FEISHU_BOT_OPEN_ID:
         return None
 
     chat_id = message.get("chat_id", "")
@@ -104,10 +123,18 @@ def parse_event(raw: dict) -> dict | None:
         content = {}
 
     text = content.get("text", "").strip()
-
-    # Check @mentions for group chats
     mentions = content.get("mentions", [])
-    is_mentioned = any(m.get("name", "").lower() in ["stock bot", "stock-bot"] for m in mentions)
+
+    # Check if bot was @mentioned (by open_id or by name)
+    is_mentioned = False
+    for m in mentions:
+        # open_id may be nested inside "id" dict (SDK/WS v2 format) or at top level (webhook)
+        oid = m.get("open_id") or m.get("id", {}).get("open_id", "")
+        if oid == FEISHU_BOT_OPEN_ID:
+            is_mentioned = True
+            break
+    if not is_mentioned:
+        is_mentioned = any(m.get("name", "").strip().lower() in [n.lower() for n in BOT_NAMES] for m in mentions)
 
     # For group chats, only respond when @mentioned
     # For DMs, always respond
@@ -116,8 +143,12 @@ def parse_event(raw: dict) -> dict | None:
 
     # Remove @bot from text
     for m in mentions:
-        text = text.replace(f"@{m.get('name', '')}", "").strip()
-    text = text.replace("@stock bot", "").replace("@stock-bot", "").strip()
+        name = m.get("name", "")
+        key = m.get("key", "")
+        for placeholder in [f"@{name}", f"@{key}"]:
+            text = text.replace(placeholder, "").strip()
+    for bot_name in BOT_NAMES:
+        text = text.replace(f"@{bot_name}", "").strip()
 
     return {
         "type": "message",

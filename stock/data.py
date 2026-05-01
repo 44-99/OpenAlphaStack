@@ -12,7 +12,12 @@ def _cache_path(name: str) -> str:
     return os.path.join(STOCK_DATA_DIR, f"{name}.json")
 
 
-def _read_cache(name: str, max_age_seconds: int = 300) -> dict | None:
+CACHE_TTL = int(os.getenv("STOCK_CACHE_TTL", "600"))  # default 10 min
+
+
+def _read_cache(name: str, max_age_seconds: int = None) -> dict | None:
+    if max_age_seconds is None:
+        max_age_seconds = CACHE_TTL
     path = _cache_path(name)
     if not os.path.exists(path):
         return None
@@ -30,7 +35,7 @@ def _write_cache(name: str, data: dict) -> None:
 
 def get_market_overview() -> dict:
     """Get market overview: major indices, sentiment, north-bound flow."""
-    cached = _read_cache("market_overview", 180)
+    cached = _read_cache("market_overview")
     if cached:
         return cached
 
@@ -73,7 +78,7 @@ def get_market_overview() -> dict:
 
 def get_hot_stocks(top_n: int = 10) -> dict:
     """Get today's hot stocks ranking."""
-    cached = _read_cache("hot_stocks", 180)
+    cached = _read_cache("hot_stocks")
     if cached:
         return cached
 
@@ -93,7 +98,7 @@ def get_hot_stocks(top_n: int = 10) -> dict:
 
 def get_stock_detail(code: str) -> dict:
     """Get detailed info for a specific stock."""
-    cached = _read_cache(f"stock_{code}", 120)
+    cached = _read_cache(f"stock_{code}")
     if cached:
         return cached
 
