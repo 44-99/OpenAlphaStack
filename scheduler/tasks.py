@@ -228,7 +228,8 @@ def run_memory_consolidation() -> None:
             conv_id = _uuid_to_conv(sid)
             if not conv_id:
                 continue
-            if _consolidate_session(conv_id):
+            ok, _ = _consolidate_session(conv_id)
+            if ok:
                 updated += 1
 
         print(f"[做梦] {_dt.now()} 记忆整理完成，更新 {updated} 个", flush=True)

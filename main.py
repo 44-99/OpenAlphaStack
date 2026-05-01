@@ -189,13 +189,13 @@ def _uuid_to_conv(session_uuid: str) -> str | None:
     return None
 
 
-def _consolidate_session(conv_id: str) -> bool:
-    """Run memory consolidation for a single session. Returns True on success."""
+def _consolidate_session(conv_id: str) -> tuple[bool, str]:
+    """Run memory consolidation for a single session. Returns (success, summary)."""
     import json as _json
     cfg = _get_session_config(conv_id)
     if not cfg:
         print(f"[整理] 未找到 session: {conv_id}", flush=True)
-        return False
+        return False, ""
 
     session_type = cfg.get("type", "")
     session_id = cfg.get("session_id", "")
@@ -212,7 +212,7 @@ def _consolidate_session(conv_id: str) -> bool:
     # Read transcript
     transcript_path = os.path.join(SESSIONS_DIR, f"{session_id}.jsonl")
     if not os.path.exists(transcript_path):
-        return False
+        return False, ""
 
     transcript_sample = ""
     try:
@@ -234,10 +234,10 @@ def _consolidate_session(conv_id: str) -> bool:
                 continue
         transcript_sample = "\n".join(recent[-30:])
     except Exception:
-        return False
+        return False, ""
 
     if not transcript_sample.strip():
-        return False
+        return False, ""
 
     # Read existing memory
     old_memory = ""
@@ -259,23 +259,31 @@ def _consolidate_session(conv_id: str) -> bool:
         "5. 用户明确要求记住的内容记入「关键信息」\n"
         "6. 记忆文件控制在 600 字以内\n"
         "7. 只输出记忆文件内容，不要任何解释\n"
-        "8. 保持 frontmatter 格式: ---\\n...\\n---\\n\\n正文"
+        "8. 保持 frontmatter 格式: ---\\n...\\n---\\n\\n正文\n"
+        "9. 在记忆文件末尾添加一行 `[本次更新]: <一句话总结本次更新了哪些内容>`"
     )
 
     try:
         result = ask_claude(summary_prompt, timeout=120)
         if result.startswith("---"):
+            # Extract summary line before writing
+            summary = ""
+            lines = result.strip().split("\n")
+            for i, line in enumerate(lines):
+                if line.startswith("[本次更新]:"):
+                    summary = line.replace("[本次更新]:", "").strip()
+                    break
             _ensure_memory_dirs()
             with open(mem_path, "w", encoding="utf-8") as f:
                 f.write(result.strip())
-            print(f"[整理] 已更新: {mem_path}", flush=True)
-            return True
+            print(f"[整理] 已更新: {mem_path} ({summary})", flush=True)
+            return True, summary
         else:
             print(f"[整理] 跳过无效输出: {conv_id[:8]}", flush=True)
-            return False
+            return False, ""
     except Exception as e:
         print(f"[整理] 失败 {conv_id[:8]}: {e}", flush=True)
-        return False
+        return False, ""
 
 
 def _list_group_sessions() -> list[dict]:
@@ -535,7 +543,7 @@ _WELCOME_MSG = (
     "可用指令：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
     "  /task <描述> — 创建自定义分析任务\n"
-    "  /task list — 查看当前任务\n"
+    "  /tasks — 查看当前任务\n"
     "  /group <群ID> <提问> — 跨群查询（私聊可用）\n"
     "  /groups — 列出可用群\n"
     "  /new 或 新对话 — 重置对话上下文\n"
@@ -548,7 +556,7 @@ _GROUP_WELCOME_MSG = (
     "可用指令（@我后发送）：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
     "  /task <描述> — 创建自定义分析任务\n"
-    "  /task list — 查看当前任务\n"
+    "  /tasks — 查看当前任务\n"
     "  /new 或 新对话 — 重置对话上下文\n"
     "  /help — 显示本消息"
 )
@@ -557,13 +565,12 @@ _GROUP_WELCOME_MSG = (
 # === Command handling ===
 
 _EXACT_COMMANDS = {
-    "/new", "/clear", "new", "clear", "/reset", "reset",
     "/help", "帮助", "help", "指令", "命令",
     "/sub", "订阅", "subscribe", "sub", "开启推送",
     "/unsub", "取消订阅", "unsubscribe", "unsub", "退订", "关闭推送",
     "/status", "订阅状态", "status", "推送状态",
-    "/task list", "task list",
     "/groups", "groups",
+    "/tasks", "tasks",
 }
 
 _COMMAND_KEYWORDS = [
@@ -675,7 +682,7 @@ def _execute_actions(actions: list[dict], chat_id: str, chat_type: str,
     return "\n".join(results) if results else ""
 
 
-def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str) -> str | None:
+def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str, message_id: str) -> str | None:
     """Handle exact-match bot commands. Returns reply string or None."""
     cmd = text.strip()
     cmd_lower = cmd.lower()
@@ -699,18 +706,6 @@ def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str) -> 
     if cmd_lower in ("/status", "订阅状态", "status", "推送状态"):
         return "当前已订阅定时推送。" if _is_subscribed(chat_id) else "当前未订阅。"
 
-    if cmd_lower in ("/new", "/clear", "new", "clear", "/reset", "reset"):
-        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" else chat_id
-        def _do_reset_with_consolidation():
-            try:
-                _consolidate_session(conv_id)
-            except Exception as e:
-                print(f"[整理] /new 前整理失败: {e}", flush=True)
-            _reset_session(conv_id)
-            reply_message(message_id, "[记忆已整理，对话已重置]")
-        threading.Thread(target=_do_reset_with_consolidation, daemon=True).start()
-        return "正在整理记忆..."
-
     if cmd_lower in ("/groups", "groups"):
         groups = _list_group_sessions()
         if not groups:
@@ -722,22 +717,25 @@ def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str) -> 
         lines.append("\n用法: /group <群ID> <提问内容>")
         return "\n".join(lines)
 
+    if cmd_lower in ("/tasks", "tasks"):
+        tasks = list_dynamic_tasks(chat_id)
+        if not tasks:
+            return "当前没有自定义任务。\n用 /task <描述> 创建，如：/task 每天早上8点分析茅台"
+        lines = ["当前任务："]
+        for t in tasks:
+            lines.append(f"  [{t['id']}] {t['description']} (cron: {t['cron']})")
+        lines.append("\n用 /task delete <id> 删除任务。")
+        return "\n".join(lines)
+
     if cmd_lower.startswith("/group ") or cmd_lower.startswith("group "):
         return None  # handled by _process_message with async flow
 
     if cmd_lower.startswith("/task") or cmd_lower.startswith("task"):
-        if cmd_lower in ("/task list", "task list", "/task", "task"):
-            tasks = list_dynamic_tasks(chat_id)
-            if not tasks:
-                return "当前没有自定义任务。\n用 /task <描述> 创建，如：/task 每天早上8点分析茅台"
-            lines = ["当前任务："]
-            for t in tasks:
-                lines.append(f"  [{t['id']}] {t['description']} (cron: {t['cron']})")
-            lines.append("\n用 /task delete <id> 删除任务。")
-            return "\n".join(lines)
+        if cmd_lower in ("/task", "task"):
+            return "用法：\n  /task <描述> — 创建定时分析任务\n  /task delete <id> — 删除任务\n  /tasks — 查看当前任务"
 
         if cmd_lower.startswith("/task delete ") or cmd_lower.startswith("task delete "):
-            task_id = cmd.split("delete", 1)[-1].strip()
+            task_id = cmd_lower.split("delete", 1)[-1].strip()
             if delete_dynamic_task(task_id):
                 return f"已删除任务 {task_id}。"
             return f"未找到任务 {task_id}。"
@@ -836,9 +834,27 @@ def _process_message(event: dict) -> None:
             group_context = "\n\n".join(parts)
         text = query  # replace the command with the actual query
 
+    # Pre-process /new and /clear — consolidate memory before resetting
+    if cmd_lower in ("/new", "/clear", "new", "clear", "/reset", "reset"):
+        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" else chat_id
+        reply_message(message_id, "正在整理记忆...")
+        def _do_reset_with_consolidation():
+            summary = ""
+            try:
+                _, summary = _consolidate_session(conv_id)
+            except Exception as e:
+                print(f"[整理] /new 前整理失败: {e}", flush=True)
+            _reset_session(conv_id)
+            if summary:
+                reply_message(message_id, f"[记忆已整理] {summary}\n对话已重置，新会话已就绪。")
+            else:
+                reply_message(message_id, "[记忆已整理，对话已重置]")
+        threading.Thread(target=_do_reset_with_consolidation, daemon=True).start()
+        return
+
     # Step 1: Exact-match commands (fast path, no Claude)
     if text.strip().lower() in _EXACT_COMMANDS:
-        cmd_reply = _handle_command(chat_id, chat_type, sender_id, text)
+        cmd_reply = _handle_command(chat_id, chat_type, sender_id, text, message_id)
         if cmd_reply is not None:
             threading.Thread(target=reply_message, args=(message_id, cmd_reply), daemon=True).start()
             return
@@ -925,7 +941,10 @@ def _process_message(event: dict) -> None:
             # Match skills
             skill_context = _match_skills(stock_query)
 
-            # Inject memory on new session (once per session lifecycle)
+            # Build context blocks (appended after user message, separated by ---)
+            context_parts = []
+
+            # Inject memory on new session — only if it has meaningful content
             needs_memory = (
                 conv_id in _sessions
                 and not _sessions[conv_id].get("memory_injected", True)
@@ -933,26 +952,23 @@ def _process_message(event: dict) -> None:
             if needs_memory:
                 mem_content, mem_path = _load_memory(conv_id, chat_type, sender_id)
                 if not mem_content:
-                    # Create empty skeleton for new users
                     name = get_user_label(sender_id) if chat_type == "p2p" else ("群聊 " + chat_id[-6:])
                     mem_type = "user" if chat_type == "p2p" else "group"
                     open_id = sender_id if chat_type == "p2p" else chat_id
                     _create_memory_skeleton(open_id, name, mem_type)
                     mem_content, mem_path = _load_memory(conv_id, chat_type, sender_id)
-                if mem_content:
-                    prompt_parts.append(f"[用户记忆 — 仅用于了解偏好和背景]\n{mem_content}")
+                # Only inject if memory has real content (skip empty skeleton)
+                if mem_content and "（待探索）" not in mem_content and "（暂无）" not in mem_content:
+                    context_parts.append(f"[用户记忆]\n{mem_content[:800]}")
                 with _session_lock:
                     if conv_id in _sessions:
                         _sessions[conv_id]["memory_injected"] = True
                         _save_sessions()
 
-            # Build prompt parts
             if group_context:
-                prompt_parts.append(group_context)
+                context_parts.append(group_context)
             if data_context:
-                prompt_parts.append(data_context)
-            # Only inject aggressive stock-analysis note when user is actually
-            # asking about stocks/market. Otherwise fall through to a brief disclaimer.
+                context_parts.append(data_context)
             if not data_ok:
                 codes = _extract_stock_codes(stock_query)
                 has_stock = bool(codes) or any(
@@ -964,20 +980,17 @@ def _process_message(event: dict) -> None:
                     )
                 )
                 if has_stock:
-                    prompt_parts.append(
-                        "注意：当前休市中，无实时行情数据。你必须立即基于训练知识对"
-                        "用户提问的股票或大盘进行具体分析，直接给出分析结论、价位建议"
-                        "和风险提示。在回复末尾加上「当前休市中，基于历史数据」。"
-                    )
-                else:
-                    prompt_parts.append("注意：当前休市中，实时行情数据不可用。")
+                    context_parts.append("当前休市中，无实时行情数据。请基于训练知识给出分析，注明「基于历史数据」。")
             if skill_context:
-                prompt_parts.append(f"\n以下为技能注入的分析要求：\n{skill_context}")
+                context_parts.append(f"[技能提示]\n{skill_context}")
             if action_summary:
-                prompt_parts.append(f"\n[已执行的操作: {action_summary}]")
-            prompt_parts.append(f"\n{user_message}")
+                context_parts.append(f"[操作结果: {action_summary}]")
 
-            prompt = "\n".join(prompt_parts)
+            # Build final prompt: user message first, context after --- separator
+            if context_parts:
+                prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
+            else:
+                prompt = user_message
 
             response = ask_claude(prompt, session_id=session_id)
 
