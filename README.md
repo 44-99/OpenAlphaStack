@@ -53,38 +53,7 @@ memory ──→ claude, config
 
 ## 设计理念
 
-**Alpha** = 知识大脑 — 多维情报喂给 Agent：
-
-| 来源 | 角色 |
-|------|------|
-| 实时行情（腾讯 qt.gtimg.cn 主源 + 新浪 hq.sinajs.cn + akshare Sina 后端 fallback） | 价格、成交量、换手率、PE、PB、量比 |
-| 通达信公式（skills） | 实战检验的策略，编码为渐进式展开技能 |
-| 新闻 / 研报（RAG） | 外部信息按需注入上下文 |
-| 模型内置知识 | 预训练的金融概念、估值理论、市场机制 |
-
-**Claude** = 执行核心 — Claude Code CLI 作为本地 Agent：
-
-- **比替代方案更轻**: 无服务器基础设施、无进程池。`pip install` + 一个 CLI 二进制文件就是全部运行时。
-- **强编码 + 高性价比**: Claude Code + DeepSeek 用于编排和分析。
-- **继承一切**: 多轮对话、工具编排、会话管理、MCP 协议 — 全部内置在 Claude Code 中。我们不重复造轮子。
-- **通用能力**: 超越股票交易 — 编程帮助、写作、知识问答、跨平台聊天 — Claude Code 有的能力 AlphaClaude 都有。
-
-本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，Python 脚本作为数据计算，飞书作为通信渠道。
-
-### 为什么用无状态脚本而不是 MCP Server
-
-Claude Code 内置的 Bash 工具足以满足所有工具需求：
-
-| 维度 | 我们的方案 |
-|------|-----------|
-| **工具** | 项目根目录下的 Python 脚本 + `skills/*/scripts/` |
-| **调用** | Bash 子进程（Claude Code 内置） |
-| **状态** | 无状态 — 每次调用独立，即时返回 |
-| **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
-
-我们所有的工具都是轻量 Python 函数（akshare HTTP 调用、公式计算、向量搜索）。它们无状态、即时返回、无特殊要求。Claude Code 的 Bash 工具原生处理它们 — 不需要单独的 MCP server、进程池或回调系统。
-
-当 Phase 3 自动交易需要专用信号监控进程时，它将是一个独立的 sidecar 守护进程，而非分层的服务网格。
+以 Claude Code CLI 为执行核心，通过 Python 无状态脚本提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback），飞书作为通信渠道。详见 [docs/architecture.md](docs/architecture.md)。
 
 ## 快速开始
 
@@ -169,14 +138,7 @@ python main.py
 
 ## 记忆系统
 
-双层架构：
-
-| 层级 | 位置 | 管理者 | 内容 |
-|------|------|--------|------|
-| Claude Code transcript | `~/.claude/projects/.../` | Claude Code | 完整对话历史 |
-| 项目 memory 文件 | `data/memory/user/` 和 `data/memory/group/` | 整合任务 | 用户画像、偏好、话题摘要 |
-
-每日 3:17 和 15:17 执行整合，扫描过去 12 小时内修改的 transcript 并更新 memory 文件。新会话在首条消息时注入对应 memory。
+双层架构：Claude Code transcript（完整对话）+ 项目 memory 文件（用户画像/偏好摘要）。每日两次自动整合，新会话注入对应 memory。详见 [docs/architecture.md#记忆系统](docs/architecture.md#记忆系统)。
 
 ## 项目结构
 
@@ -218,33 +180,11 @@ AlphaClaude/
 
 ## 技能系统
 
-技能采用**渐进式展开**设计，保持初始 prompt 精简，同时让 Claude Code 按需获取深度领域知识：
-
-```
-skills/ma-golden-cross/
-├── SKILL.md              # 路由: 触发词、何时使用、加载哪个 reference、工具编排声明
-├── references/
-│   ├── golden-cross.md   # 金叉买入信号: 公式逻辑、参数、止损
-│   └── death-cross.md    # 死叉卖出信号: 同上结构
-└── scripts/
-    └── ma_signal.py      # Claude Code 按需执行: akshare → 计算交叉信号
-```
-
-- **SKILL.md** 启动时加载（Claude Code 注入上下文）。充当路由器 — _何时_ 使用该技能以及 _读取哪个_ reference 文件。YAML frontmatter 声明 `triggers`（触发词）、`tools`（依赖的工具链）和 `priority`（优先级）。
-- **references/** 按需加载。包含公式理论、参数依据、市场条件说明、调优指南。
-- **scripts/** 由 Claude Code 通过 Bash 执行。获取数据并计算信号的 Python 脚本。
-
-**前置技能**：`trading-principles.md` 作为交易铁律始终加载到系统提示词中，确保所有分析都遵守统一的风险控制和入场纪律。内容包括：严进策略（不追高）、趋势交易（多头排列）、效率优先（筹码结构）、买点偏好（回踩支撑）、风险排查、估值关注、强势趋势股放宽。
+渐进式展开设计：`SKILL.md` 路由 + `references/` 深度知识 + `scripts/` 计算脚本。YAML frontmatter 声明触发词和优先级。`trading-principles.md` 作为前置技能始终加载。详见 [docs/skills.md](docs/skills.md)。
 
 ## 未来工作
 
 四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。
-
-**Phase 1** ✅ 已完成 — 8 个 CLI 工具、多源数据 fallback（腾讯 → 新浪 → akshare）、交易铁律前置技能。
-
-**Phase 2** (进行中) — 11 套策略技能库、模拟盘引擎、交易跟踪、富文本战报。
-
-**Phase 3-4** (计划中) — 实盘交易管线（券商接入、确认卡片、条件单）、深度回测、异动引擎。
 
 ## 许可证
 
