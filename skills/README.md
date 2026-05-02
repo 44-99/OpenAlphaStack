@@ -2,82 +2,64 @@
 
 项目级技能文件，bot 启动时自动加载。与 `~/.claude/skills/`（Claude Code 内置技能）完全分离。
 
+## 设计理念
+
+技能按**场景**组织，非按触发词。每个 skill 是一个完整的分析流水线：Agent 读 SKILL.md（路由器）→ 按流水线阶段按需加载 references/（深度知识）。新增策略只需往 references/ 加文件，无需改架构。
+
 ## 技能结构
 
-支持两种布局：
-
-### 根目录 `.md` 文件（简单技能）
-
-适用于无需脚本和深度参考资料的技能，直接放在 `skills/` 下：
-- `trading-principles.md` — 前置技能，始终加载
-
-### 子目录格式（渐进式展开）
-
-适用于复杂策略，支持按需展开 `references/` 和 `scripts/`：
-
 ```
-skills/ma-golden-cross/
-├── SKILL.md              # 路由：触发词、工具链、分析框架（启动时加载）
-├── references/           # 深度知识，按需读取（可选）
-│   ├── golden-cross.md
-│   └── death-cross.md
-└── scripts/              # 计算脚本，Claude Code 按需执行（可选）
-    └── ma_signal.py
+skills/
+├── trading-principles.md          # 前置技能：交易铁律，始终加载
+├── stock-analyzer/                # 个股分析流水线
+│   ├── SKILL.md                   # 路由：6 阶段分析流水线
+│   └── references/
+│       ├── entry-signals.md       # 5 种入场信号检查清单
+│       ├── position-management.md # 箱体震荡 — 位置判断
+│       ├── advanced.md            # 缠论 + 波浪理论
+│       └── risk-checklist.md      # 风险排查清单
+├── market-analyzer/               # 市场研判流水线
+│   ├── SKILL.md                   # 路由：情绪 → 板块 → 龙头
+│   └── references/
+│       ├── sentiment-cycle.md     # 情绪周期
+│       ├── dragon-head.md         # 龙头策略
+│       └── sector-rotation.md     # 板块轮动
+└── stock-screener/                # 选股推荐流水线
+    ├── SKILL.md                   # 路由：短线/中线/游资
+    └── references/
+        ├── short-term.md          # 短线筛选参数
+        ├── mid-term.md            # 中线筛选参数
+        └── hot-money.md           # 游资热点参数
 ```
 
 ## 文件格式
 
-```markdown
+```yaml
 ---
-name: 技能名称
-triggers:
-  - 触发词1
-  - 触发词2
-description: 简短描述
-tools:
-  - tools/quote.py
-  - tools/technical.py
-priority: 20
-core_rules: [1, 2, 3]
+name: skill-name
+description: >
+  描述技能的作用场景和适用条件。Agent 据此判断是否激活此技能。
+  写得越具体越好 — 包含触发上下文和使用时机。
+triggers:          # 可选，触发词列表（模糊匹配）
+  - 关键词1
+always_load: true  # 可选，始终加载到上下文
 ---
-
-分析框架内容...
 ```
 
-## 触发规则
+## 技能列表
 
-- 用户在飞书发送的消息中包含 `triggers` 中任一关键词时，技能内容注入 Claude 系统提示
-- 大小写不敏感模糊匹配（消息中包含触发词即可）
-- 多个技能同时匹配时，全部注入
+| Skill | 激活方式 | 场景 |
+|-------|----------|------|
+| `trading-principles.md` | always_load | 交易铁律，所有分析的前置约束 |
+| `stock-analyzer/` | always_load | 个股分析：趋势→信号→位置→风险→建议 |
+| `market-analyzer/` | triggers | 市场研判：情绪周期、板块轮动、龙头识别 |
+| `stock-screener/` | triggers | 选股推荐：短线/中线/游资筛选 |
 
-## 前置技能
+## 扩展指南
 
-`always_load: true` 的技能始终加载。`trading-principles.md` 作为交易铁律前置技能，优先级最高。
+新增策略无需修改任何现有文件：
 
-## 策略技能列表（11 套）
-
-| # | 技能 | 目录 | 触发词 | 优先级 |
-|---|------|------|--------|--------|
-| 1 | 默认多头趋势 | `bull-trend/` | 趋势/多头/走势分析 | 10 (默认) |
-| 2 | 均线金叉 | `ma-golden-cross/` | 金叉/均线金叉/MA金叉 | 20 |
-| 3 | 放量突破 | `volume-breakout/` | 放量突破/突破/放量 | 30 |
-| 4 | 缩量回踩 | `shrink-pullback/` | 缩量回踩/回踩/缩量 | 40 |
-| 5 | 箱体震荡 | `box-oscillation/` | 箱体/震荡/区间 | 50 |
-| 6 | 底部放量 | `bottom-volume/` | 底部放量/底部/筑底 | 60 |
-| 7 | 缠论 | `chan-theory/` | 缠论/中枢/背驰 | 70 |
-| 8 | 波浪理论 | `wave-theory/` | 波浪/艾略特/五浪 | 80 |
-| 9 | 龙头策略 | `dragon-head/` | 龙头/龙头战法/板块龙头 | 90 |
-| 10 | 情绪周期 | `emotion-cycle/` | 情绪/情绪周期/冰点 | 100 |
-| 11 | 一阳三阴 | `one-yang-three-yin/` | 一阳三阴/阳包阴 | 110 |
-
-## 高级用法
-
-可以在技能目录放置 Python 脚本，通过 `register_command()` 注册自定义 `/` 指令：
-
-```python
-# skills/my_command.py
-def register(commands: dict):
-    commands["/mycmd"] = lambda chat_id, args: f"执行自定义命令: {args}"
-```
-
-Python 技能文件以 `.py` 结尾，需实现 `register(commands)` 函数。bot 启动时自动导入。
+- **新入场信号** → 往 `stock-analyzer/references/entry-signals.md` 加一个章节
+- **新市场分析方法** → 往 `market-analyzer/references/` 加一个 `.md`
+- **新筛选策略** → 往 `stock-screener/references/` 加参数文件 + 更新 `strategies/` JSON
+- **通达信公式内化** → 分析公式逻辑 → 归类到对应场景 reference 中（信号类/筛选类/指标类）
