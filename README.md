@@ -10,7 +10,7 @@
 - **自定义任务** — `/task 每天早上8点分析茅台` — 自然语言创建定时任务
 - **跨群查询** — `/group <群ID> <问题>` — 私聊中查询任意已注册群聊
 - **双层记忆** — Claude Code transcript + 项目 memory 文件，每 12 小时自动整合
-- **技能系统** — `skills/` 下的 `.md` 文件配 YAML frontmatter 触发器，启动时热加载
+- **技能系统** — 3 个场景化技能管线，description-based 激活，渐进式展开
 - **订阅推送** — `/sub` `/unsub` `/status` — 按群自主订阅每日推送
 
 ## 架构
@@ -29,25 +29,24 @@
    │        │        │        │        │
    ▼        ▼        ▼        ▼        ▼
 ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │stock │ │sched │ │ feishu/  │
+│memory│ │claude│ │sched │ │config│ │ feishu/  │
 │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
 │      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──────┘ └──────┘ └──┬───┘ └──────────┘
-   │                          │
-   ▼                          ▼
-┌──────┐              ┌──────────────┐
-│config│              │  skills/     │
-│ .py  │              │  SKILL.md    │
-└──────┘              │  references/ │
-                      │  scripts/    │
-                      └──────────────┘
+└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──────────┘
+   │        │        │
+   ▼        ▼        ▼
+┌──────┐ ┌──────┐ ┌──────────────┐
+│ data/│ │tools/│ │  skills/     │
+│mem/c │ │ CLI  │ │  SKILL.md    │
+│ache  │ │ JSON │ │  references/ │
+└──────┘ └──────┘ └──────────────┘
 ```
 
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, stock, scheduler, feishu
-scheduler ──→ memory, claude, stock, feishu
+main ──→ memory, claude, scheduler, feishu, config
+scheduler ──→ memory, claude, feishu
 memory ──→ claude, config
 ```
 
@@ -129,12 +128,15 @@ python main.py
 
 ## 交易策略
 
-| 类型 | 筛选条件 |
-|------|----------|
-| **短线 (1-5天)** | 涨幅 2-9%, 换手率 3-20%, 量比 >1.5, 成交额 >1亿 |
-| **中线 (1-4周)** | PE 0-50, PB 0-8, 涨幅 1-7%, 换手率 2-15%, 板块动量 |
+策略以场景化技能形式组织，渐进式展开（SKILL.md 路由 + references/ 深度知识）：
 
-每笔推荐均包含买入价、止损价和止盈价。
+| 技能 | 场景 | 核心分析框架 |
+|------|------|-------------|
+| `stock-analyzer` | 个股深度分析 | 趋势→信号→位置→风险→输出（6 阶段管线） |
+| `market-analyzer` | 市场研判 | 情绪周期、龙头识别、板块轮动 |
+| `stock-screener` | 多因子选股 | 短线/中线/热钱 3 种策略，全市场扫描 |
+
+11 套经典策略（金叉、放量突破、缩量回踩、底部放量、一阳三阴、箱体震荡、缠论、波浪、龙头、情绪周期等）作为 references 深度知识按需加载。每笔推荐均包含买入价、止损价和止盈价。
 
 ## 记忆系统
 
@@ -147,7 +149,6 @@ AlphaClaude/
 ├── main.py          — 消息编排、会话管理、指令处理、技能加载、FastAPI
 ├── memory.py        — 用户/群聊记忆系统、transcript 整合
 ├── claude.py        — Claude Code CLI 封装
-├── stock.py         — 行情数据 (akshare)、多因子筛选
 ├── scheduler.py     — APScheduler 定时任务 + 动态任务 CRUD
 ├── config.py        — 环境变量加载
 ├── feishu/          — 飞书 SDK 集成
@@ -159,27 +160,30 @@ AlphaClaude/
 ├── tools/           — CLI 工具，Claude Code 通过 Bash 调用 (JSON 进/出，无状态)
 │   ├── quote.py     — 实时行情 & 大盘概况
 │   ├── technical.py — 技术指标 (MA/MACD/RSI/KDJ/布林带)
-│   ├── fundamental.py — PE/PB/ROE/营收增速
+│   ├── fundamental.py — PE/PB/ROE/营收增速/行业对比
 │   ├── flow.py      — 资金流向、北向资金、主力动向
 │   ├── news.py      — 公告、研报、情绪分析
-│   ├── screen.py    — 可插拔多因子筛选
-│   └── backtest.py  — 历史形态回测
-├── skills/          — 策略技能 (Markdown + YAML frontmatter，渐进式展开)
-│   ├── trading-principles.md  — 前置技能：交易铁律，始终加载
-│   ├── ma-golden-cross/       — 均线金叉策略
-│   ├── volume-breakout/       — 放量突破策略
-│   ├── shrink-pullback/       — 缩量回踩策略
-│   ├── dragon-head/           — 龙头策略
-│   └── ... (共 11+ 策略技能)
-├── strategies/      — 筛选/回测策略 JSON 配置文件
+│   ├── screen.py    — 多因子筛选（策略内联为 Python 常量）
+│   ├── backtest.py  — 历史形态回测
+│   ├── trend.py     — MA排列/交叉/乖离/趋势状态
+│   ├── signal_detector.py — 5 种入场信号检测
+│   ├── pivot.py     — 枢轴点/箱体/缠论中枢
+│   ├── fibonacci.py — 斐波那契回撤/扩展位
+│   ├── sentiment.py — 换手热度/量能/ATR/均线粘合/情绪评分
+│   └── portfolio.py — 自选股增删查改、持仓盈亏概览
+├── skills/          — 场景化策略技能（渐进式展开）
+│   ├── trading-principles.md    — 前置技能：7 条交易铁律，始终加载
+│   ├── stock-analyzer/SKILL.md  — 个股分析管线 + references/（入场信号/位置管理/高级框架/风险）
+│   ├── market-analyzer/SKILL.md — 市场分析管线 + references/（情绪周期/龙头/板块轮动）
+│   └── stock-screener/SKILL.md  — 选股管线 + references/（短线/中线/热钱参数）
 ├── data/            — 运行时数据 (会话、订阅、任务、记忆、缓存)
-├── CLAUDE.md        — Claude Code 系统提示词
+├── CLAUDE.md        — Claude Code 系统提示词（工具目录 + 交易纪律）
 └── requirements.txt
 ```
 
 ## 技能系统
 
-渐进式展开设计：`SKILL.md` 路由 + `references/` 深度知识 + `scripts/` 计算脚本。YAML frontmatter 声明触发词和优先级。`trading-principles.md` 作为前置技能始终加载。详见 [docs/skills.md](docs/skills.md)。
+场景化设计：`SKILL.md` 路由 + `references/` 深度知识。description-based 激活（非关键词触发），Agent 根据用户意图自主选择技能管线。`trading-principles.md` 作为前置技能始终加载。详见 [docs/skills.md](docs/skills.md)。
 
 ## 未来工作
 

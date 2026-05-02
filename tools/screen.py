@@ -16,9 +16,79 @@ import pandas as pd
 import requests
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
-STRATEGIES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "strategies")
 CACHE_TTL = 300
 CODE_LIST_TTL = 3600
+
+# Inlined strategy configs (previously in strategies/*.json)
+STRATEGIES = {
+    "default": {
+        "name": "default",
+        "description": "Default multi-factor stock screen — balanced short/mid-term candidates",
+        "sort_by": "涨跌幅",
+        "sort_ascending": False,
+        "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "市盈率-动态", "成交额"],
+        "filters": [
+            {"comment": "Exclude ST and delisted stocks",
+             "conditions": [{"column": "名称", "op": "not_contains", "value": "ST"},
+                           {"column": "名称", "op": "not_contains", "value": "退市"}]},
+            {"comment": "Price range 5-200",
+             "conditions": [{"column": "最新价", "op": "between", "value": [5, 200]}]},
+            {"comment": "Minimum turnover 100M CNY",
+             "conditions": [{"column": "成交额", "op": "gt", "value": 100000000}]},
+        ],
+    },
+    "breakout": {
+        "name": "breakout",
+        "description": "Volume breakout candidates — high momentum, volume surge, moderate position",
+        "sort_by": "量比",
+        "sort_ascending": False,
+        "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "市盈率-动态", "成交额"],
+        "filters": [
+            {"conditions": [{"column": "名称", "op": "not_contains", "value": "ST"},
+                           {"column": "名称", "op": "not_contains", "value": "退市"}]},
+            {"conditions": [{"column": "最新价", "op": "between", "value": [5, 200]}]},
+            {"conditions": [{"column": "成交额", "op": "gt", "value": 100000000}]},
+            {"comment": "Momentum: up 2-9%, turnover 3-20%, volume ratio > 1.5",
+             "conditions": [{"column": "涨跌幅", "op": "between", "value": [2, 9]},
+                           {"column": "换手率", "op": "between", "value": [3, 20]},
+                           {"column": "量比", "op": "gt", "value": 1.5}]},
+        ],
+    },
+    "value": {
+        "name": "value",
+        "description": "Value-oriented mid-term picks — reasonable PE/PB with positive momentum",
+        "sort_by": "市盈率-动态",
+        "sort_ascending": True,
+        "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "市盈率-动态", "市净率", "成交额"],
+        "filters": [
+            {"conditions": [{"column": "名称", "op": "not_contains", "value": "ST"},
+                           {"column": "名称", "op": "not_contains", "value": "退市"}]},
+            {"conditions": [{"column": "最新价", "op": "between", "value": [5, 200]}]},
+            {"conditions": [{"column": "成交额", "op": "gt", "value": 100000000}]},
+            {"comment": "Value: PE 0-50, PB 0-8, moderate momentum 1-7%, turnover 2-15%",
+             "conditions": [{"column": "市盈率-动态", "op": "between", "value": [0, 50]},
+                           {"column": "市净率", "op": "between", "value": [0, 8]},
+                           {"column": "涨跌幅", "op": "between", "value": [1, 7]},
+                           {"column": "换手率", "op": "between", "value": [2, 15]}]},
+        ],
+    },
+    "hot_money": {
+        "name": "hot_money",
+        "description": "Hot-money chasing — highest turnover rate, limit-up approaching, speculative",
+        "sort_by": "换手率",
+        "sort_ascending": False,
+        "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "成交额"],
+        "filters": [
+            {"conditions": [{"column": "名称", "op": "not_contains", "value": "ST"},
+                           {"column": "名称", "op": "not_contains", "value": "退市"}]},
+            {"conditions": [{"column": "成交额", "op": "gt", "value": 500000000}]},
+            {"comment": "High turnover > 10%, up > 3%, volume surge",
+             "conditions": [{"column": "换手率", "op": "gt", "value": 10},
+                           {"column": "涨跌幅", "op": "gt", "value": 3},
+                           {"column": "量比", "op": "gt", "value": 2}]},
+        ],
+    },
+}
 
 TENCENT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 TENCENT_BATCH = 200
@@ -69,19 +139,11 @@ def _write_cache(name: str, data: dict) -> None:
 
 
 def load_strategy(name: str) -> dict:
-    for ext in (".json",):
-        path = os.path.join(STRATEGIES_DIR, f"{name}{ext}")
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    return {}
+    return STRATEGIES.get(name, {})
 
 
 def list_strategies() -> list[str]:
-    if not os.path.isdir(STRATEGIES_DIR):
-        return []
-    return sorted(fname.replace(".json", "") for fname in os.listdir(STRATEGIES_DIR)
-                  if fname.endswith(".json"))
+    return sorted(STRATEGIES.keys())
 
 
 def _get_all_codes() -> list[str]:
@@ -234,7 +296,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Multi-factor stock screening")
-    parser.add_argument("--strategy", "-s", default="default", help="Strategy name from strategies/")
+    parser.add_argument("--strategy", "-s", default="default", help="Strategy name (default/breakout/value/hot_money)")
     parser.add_argument("--list", "-l", action="store_true", help="List available strategies")
     parser.add_argument("--top", "-n", type=int, default=15, help="Number of results")
     args = parser.parse_args()

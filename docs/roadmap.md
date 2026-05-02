@@ -19,11 +19,11 @@
 | 1.3 | `fundamental` | `python tools/fundamental.py 600519` | PE / PB / ROE / 营收增速 / 行业分位排名 |
 | 1.4 | `flow` | `python tools/flow.py 600519` | 北向资金、主力净流入、大单方向 |
 | 1.5 | `news` | `python tools/news.py 600519` | 近期公告、研报评级、市场情绪聚合 |
-| 1.6 | `screen` | `python tools/screen.py -s breakout` | 可插拔多因子筛选。策略即 JSON 配置文件 (`strategies/`)。 |
+| 1.6 | `screen` | `python tools/screen.py -s breakout` | 可插拔多因子筛选，策略内联为 Python 常量 |
 | 1.7 | `backtest` | `python tools/backtest.py 600519 -s ma_cross` | 轻量历史回测。"该形态出现 N 次，胜率 X%，平均收益 Y%"。 |
-| 1.8 | `watch_001` | `python tools/watch_001.py` | 自选股管理：增删查改，持仓盈亏概览 |
+| 1.8 | `portfolio` | `python tools/portfolio.py` | 自选股管理：增删查改，持仓盈亏概览 |
 
-> 8/8 工具全部实现。腾讯 `qt.gtimg.cn` API（88 字段含 PE/PB/换手率/量比）作为行情主源，200 只/批次全市场拉取 ~2s。为什么用 CLI 而不是 MCP Server：每个调用无状态、即时返回，Claude Code 内置 Bash 工具原生支持，零基础设施开销。
+> 13 个工具全部实现（Phase 1 的 8 个 + Phase 2 新增 5 个：trend/signal_detector/pivot/fibonacci/sentiment）。腾讯 `qt.gtimg.cn` API（88 字段含 PE/PB/换手率/量比）作为行情主源，200 只/批次全市场拉取 ~2s。为什么用 CLI 而不是 MCP Server：每个调用无状态、即时返回，Claude Code 内置 Bash 工具原生支持，零基础设施开销。
 
 ### 1.B 多源数据 Fallback
 

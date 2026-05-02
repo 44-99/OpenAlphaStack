@@ -1,4 +1,4 @@
-"""Watchlist management: add/remove/list stocks + portfolio P&L overview."""
+"""Portfolio management: add/remove/list stocks + P&L overview."""
 import argparse
 import json
 import os
@@ -201,7 +201,7 @@ def cmd_overview() -> dict:
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="Watchlist and portfolio management")
+    parser = argparse.ArgumentParser(description="Portfolio and watchlist management")
     sub = parser.add_subparsers(dest="action", help="Action")
 
     sp_add = sub.add_parser("add", help="Add stock to watchlist")

@@ -45,50 +45,48 @@
 
 以下 CLI 工具位于 `tools/` 目录。通过 Bash 调用，JSON 进 JSON 出。你必须按需主动调用这些工具获取数据，而不是凭空猜测。
 
-### 行情工具
+### 行情
 
-| 工具 | 调用方式 | 用途 | 何时使用 |
-|------|----------|------|----------|
-| `quote` | `python tools/quote.py 600519` | 实时价格/涨跌幅/换手率/量比/PE/PB | 用户问某支股票当前行情时 |
-| `quote` | `python tools/quote.py market` | 大盘指数/涨跌比 | 用户问大盘走势时 |
-| `technical` | `python tools/technical.py 600519 --all` | MA/MACD/RSI/KDJ/布林带/量价分析 | 用户问技术面分析、走势判断时 |
-| `technical` | `python tools/technical.py 600519 -i macd` | 单独查看某个指标 | 用户提到具体指标时 |
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `quote` | `python tools/quote.py <code>` 或 `market` | 个股实时行情或大盘指数——价格、涨跌幅、换手率、量比、PE/PB |
+| `technical` | `python tools/technical.py <code> --all` 或 `-i <指标>` | 技术指标计算——MA、MACD、RSI、KDJ、布林带、量价关系 |
 
 ### 基本面与资金
 
-| 工具 | 调用方式 | 用途 | 何时使用 |
-|------|----------|------|----------|
-| `fundamental` | `python tools/fundamental.py 600519` | PE/PB/ROE/营收增速/行业对比 | 用户问基本面、估值、财务时 |
-| `flow` | `python tools/flow.py 600519` | 个股主力资金净流入/大单方向 | 用户问资金面、主力动向时 |
-| `flow` | `python tools/flow.py north` | 北向资金净流入/5日趋势 | 用户问外资、北向资金时 |
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `fundamental` | `python tools/fundamental.py <code>` | 财务数据与估值——PE/PB/ROE、营收增速、行业分位对比 |
+| `flow` | `python tools/flow.py <code>` 或 `north` | 资金流向——个股主力大单方向、北向资金净流入与趋势 |
 
 ### 信息与筛选
 
-| 工具 | 调用方式 | 用途 | 何时使用 |
-|------|----------|------|----------|
-| `news` | `python tools/news.py 600519` | 个股近期新闻/情绪分析 | 用户问消息面、利好利空时 |
-| `news` | `python tools/news.py market` | 市场头条新闻 | 用户问今天有什么大事时 |
-| `screen` | `python tools/screen.py -s breakout` | 放量突破筛选 | 用户让推荐短线标的时 |
-| `screen` | `python tools/screen.py -s value` | 价值中线筛选 | 用户让推荐中线标的时 |
-| `screen` | `python tools/screen.py -s hot_money` | 热钱追踪筛选 | 用户问游资热点时 |
-| `screen` | `python tools/screen.py --list` | 列出所有可用策略 | 不确定用哪个策略时 |
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `news` | `python tools/news.py <code>` 或 `market` | 消息面——个股近期新闻与情绪、市场头条 |
+| `screen` | `python tools/screen.py -s <策略>` 或 `--list` | 全市场多因子选股——default/breakout/value/hot_money |
+
+### 形态与信号
+
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `trend` | `python tools/trend.py <code> --check all` 或 `-c deviation` | 趋势研判——MA排列方向、交叉信号、价格乖离率 |
+| `signal_detector` | `python tools/signal_detector.py <code> -s all` 或 `-s <信号>` | 入场信号扫描——金叉、放量突破、缩量回踩、底部放量、一阳三阴 |
+| `pivot` | `python tools/pivot.py <code> --mode all` 或 `-m box` | 关键价位——枢轴点、支撑阻力聚类、箱体区间、缠论中枢 |
+| `fibonacci` | `python tools/fibonacci.py <code>` | 斐波那契位——回撤支撑位、扩展目标位、波浪理论验证 |
+| `sentiment` | `python tools/sentiment.py <code>` | 市场情绪——换手热度、量能趋势、ATR波动、均线粘合、综合评分 |
 
 ### 回测
 
-| 工具 | 调用方式 | 用途 | 何时使用 |
-|------|----------|------|----------|
-| `backtest` | `python tools/backtest.py 600519 -s ma_cross` | 均线交叉策略历史回测 | 用户问某个策略胜率时 |
-| `backtest` | `python tools/backtest.py 600519 -s volume_breakout` | 放量突破策略回测 | 验证突破策略在特定股票上的表现 |
-| `backtest` | `python tools/backtest.py --list` | 列出可用回测策略 | 不确定时 |
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `backtest` | `python tools/backtest.py <code> -s <策略>` 或 `--list` | 策略历史胜率与收益验证 |
 
-### 自选股管理
+### 自选股
 
-| 工具 | 调用方式 | 用途 | 何时使用 |
-|------|----------|------|----------|
-| `watch` | `python tools/watch_001.py add 600519 -p 1850 -s 100` | 添加自选股（代码/买入价/股数） | 用户让跟踪某支股票时 |
-| `watch` | `python tools/watch_001.py remove 600519` | 移除自选股 | 不再关注时 |
-| `watch` | `python tools/watch_001.py list` | 列出所有自选股 | 查看自选列表 |
-| `watch` | `python tools/watch_001.py overview` | 持仓概览（实时盈亏） | 用户问持仓/盈亏时 |
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `portfolio` | `python tools/portfolio.py <add/remove/list/overview>` | 自选股增删查改、持仓实时盈亏概览 |
 
 ### 使用规则
 
@@ -137,7 +135,3 @@
 - 换手率 > 5%、量比 > 1.5 的领涨股适用此条
 - 放宽不等于无脑追——仍需要明确的止损位
 
-## 筛选参数
-
-- **短线 (1-5天)**: 涨幅 2-9%, 换手率 3-20%, 量比 >1.5, 成交额 >1亿
-- **中线 (1-4周)**: PE 0-50, PB 0-8, 涨幅 1-7%, 换手率 2-15%
