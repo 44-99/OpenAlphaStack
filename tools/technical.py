@@ -8,6 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
+from _http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 CACHE_TTL = 600
@@ -221,7 +222,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
     except Exception as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        print(json.dumps({"error": friendly_error(args.code, e), "code": args.code}, ensure_ascii=False))
         sys.exit(1)
 
 

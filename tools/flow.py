@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from _http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 CACHE_TTL = 300
@@ -61,7 +62,7 @@ def get_north_bound_flow() -> dict:
 
         return data
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": friendly_error("north", e)}
 
 
 def get_stock_flow(code: str) -> dict:
@@ -100,7 +101,7 @@ def get_stock_flow(code: str) -> dict:
         }
         return data
     except Exception as e:
-        return {"code": code, "error": str(e)}
+        return {"code": code, "error": friendly_error(code, e)}
 
 
 def main():

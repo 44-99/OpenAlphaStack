@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from _http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 STRATEGIES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "strategies")
@@ -116,7 +117,7 @@ def run_screen(strategy_name: str = "default", top_n: int = 15) -> dict:
         return result
 
     except Exception as e:
-        return {"error": str(e), "strategy": strategy_name}
+        return {"error": friendly_error("screen", e), "strategy": strategy_name}
 
 
 def main():

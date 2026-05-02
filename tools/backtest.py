@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from _http import friendly_error  # noqa: E402
 
 import pandas as pd
 import numpy as np
@@ -92,19 +93,18 @@ def backtest_ma_cross(df: pd.DataFrame) -> dict:
             "pnl_pct": pnl,
         })
 
-    wins = [t for t in trades if t.get("pnl_pct", 0) > 0]
-    losses = [t for t in trades if t.get("pnl_pct", 0) <= 0]
-
     sell_trades = [t for t in trades if t["action"] == "sell"]
     returns = [t["pnl_pct"] for t in sell_trades]
+    wins = len([r for r in returns if r > 0])
+    losses = len([r for r in returns if r <= 0])
 
     result = {
         "strategy": "ma_cross",
         "description": "MA5/MA20 golden cross buy, death cross sell",
         "total_trades": len(sell_trades),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": round(len(wins) / len(sell_trades) * 100, 1) if sell_trades else 0,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / len(sell_trades) * 100, 1) if sell_trades else 0,
         "avg_return": round(np.mean(returns), 2) if returns else 0,
         "max_return": round(max(returns), 2) if returns else 0,
         "min_return": round(min(returns), 2) if returns else 0,
@@ -137,16 +137,17 @@ def backtest_volume_breakout(df: pd.DataFrame) -> dict:
                 "pnl_pct": pnl,
             })
 
-    wins = [t for t in trades if t["pnl_pct"] > 0]
     returns = [t["pnl_pct"] for t in trades]
+    wins = len([r for r in returns if r > 0])
+    losses = len([r for r in returns if r <= 0])
 
     result = {
         "strategy": "volume_breakout",
         "description": "Volume > 1.5x avg + price up > 2%, hold 3 days",
         "total_trades": len(trades),
-        "wins": len(wins),
-        "losses": len(trades) - len(wins),
-        "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / len(trades) * 100, 1) if trades else 0,
         "avg_return": round(np.mean(returns), 2) if returns else 0,
         "max_return": round(max(returns), 2) if returns else 0,
         "min_return": round(min(returns), 2) if returns else 0,
@@ -164,7 +165,7 @@ STRATEGIES = {
 
 def main():
     parser = argparse.ArgumentParser(description="Historical backtest for A-share strategies")
-    parser.add_argument("code", help="Stock code (6 digits)")
+    parser.add_argument("code", nargs="?", help="Stock code (6 digits)")
     parser.add_argument("--strategy", "-s", choices=list(STRATEGIES.keys()),
                         default="ma_cross", help="Strategy to backtest")
     parser.add_argument("--list", "-l", action="store_true", help="List available strategies")
@@ -196,7 +197,7 @@ def main():
             result["period"] = f"{str(df['date'].iloc[0])[:10]} to {str(df['date'].iloc[-1])[:10]}"
             result["time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
     except Exception as e:
-        result = {"error": str(e), "code": args.code}
+        result = {"error": friendly_error(args.code, e), "code": args.code}
 
     _write_cache(cache_key, result)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

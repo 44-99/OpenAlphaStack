@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from _http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 CACHE_TTL = 3600  # fundamentals change slowly
@@ -88,7 +89,7 @@ def get_fundamentals(code: str) -> dict:
         return result
 
     except Exception as e:
-        return {"error": str(e), "code": code}
+        return {"error": friendly_error(code, e), "code": code}
 
 
 def main():

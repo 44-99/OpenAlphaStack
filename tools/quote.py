@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from _http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 CACHE_TTL = 600
@@ -66,7 +67,7 @@ def get_stock_quote(code: str) -> dict:
         return data
 
     except Exception as e:
-        return {"error": str(e), "code": code}
+        return {"error": friendly_error(code, e), "code": code}
 
 
 def get_market_overview() -> dict:
