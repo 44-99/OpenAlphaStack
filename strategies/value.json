@@ -1,0 +1,34 @@
+{
+  "name": "value",
+  "description": "Value-oriented mid-term picks — reasonable PE/PB with positive momentum",
+  "sort_by": "市盈率-动态",
+  "sort_ascending": true,
+  "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "市盈率-动态", "市净率", "成交额"],
+  "filters": [
+    {
+      "conditions": [
+        {"column": "名称", "op": "not_contains", "value": "ST"},
+        {"column": "名称", "op": "not_contains", "value": "退市"}
+      ]
+    },
+    {
+      "conditions": [
+        {"column": "最新价", "op": "between", "value": [5, 200]}
+      ]
+    },
+    {
+      "conditions": [
+        {"column": "成交额", "op": "gt", "value": 100000000}
+      ]
+    },
+    {
+      "comment": "Value: PE 0-50, PB 0-8, moderate momentum 1-7%, turnover 2-15%",
+      "conditions": [
+        {"column": "市盈率-动态", "op": "between", "value": [0, 50]},
+        {"column": "市净率", "op": "between", "value": [0, 8]},
+        {"column": "涨跌幅", "op": "between", "value": [1, 7]},
+        {"column": "换手率", "op": "between", "value": [2, 15]}
+      ]
+    }
+  ]
+}

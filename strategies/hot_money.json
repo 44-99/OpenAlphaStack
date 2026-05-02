@@ -1,0 +1,28 @@
+{
+  "name": "hot_money",
+  "description": "Hot-money chasing — highest turnover rate, limit-up approaching, speculative",
+  "sort_by": "换手率",
+  "sort_ascending": false,
+  "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "成交额"],
+  "filters": [
+    {
+      "conditions": [
+        {"column": "名称", "op": "not_contains", "value": "ST"},
+        {"column": "名称", "op": "not_contains", "value": "退市"}
+      ]
+    },
+    {
+      "conditions": [
+        {"column": "成交额", "op": "gt", "value": 500000000}
+      ]
+    },
+    {
+      "comment": "High turnover > 10%, up > 3%, volume surge",
+      "conditions": [
+        {"column": "换手率", "op": "gt", "value": 10},
+        {"column": "涨跌幅", "op": "gt", "value": 3},
+        {"column": "量比", "op": "gt", "value": 2}
+      ]
+    }
+  ]
+}

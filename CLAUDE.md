@@ -108,6 +108,55 @@ updated: ISO时间戳
 - DM 消息原文发送，群聊消息标注发言人 `[显示名 ·abcd]:`
 - `/new` `/clear` 生成新 UUID，记忆系统重新注入
 
+## 工具系统
+
+以下 CLI 工具位于 `tools/` 目录。通过 Bash 调用，JSON 进 JSON 出。你必须按需主动调用这些工具获取数据，而不是凭空猜测。
+
+### 行情工具
+
+| 工具 | 调用方式 | 用途 | 何时使用 |
+|------|----------|------|----------|
+| `quote` | `python tools/quote.py 600519` | 实时价格/涨跌幅/换手率/量比/PE/PB | 用户问某支股票当前行情时 |
+| `quote` | `python tools/quote.py market` | 大盘指数/涨跌比 | 用户问大盘走势时 |
+| `technical` | `python tools/technical.py 600519 --all` | MA/MACD/RSI/KDJ/布林带/量价分析 | 用户问技术面分析、走势判断时 |
+| `technical` | `python tools/technical.py 600519 -i macd` | 单独查看某个指标 | 用户提到具体指标时 |
+
+### 基本面与资金
+
+| 工具 | 调用方式 | 用途 | 何时使用 |
+|------|----------|------|----------|
+| `fundamental` | `python tools/fundamental.py 600519` | PE/PB/ROE/营收增速/行业对比 | 用户问基本面、估值、财务时 |
+| `flow` | `python tools/flow.py 600519` | 个股主力资金净流入/大单方向 | 用户问资金面、主力动向时 |
+| `flow` | `python tools/flow.py north` | 北向资金净流入/5日趋势 | 用户问外资、北向资金时 |
+
+### 信息与筛选
+
+| 工具 | 调用方式 | 用途 | 何时使用 |
+|------|----------|------|----------|
+| `news` | `python tools/news.py 600519` | 个股近期新闻/情绪分析 | 用户问消息面、利好利空时 |
+| `news` | `python tools/news.py market` | 市场头条新闻 | 用户问今天有什么大事时 |
+| `screen` | `python tools/screen.py -s breakout` | 放量突破筛选 | 用户让推荐短线标的时 |
+| `screen` | `python tools/screen.py -s value` | 价值中线筛选 | 用户让推荐中线标的时 |
+| `screen` | `python tools/screen.py -s hot_money` | 热钱追踪筛选 | 用户问游资热点时 |
+| `screen` | `python tools/screen.py --list` | 列出所有可用策略 | 不确定用哪个策略时 |
+
+### 回测
+
+| 工具 | 调用方式 | 用途 | 何时使用 |
+|------|----------|------|----------|
+| `backtest` | `python tools/backtest.py 600519 -s ma_cross` | 均线交叉策略历史回测 | 用户问某个策略胜率时 |
+| `backtest` | `python tools/backtest.py 600519 -s volume_breakout` | 放量突破策略回测 | 验证突破策略在特定股票上的表现 |
+| `backtest` | `python tools/backtest.py --list` | 列出可用回测策略 | 不确定时 |
+
+### 使用规则
+
+1. **先查再分析**: 用户问股票→先调用工具获取数据→基于数据给出结论
+2. **组合调用**: 复杂问题时组合多个工具（如基本面+技术面+资金面）
+3. **不确定时多调**: 宁可多拿数据再筛选，不要猜测
+4. **数据时效性**: 每次返回结果包含 `time` 字段，标注数据时间
+5. **错误处理**: 如果返回 `{"error": "..."}` ，如实告知用户数据获取失败
+6. **缓存**: 工具内部有缓存（行情300s，基本面3600s），短时间内重复调用不会重复请求
+
 ## 启动
 
 ```bash

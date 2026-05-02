@@ -1,0 +1,33 @@
+{
+  "name": "breakout",
+  "description": "Volume breakout candidates — high momentum, volume surge, moderate position",
+  "sort_by": "量比",
+  "sort_ascending": false,
+  "output_columns": ["代码", "名称", "最新价", "涨跌幅", "换手率", "量比", "市盈率-动态", "成交额"],
+  "filters": [
+    {
+      "conditions": [
+        {"column": "名称", "op": "not_contains", "value": "ST"},
+        {"column": "名称", "op": "not_contains", "value": "退市"}
+      ]
+    },
+    {
+      "conditions": [
+        {"column": "最新价", "op": "between", "value": [5, 200]}
+      ]
+    },
+    {
+      "conditions": [
+        {"column": "成交额", "op": "gt", "value": 100000000}
+      ]
+    },
+    {
+      "comment": "Momentum: up 2-9%, turnover 3-20%, volume ratio > 1.5",
+      "conditions": [
+        {"column": "涨跌幅", "op": "between", "value": [2, 9]},
+        {"column": "换手率", "op": "between", "value": [3, 20]},
+        {"column": "量比", "op": "gt", "value": 1.5}
+      ]
+    }
+  ]
+}
