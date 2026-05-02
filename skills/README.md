@@ -32,7 +32,7 @@ description: 简短描述（可选）
 
 ## 示例
 
-见 `example-stock-alert.md` — 当用户提到特定股票时，自动附加分析框架。
+参考 `trading-principles.md` — 前置技能，始终加载。其他技能按触发词匹配后注入分析框架。
 
 ## 高级用法（给懂 Agent 的人）
 

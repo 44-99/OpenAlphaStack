@@ -166,7 +166,6 @@ AlphaClaude/
 │   └── backtest.py  — 历史形态回测
 ├── skills/          — 策略技能 (Markdown + YAML frontmatter，渐进式展开)
 │   ├── trading-principles.md  — 前置技能：交易铁律，始终加载
-│   ├── example-stock-alert.md — 茅台风险提醒
 │   ├── ma-golden-cross/       — 均线金叉策略
 │   ├── volume-breakout/       — 放量突破策略
 │   ├── shrink-pullback/       — 缩量回踩策略
