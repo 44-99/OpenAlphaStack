@@ -192,6 +192,8 @@ def calc_volume_price(df: pd.DataFrame) -> dict:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Technical indicators for A-share stocks")
     parser.add_argument("code", help="Stock code (6 digits)")
     parser.add_argument("--indicator", "-i",

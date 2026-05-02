@@ -106,6 +106,8 @@ def get_fundamentals(code: str) -> dict:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Fundamental data for A-share stocks")
     parser.add_argument("code", help="Stock code (6 digits)")
     args = parser.parse_args()

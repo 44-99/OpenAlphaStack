@@ -115,6 +115,8 @@ def get_market_news(limit: int = 15) -> dict:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Stock news and sentiment")
     parser.add_argument("target", nargs="?", help="Stock code (6 digits) or 'market' for headlines")
     parser.add_argument("--limit", "-n", type=int, default=10, help="Number of news items")

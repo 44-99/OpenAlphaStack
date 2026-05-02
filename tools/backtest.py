@@ -175,6 +175,8 @@ STRATEGIES = {
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Historical backtest for A-share strategies")
     parser.add_argument("code", nargs="?", help="Stock code (6 digits)")
     parser.add_argument("--strategy", "-s", choices=list(STRATEGIES.keys()),

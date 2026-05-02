@@ -266,11 +266,14 @@ def _load_skills() -> list[dict]:
                                     cfg["triggers"].append(val)
                             elif key:
                                 cfg[key] = val
-                    if cfg.get("triggers") and body:
+                    always_load = str(cfg.get("always_load", "")).lower() == "true"
+                    if (cfg.get("triggers") or always_load) and body:
                         cfg["body"] = body
                         cfg["file"] = fname
+                        cfg["always_load"] = always_load
                         skills.append(cfg)
-                        print(f"[技能] 已加载: {cfg.get('name', fname)} 触发: {cfg['triggers']}", flush=True)
+                        tag = "前置" if always_load else f"触发: {cfg['triggers']}"
+                        print(f"[技能] 已加载: {cfg.get('name', fname)} {tag}", flush=True)
         except (OSError, ValueError) as e:
             print(f"[技能] 加载失败 {fname}: {e}", flush=True)
     return skills
@@ -292,6 +295,17 @@ def _match_skills(text: str) -> str:
     for skill in matched:
         parts.append(f"[技能: {skill.get('name', skill.get('file', ''))}]\n{skill['body']}")
     return "\n\n---\n\n".join(parts)
+
+
+def _get_always_load_skills() -> str:
+    """Get context from skills with always_load: true."""
+    if not _skills:
+        return ""
+    parts = []
+    for skill in _skills:
+        if skill.get("always_load"):
+            parts.append(f"[交易纪律 — {skill.get('name', '')}]\n{skill['body']}")
+    return "\n\n---\n\n".join(parts) if parts else ""
 
 
 # === Welcome messages ===
@@ -700,8 +714,12 @@ def _process_message(event: dict) -> None:
 
             data_context, data_ok = _fetch_stock_context(stock_query)
             skill_context = _match_skills(stock_query)
+            always_load_context = _get_always_load_skills()
 
             context_parts = []
+
+            if always_load_context:
+                context_parts.append(always_load_context)
 
             # Inject memory on new session — only if it has meaningful content
             needs_memory = (

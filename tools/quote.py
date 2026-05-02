@@ -1,4 +1,4 @@
-"""Real-time stock quotes and market overview via Sina Finance API (primary)."""
+"""Real-time stock quotes and market overview. Primary: Tencent (qt.gtimg.cn, 88 fields)."""
 import argparse
 import json
 import os
@@ -11,8 +11,7 @@ import requests
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache")
 CACHE_TTL = 300
 
-SINA_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-SINA_REFERER = "https://finance.sina.com.cn/"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 MARKET_INDICES = {
     "000001": ("s_sh000001", "上证指数"),
@@ -22,11 +21,6 @@ MARKET_INDICES = {
     "000300": ("s_sh000300", "沪深300"),
     "000905": ("s_sh000905", "中证500"),
 }
-
-STOCK_FIELDS = [
-    "name", "open", "prev_close", "price", "high", "low", "bid", "ask",
-    "volume", "amount",
-]
 
 
 def _cache_path(name: str) -> str:
@@ -49,46 +43,73 @@ def _write_cache(name: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
 
-def _sina_code(code: str) -> str:
-    """Convert 600519 -> sh600519."""
-    if code.startswith(("6", "9")):
-        return f"sh{code}"
-    return f"sz{code}"
+def _prefixed_code(code: str) -> str:
+    return f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
 
 
-def get_stock_quote(code: str) -> dict:
-    """Get real-time quote for a single stock via Sina Finance."""
-    cached = _read_cache(code)
-    if cached:
-        return cached
+def _fetch_tencent(code: str) -> dict | None:
+    """Fetch quote from Tencent Finance API (88 fields, ~0.07s)."""
+    try:
+        url = f"http://qt.gtimg.cn/q={_prefixed_code(code)}"
+        resp = requests.get(url, timeout=10, headers={"User-Agent": UA})
+        resp.encoding = "gbk"
+        line = resp.text.strip()
+        if '="' not in line:
+            return None
+        fields = line.split('="', 1)[1].strip().strip('"').split("~")
+        if len(fields) < 50:
+            return None
+        price = float(fields[3])
+        prev_close = float(fields[4])
+        return {
+            "code": code,
+            "name": fields[1],
+            "price": price,
+            "change_pct": float(fields[32]),
+            "change_amt": float(fields[31]),
+            "open": float(fields[5]),
+            "high": float(fields[33]),
+            "low": float(fields[34]),
+            "prev_close": prev_close,
+            "volume": int(float(fields[6])),
+            "amount": float(fields[37]) * 10000,  # 万元→元
+            "turnover_rate": float(fields[38]) if fields[38] else 0,
+            "volume_ratio": float(fields[49]) if fields[49] else 0,
+            "pe": float(fields[39]) if fields[39] else None,
+            "pb": float(fields[46]) if fields[46] else None,
+            "amplitude": float(fields[43]) if fields[43] else 0,
+            "market_cap": float(fields[45]) if fields[45] else None,  # 亿元
+            "high_limit": float(fields[47]) if fields[47] else None,
+            "low_limit": float(fields[48]) if fields[48] else None,
+            "source": "tencent",
+            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+    except Exception:
+        return None
 
-    sina_code = _sina_code(code)
+
+def _fetch_sina(code: str) -> dict | None:
+    """Fetch quote from Sina Finance API (34 fields, ~0.1s)."""
     try:
         resp = requests.get(
-            f"https://hq.sinajs.cn/list={sina_code}",
+            f"https://hq.sinajs.cn/list={_prefixed_code(code)}",
             timeout=10,
-            headers={"User-Agent": SINA_UA, "Referer": SINA_REFERER},
+            headers={"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"},
         )
         resp.encoding = "gbk"
         raw = resp.text
-
         if "=" not in raw or len(raw) < 50:
-            return {"error": f"Stock not found: {code}"}
-
-        data_str = raw.split("=", 1)[1].strip().strip('"')
-        fields = data_str.split(",")
+            return None
+        fields = raw.split("=", 1)[1].strip().strip('"').split(",")
         if len(fields) < 10:
-            return {"error": f"Incomplete data for {code}"}
-
+            return None
         price = float(fields[3])
         prev_close = float(fields[2])
-        change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0
-
-        data = {
+        return {
             "code": code,
             "name": fields[0],
             "price": price,
-            "change_pct": change_pct,
+            "change_pct": round((price - prev_close) / prev_close * 100, 2) if prev_close else 0,
             "change_amt": round(price - prev_close, 2),
             "open": float(fields[1]),
             "high": float(fields[4]),
@@ -96,22 +117,64 @@ def get_stock_quote(code: str) -> dict:
             "prev_close": prev_close,
             "volume": int(float(fields[8])),
             "amount": float(fields[9]),
-            "bid": float(fields[6]) if fields[6] else None,
-            "ask": float(fields[7]) if fields[7] else None,
             "date": fields[30] if len(fields) > 30 else "",
-            "time": fields[31] if len(fields) > 31 else "",
+            "time_field": fields[31] if len(fields) > 31 else "",
             "source": "sina",
             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
+    except Exception:
+        return None
+
+
+def get_stock_quote(code: str) -> dict:
+    """Get real-time quote. Primary: Tencent → Sina → akshare Sina spot."""
+    cached = _read_cache(code)
+    if cached:
+        return cached
+
+    # Source 1: Tencent (fastest, most complete)
+    data = _fetch_tencent(code)
+    if data:
         _write_cache(code, data)
         return data
 
-    except (requests.RequestException, ValueError, IndexError) as e:
-        return {"error": f"数据获取失败: {str(e)[:150]}", "code": code}
+    # Source 2: Sina (fast, basic fields)
+    data = _fetch_sina(code)
+    if data:
+        _write_cache(code, data)
+        return data
+
+    # Source 3: akshare Sina spot (slow, last resort)
+    try:
+        import akshare as ak
+        df = ak.stock_zh_a_spot()
+        row = df[df["代码"].str.endswith(code)]
+        if not row.empty:
+            r = row.iloc[0]
+            data = {
+                "code": code,
+                "name": str(r["名称"]),
+                "price": float(r["最新价"]),
+                "open": float(r.get("今开", 0) or 0),
+                "high": float(r.get("最高", 0) or 0),
+                "low": float(r.get("最低", 0) or 0),
+                "prev_close": float(r.get("昨收", 0) or 0),
+                "volume": int(float(r.get("成交量", 0) or 0)),
+                "amount": float(r.get("成交额", 0) or 0),
+                "change_pct": float(r.get("涨跌幅", 0) or 0),
+                "source": "akshare_sina",
+                "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            }
+            _write_cache(code, data)
+            return data
+    except Exception:
+        pass
+
+    return {"error": f"所有数据源均无法获取 {code}", "code": code}
 
 
 def get_market_overview() -> dict:
-    """Get market overview: major indices via Sina."""
+    """Get market overview: major indices via Sina batch API."""
     cached = _read_cache("market")
     if cached:
         return cached
@@ -121,7 +184,7 @@ def get_market_overview() -> dict:
         resp = requests.get(
             f"https://hq.sinajs.cn/list={sina_codes}",
             timeout=10,
-            headers={"User-Agent": SINA_UA, "Referer": SINA_REFERER},
+            headers={"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"},
         )
         resp.encoding = "gbk"
         indices = []
@@ -129,27 +192,20 @@ def get_market_overview() -> dict:
             if "=" not in line:
                 continue
             var_name, data_str = line.split("=", 1)
-            sina_key = var_name.strip().split("_")[-1]
             fields = data_str.strip().strip('"').split(",")
             if len(fields) < 4:
                 continue
-
-            # Find matching index name
-            index_name = sina_key
             clean_var = var_name.strip()
+            index_name = ""
             for code, (skey, name) in MARKET_INDICES.items():
                 if clean_var.endswith(skey):
                     index_name = name
                     break
-
-            price = float(fields[1])
-            change = float(fields[2]) if len(fields) > 2 else 0
-            change_pct = float(fields[3]) if len(fields) > 3 else 0
             indices.append({
-                "name": index_name,
-                "price": price,
-                "change": change,
-                "change_pct": change_pct,
+                "name": index_name or clean_var,
+                "price": float(fields[1]),
+                "change": float(fields[2]) if len(fields) > 2 else 0,
+                "change_pct": float(fields[3]) if len(fields) > 3 else 0,
             })
 
         data = {
@@ -165,6 +221,8 @@ def get_market_overview() -> dict:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Real-time stock quote and market overview")
     parser.add_argument("code", nargs="?", help="Stock code (6 digits), or 'market' for overview")
     args = parser.parse_args()

@@ -16,9 +16,4 @@ data/*.log
 data/memory/
 *.log
 
-# Planning artifacts
-findings.md
-progress.md
-task_plan.md
-
 .idea/

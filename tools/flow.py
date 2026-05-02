@@ -118,6 +118,8 @@ def get_stock_flow(code: str) -> dict:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Capital flow analysis for A-shares")
     parser.add_argument("target", nargs="?", help="Stock code (6 digits) or 'north' for north-bound flow")
     args = parser.parse_args()
