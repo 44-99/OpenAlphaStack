@@ -9,19 +9,20 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import STOCK_DATA_DIR, TARGET_CHAT_IDS
+from config import STOCK_DATA_DIR
 from feishu.bot import send_text
-from stock.data import format_market_report
-from claude.client import ask_claude, build_trading_prompt
+from stock import format_market_report
+from claude import ask_claude, build_trading_prompt
+from memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
 
 TASKS_FILE = os.path.join(STOCK_DATA_DIR, "tasks.json")
 _scheduler: BackgroundScheduler | None = None
-_subscribers: list[str] = list(TARGET_CHAT_IDS)
+_subscribers: list[str] = []
 
 
 # === Subscriber management ===
 
-def update_subscribers(chat_ids: list[str]) -> None:
+def set_subscribers(chat_ids: list[str]) -> None:
     global _subscribers
     _subscribers = list(set(chat_ids))
 
@@ -53,7 +54,7 @@ def remove_task(task_id: str) -> bool:
         _scheduler.remove_job(task_id)
         print(f"[任务] 已移除: {task_id}", flush=True)
         return True
-    except Exception:
+    except (KeyError, ValueError):
         return False
 
 
@@ -99,7 +100,7 @@ def _make_task_runner(chat_id: str, description: str, prompt_template: str):
             analysis = ask_claude(prompt, timeout=180)
             msg = f"[自定义任务] {description}\n\n{analysis}"
             send_text(chat_id, msg)
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             print(f"[任务失败] {description}: {e}", flush=True)
     return run
 
@@ -171,7 +172,7 @@ def _send_to_all(message: str) -> None:
         try:
             send_text(chat_id, message)
             print(f"  已发送到 {chat_id}", flush=True)
-        except Exception as e:
+        except (OSError, TypeError) as e:
             print(f"  发送失败 {chat_id}: {e}", flush=True)
 
 
@@ -182,7 +183,7 @@ def run_morning_analysis() -> None:
         prompt = build_trading_prompt(market_data, context="现在是早盘开盘前，请重点给出今日的操作策略和可以关注的标的。")
         analysis = ask_claude(prompt, timeout=180)
         _send_to_all(f"[早盘简报] {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{analysis}")
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"  早盘分析失败: {e}", flush=True)
 
 
@@ -193,7 +194,7 @@ def run_midday_update() -> None:
         prompt = build_trading_prompt(market_data, context="现在是午间休盘，请重点总结上午走势，给出下午的操作建议和可以关注的标的。")
         analysis = ask_claude(prompt, timeout=180)
         _send_to_all(f"[午间速报] {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{analysis}")
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"  午间更新失败: {e}", flush=True)
 
 
@@ -204,18 +205,14 @@ def run_closing_summary() -> None:
         prompt = build_trading_prompt(market_data, context="现在是收盘后，请做全天复盘总结，给出明日展望和可以提前关注的标的。")
         analysis = ask_claude(prompt, timeout=180)
         _send_to_all(f"[收盘总结] {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{analysis}")
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"  收盘总结失败: {e}", flush=True)
 
 
 def run_memory_consolidation() -> None:
     """Dreaming task: scan modified transcripts and update memory files every 12 hours."""
-    from datetime import datetime as _dt
-
-    print(f"[做梦] {_dt.now()} 开始记忆整理", flush=True)
+    print(f"[做梦] {datetime.now()} 开始记忆整理", flush=True)
     try:
-        from main import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
-
         uuids = _list_modified_transcripts(hours=12)
         if not uuids:
             print("[做梦] 无修改过的 transcript，跳过", flush=True)
@@ -232,8 +229,8 @@ def run_memory_consolidation() -> None:
             if ok:
                 updated += 1
 
-        print(f"[做梦] {_dt.now()} 记忆整理完成，更新 {updated} 个", flush=True)
-    except Exception as e:
+        print(f"[做梦] {datetime.now()} 记忆整理完成，更新 {updated} 个", flush=True)
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"[做梦] 任务失败: {e}", flush=True)
         import traceback
         traceback.print_exc()
@@ -257,5 +254,4 @@ def start_scheduler():
                        id="dream_pm", name="记忆整理(下午)")
     _scheduler.start()
     print("定时任务已启动: 工作日 9:00/12:00/15:30 + 记忆整理 3:17/15:17", flush=True)
-    # Restore user-created tasks
     restore_dynamic_tasks()

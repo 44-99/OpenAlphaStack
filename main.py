@@ -3,7 +3,6 @@ AlphaClaude — AI stock trading bot powered by Claude Code.
 Receives events via Feishu WebSocket long-connection.
 https://github.com/44-99/AlphaClaude
 """
-import asyncio
 import json
 import os
 import re
@@ -19,23 +18,23 @@ from feishu.bot import parse_event, reply_message, send_text
 from feishu.group import check_membership
 from feishu.user import get_user_label
 from feishu.ws import start_ws_listener
-from claude.client import ask_claude, build_trading_prompt, SESSIONS_DIR
-from scheduler.tasks import (
+from claude import ask_claude
+from scheduler import (
     run_morning_analysis,
     run_midday_update,
     run_closing_summary,
     run_memory_consolidation,
-    update_subscribers,
+    set_subscribers,
     start_scheduler,
     create_dynamic_task,
     delete_dynamic_task,
     list_dynamic_tasks,
 )
+import memory
 
 SESSIONS_FILE = os.path.join(STOCK_DATA_DIR, "sessions.json")
 SUBS_FILE = os.path.join(STOCK_DATA_DIR, "subscribers.json")
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
-MEMORY_DIR = os.path.join(STOCK_DATA_DIR, "memory")
 _sessions: dict[str, dict] = {}        # conv_id → {session_id, type, label}
 _subscribers: list[str] = []
 _session_lock = threading.RLock()
@@ -65,7 +64,7 @@ def _get_or_create_session(conv_id: str, session_type: str, label: str = "") -> 
     with _session_lock:
         if conv_id in _sessions:
             return _sessions[conv_id]["session_id"]
-        sid = str(_uuid.uuid4())
+        sid = _uuid.uuid4().hex
         _sessions[conv_id] = {
             "session_id": sid,
             "type": session_type,
@@ -82,7 +81,7 @@ def _reset_session(conv_id: str) -> str:
     """Delete old session, create new UUID. Used by /new /clear."""
     with _session_lock:
         old = _sessions.pop(conv_id, None)
-        sid = str(_uuid.uuid4())
+        sid = _uuid.uuid4().hex
         _sessions[conv_id] = {
             "session_id": sid,
             "type": old["type"] if old else "dm",
@@ -94,244 +93,6 @@ def _reset_session(conv_id: str) -> str:
         if old:
             print(f"[会话] 重置: {conv_id} → {sid[:8]}", flush=True)
         return sid
-
-
-def _get_session_config(conv_id: str) -> dict | None:
-    """Thread-safe read of a session config. Returns copy or None."""
-    with _session_lock:
-        cfg = _sessions.get(conv_id)
-        return dict(cfg) if cfg else None
-
-
-# === Memory system ===
-
-_MEMORY_SKELETON = """---
-name: {name}
-type: {mem_type}
-open_id: {open_id}
-created: {created}
-updated: {updated}
-session_count: 0
----
-
-## 使用偏好
-（待探索）
-
-## 投资特征
-（待探索）
-
-## 关键信息
-（暂无）
-
-## 近期话题
-（暂无）
-"""
-
-
-def _ensure_memory_dirs() -> None:
-    os.makedirs(os.path.join(MEMORY_DIR, "user"), exist_ok=True)
-    os.makedirs(os.path.join(MEMORY_DIR, "group"), exist_ok=True)
-
-
-def _create_memory_skeleton(open_id: str, name: str, mem_type: str) -> str:
-    """Create an empty memory file. Returns the file path."""
-    _ensure_memory_dirs()
-    subdir = "user" if mem_type == "user" else "group"
-    path = os.path.join(MEMORY_DIR, subdir, f"{open_id}.md")
-    if os.path.exists(path):
-        return path
-    now = datetime.now().isoformat()
-    content = _MEMORY_SKELETON.format(
-        name=name, mem_type=mem_type, open_id=open_id,
-        created=now, updated=now,
-    )
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"[记忆] 创建空骨架: {path}", flush=True)
-    return path
-
-
-def _load_memory(conv_id: str, chat_type: str, sender_id: str = "") -> tuple[str, str]:
-    """Load memory file content. Returns (content, file_path)."""
-    _ensure_memory_dirs()
-    if chat_type == "p2p":
-        path = os.path.join(MEMORY_DIR, "user", f"{sender_id}.md")
-    else:
-        path = os.path.join(MEMORY_DIR, "group", f"{chat_id}.md")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read(), path
-    return "", path
-
-
-def _list_modified_transcripts(hours: int = 12) -> list[str]:
-    """Return list of session_uuids whose transcript files were modified within N hours."""
-    import time
-    cutoff = time.time() - hours * 3600
-    results = []
-    if not os.path.isdir(SESSIONS_DIR):
-        return results
-    for fname in os.listdir(SESSIONS_DIR):
-        if not fname.endswith(".jsonl"):
-            continue
-        fpath = os.path.join(SESSIONS_DIR, fname)
-        if os.path.getmtime(fpath) >= cutoff:
-            results.append(fname.replace(".jsonl", ""))
-    return results
-
-
-def _uuid_to_conv(session_uuid: str) -> str | None:
-    """Reverse-lookup conv_id from session_uuid."""
-    with _session_lock:
-        for conv_id, cfg in _sessions.items():
-            if cfg.get("session_id") == session_uuid:
-                return conv_id
-    return None
-
-
-def _consolidate_session(conv_id: str) -> tuple[bool, str]:
-    """Run memory consolidation for a single session. Returns (success, summary)."""
-    import json as _json
-    cfg = _get_session_config(conv_id)
-    if not cfg:
-        print(f"[整理] 未找到 session: {conv_id}", flush=True)
-        return False, ""
-
-    session_type = cfg.get("type", "")
-    session_id = cfg.get("session_id", "")
-
-    # Determine memory path
-    if session_type == "dm":
-        # conv_id = "{chat_id}_{sender_id}", sender_id is the last segment
-        parts = conv_id.rsplit("_", 1)
-        sender_id = parts[-1] if len(parts) >= 2 else conv_id
-        mem_path = os.path.join(MEMORY_DIR, "user", f"{sender_id}.md")
-    else:
-        mem_path = os.path.join(MEMORY_DIR, "group", f"{conv_id}.md")
-
-    # Read transcript
-    transcript_path = os.path.join(SESSIONS_DIR, f"{session_id}.jsonl")
-    if not os.path.exists(transcript_path):
-        return False, ""
-
-    transcript_sample = ""
-    try:
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        recent = []
-        for line in lines[-100:]:
-            try:
-                entry = _json.loads(line)
-                t = entry.get("type", "")
-                msg = entry.get("message", {})
-                if t == "user" and msg.get("role") == "user":
-                    recent.append(f"[用户]: {msg.get('content', '')[:300]}")
-                elif t == "assistant" and msg.get("role") == "assistant":
-                    c = msg.get("content", "")
-                    if isinstance(c, str) and len(c) > 20:
-                        recent.append(f"[回复摘要]: {c[:200]}")
-            except Exception:
-                continue
-        transcript_sample = "\n".join(recent[-30:])
-    except Exception:
-        return False, ""
-
-    if not transcript_sample.strip():
-        return False, ""
-
-    # Read existing memory
-    old_memory = ""
-    if os.path.exists(mem_path):
-        with open(mem_path, "r", encoding="utf-8") as f:
-            old_memory = f.read()
-
-    # Build consolidation prompt
-    summary_prompt = (
-        f"你是一个记忆整理助手。请基于下方最近的对话记录，更新用户/群聊的记忆文件。\n\n"
-        f"现有记忆：\n{old_memory or '(新用户/群，暂无记忆)'}\n\n"
-        f"最近对话：\n{transcript_sample}\n\n"
-        "请输出更新后的完整记忆文件（Markdown + YAML frontmatter）。\n"
-        "规则：\n"
-        "1. 保持 frontmatter 中的 name/type/open_id/created 不变，只更新 updated\n"
-        "2. 更新「使用偏好」— 从对话中推断用户如何使用助手\n"
-        "3. 更新「投资特征」— 风险偏好、关注板块、重要观点\n"
-        "4. 更新「近期话题」— 最近 5 条话题摘要，每条一行\n"
-        "5. 用户明确要求记住的内容记入「关键信息」\n"
-        "6. 记忆文件控制在 600 字以内\n"
-        "7. 只输出记忆文件内容，不要任何解释\n"
-        "8. 保持 frontmatter 格式: ---\\n...\\n---\\n\\n正文\n"
-        "9. 在记忆文件末尾添加一行 `[本次更新]: <一句话总结本次更新了哪些内容>`"
-    )
-
-    try:
-        result = ask_claude(summary_prompt, timeout=120)
-        if result.startswith("---"):
-            # Extract summary line before writing
-            summary = ""
-            lines = result.strip().split("\n")
-            for i, line in enumerate(lines):
-                if line.startswith("[本次更新]:"):
-                    summary = line.replace("[本次更新]:", "").strip()
-                    break
-            _ensure_memory_dirs()
-            with open(mem_path, "w", encoding="utf-8") as f:
-                f.write(result.strip())
-            print(f"[整理] 已更新: {mem_path} ({summary})", flush=True)
-            return True, summary
-        else:
-            print(f"[整理] 跳过无效输出: {conv_id[:8]}", flush=True)
-            return False, ""
-    except Exception as e:
-        print(f"[整理] 失败 {conv_id[:8]}: {e}", flush=True)
-        return False, ""
-
-
-def _list_group_sessions() -> list[dict]:
-    """Return all group sessions with short IDs for /groups command."""
-    groups = []
-    with _session_lock:
-        for conv_id, cfg in _sessions.items():
-            if cfg.get("type") == "group":
-                short_id = conv_id[-6:] if len(conv_id) >= 6 else conv_id
-                groups.append({
-                    "short_id": short_id,
-                    "conv_id": conv_id,
-                    "label": cfg.get("label", short_id),
-                    "created_at": cfg.get("created_at", ""),
-                })
-    return groups
-
-
-def _read_group_transcript(conv_id: str, limit: int = 30) -> str:
-    """Read recent user/assistant messages from a group's Claude Code transcript."""
-    with _session_lock:
-        cfg = _sessions.get(conv_id)
-    if not cfg or cfg["type"] != "group":
-        return ""
-    transcript_path = os.path.join(SESSIONS_DIR, f"{cfg['session_id']}.jsonl")
-    if not os.path.exists(transcript_path):
-        return ""
-    lines = []
-    try:
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                    if entry.get("type") == "user" and entry.get("message", {}).get("role") == "user":
-                        content = entry["message"].get("content", "")
-                        if content:
-                            lines.append(content)
-                    elif entry.get("type") == "assistant" and entry.get("message", {}).get("role") == "assistant":
-                        content = entry["message"].get("content", "")
-                        # Keep assistant messages shorter (truncate long responses)
-                        if content:
-                            lines.append(f"[回复]: {content[:200]}")
-                except (json.JSONDecodeError, KeyError):
-                    continue
-    except Exception:
-        return ""
-    recent = lines[-limit:]
-    return "\n".join(f"  {l}" for l in recent)
 
 
 # === Subscriber management ===
@@ -355,7 +116,7 @@ def _register_subscriber(chat_id: str) -> None:
         if chat_id not in _subscribers:
             _subscribers.append(chat_id)
             _save_subs()
-            update_subscribers(list(_subscribers))
+            set_subscribers(list(_subscribers))
 
 
 def _unregister_subscriber(chat_id: str) -> bool:
@@ -364,7 +125,7 @@ def _unregister_subscriber(chat_id: str) -> bool:
         if chat_id in _subscribers:
             _subscribers.remove(chat_id)
             _save_subs()
-            update_subscribers(list(_subscribers))
+            set_subscribers(list(_subscribers))
             return True
         return False
 
@@ -401,7 +162,7 @@ def _extract_stock_codes(text: str) -> list[str]:
 
 
 def _fetch_stock_context(text: str) -> tuple[str, bool]:
-    from stock.data import get_market_overview, get_stock_detail
+    from stock import get_market_overview, get_stock_detail
     codes = _extract_stock_codes(text)
     parts = []
     data_ok = False
@@ -415,7 +176,7 @@ def _fetch_stock_context(text: str) -> tuple[str, bool]:
                 sign = "+" if idx.get("涨跌幅", 0) > 0 else ""
                 parts.append(f"  {idx['名称']}: {idx['最新价']} ({sign}{idx['涨跌幅']}%)")
             parts.append(f"  涨跌比: {b.get('up', 0)}/{b.get('down', 0)}/{b.get('flat', 0)}")
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         pass
     for code in codes:
         try:
@@ -428,9 +189,9 @@ def _fetch_stock_context(text: str) -> tuple[str, bool]:
                 parts.append(f"  市盈率: {detail.get('市盈率')} | 市净率: {detail.get('市净率')}")
                 parts.append(f"  今开/最高/最低: {detail.get('今开')}/{detail.get('最高')}/{detail.get('最低')}")
                 parts.append(f"  成交量: {detail.get('成交量')}手 | 成交额: {detail.get('成交额')}元")
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             pass
-    return ("\n".join(parts), data_ok)
+    return "\n".join(parts), data_ok
 
 
 # === SDK helpers ===
@@ -448,7 +209,7 @@ def _sdk_to_dict(event_obj) -> dict:
     return d
 
 
-def _obj_to_dict(obj) -> dict:
+def _obj_to_dict(obj) -> dict | list:
     if obj is None:
         return {}
     if isinstance(obj, dict):
@@ -483,21 +244,18 @@ def _load_skills() -> list[dict]:
                 if len(parts) >= 3:
                     frontmatter = parts[1]
                     body = parts[2].strip()
-                    cfg = {"triggers": []}
+                    cfg: dict = {"triggers": []}
                     current_key = ""
                     for line in frontmatter.strip().split("\n"):
-                        # YAML list item (starts with "  - " or "- ")
                         stripped = line.strip()
                         if stripped.startswith("- "):
                             item = stripped[2:].strip().strip('"').strip("'")
                             if current_key == "triggers":
                                 cfg.setdefault("triggers", []).append(item)
                             elif current_key:
-                                # Append to current key's value
                                 prev = cfg.get(current_key, "")
                                 cfg[current_key] = f"{prev}, {item}" if prev else item
                             continue
-                        # Key: value line
                         if ":" in stripped:
                             key, _, val = stripped.partition(":")
                             key = key.strip()
@@ -513,7 +271,7 @@ def _load_skills() -> list[dict]:
                         cfg["file"] = fname
                         skills.append(cfg)
                         print(f"[技能] 已加载: {cfg.get('name', fname)} 触发: {cfg['triggers']}", flush=True)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"[技能] 加载失败 {fname}: {e}", flush=True)
     return skills
 
@@ -542,7 +300,10 @@ _WELCOME_MSG = (
     "我是 AlphaClaude，A股分析助手。\n\n"
     "可用指令：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
+    "  /unsub 或 退订 — 取消订阅\n"
+    "  /status — 查看订阅状态\n"
     "  /task <描述> — 创建自定义分析任务\n"
+    "  /task delete <id> — 删除任务\n"
     "  /tasks — 查看当前任务\n"
     "  /group <群ID> <提问> — 跨群查询（私聊可用）\n"
     "  /groups — 列出可用群\n"
@@ -555,7 +316,10 @@ _GROUP_WELCOME_MSG = (
     "我是 AlphaClaude，A股分析助手。在群里 @我 即可提问分析股票。\n\n"
     "可用指令（@我后发送）：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
+    "  /unsub 或 退订 — 取消订阅\n"
+    "  /status — 查看订阅状态\n"
     "  /task <描述> — 创建自定义分析任务\n"
+    "  /task delete <id> — 删除任务\n"
     "  /tasks — 查看当前任务\n"
     "  /new 或 新对话 — 重置对话上下文\n"
     "  /help — 显示本消息"
@@ -608,14 +372,14 @@ def _parse_semantic_commands(text: str) -> list[dict] | None:
     try:
         result = ask_claude(prompt, timeout=30)
         import re as _re
-        json_match = _re.search(r'\[.*\]', result, _re.DOTALL)
+        json_match = _re.search(r'\[.*]', result, _re.DOTALL)
         if not json_match:
             return None
         actions = json.loads(json_match.group())
         if not isinstance(actions, list):
             return None
         return actions
-    except Exception:
+    except (OSError, ValueError, json.JSONDecodeError):
         return None
 
 
@@ -647,9 +411,9 @@ def _execute_actions(actions: list[dict], chat_id: str, chat_type: str,
             results.append("[已订阅]" if _is_subscribed(chat_id) else "[未订阅]")
 
         elif action == "create_task":
-            desc = args.get("description", "自定义任务")
-            cron = args.get("cron", "0 9 * * 1-5")
-            prompt_tmpl = args.get("prompt", desc)
+            desc = str(args.get("description", "自定义任务"))
+            cron = str(args.get("cron", "0 9 * * 1-5"))
+            prompt_tmpl = str(args.get("prompt", desc))
             task_id = create_dynamic_task(chat_id, cron, desc, prompt_tmpl)
             results.append(f"[已创建任务 {task_id}: {desc} ({cron})]")
 
@@ -682,7 +446,7 @@ def _execute_actions(actions: list[dict], chat_id: str, chat_type: str,
     return "\n".join(results) if results else ""
 
 
-def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str, message_id: str) -> str | None:
+def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
     """Handle exact-match bot commands. Returns reply string or None."""
     cmd = text.strip()
     cmd_lower = cmd.lower()
@@ -707,7 +471,7 @@ def _handle_command(chat_id: str, chat_type: str, sender_id: str, text: str, mes
         return "当前已订阅定时推送。" if _is_subscribed(chat_id) else "当前未订阅。"
 
     if cmd_lower in ("/groups", "groups"):
-        groups = _list_group_sessions()
+        groups = memory._list_group_sessions()
         if not groups:
             return "当前没有已注册的群。\n在群里 @我 发送任意消息即可注册。"
         lines = ["可用群："]
@@ -763,10 +527,11 @@ def _create_task_from_nl(chat_id: str, description: str) -> str:
         f"股票相关任务务必在prompt_template中指定分析的股票代码或名称。\n"
         f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
+    result = ""
     try:
         result = ask_claude(parse_prompt, timeout=60)
         import re as _re
-        json_match = _re.search(r'\{[^{}]*"cron"[^{}]*\}', result, _re.DOTALL)
+        json_match = _re.search(r'\{[^{}]*"cron"[^{}]*}', result, _re.DOTALL)
         if not json_match:
             return f"无法解析任务描述。请尝试更具体的描述，如：/task 每天早上8点分析茅台\n\nClaude 返回：{result[:200]}"
         cfg = json.loads(json_match.group())
@@ -779,7 +544,7 @@ def _create_task_from_nl(chat_id: str, description: str) -> str:
         return f"已创建任务 [{task_id}]\n描述：{cfg.get('description', description)}\n定时：{cfg['cron']}\n推送目标：当前对话"
     except json.JSONDecodeError:
         return f"任务配置解析失败。请重试或简化描述。\nClaude 返回：{result[:200]}"
-    except Exception as e:
+    except (ValueError, KeyError) as e:
         return f"创建任务失败: {e}"
 
 
@@ -814,7 +579,7 @@ def _process_message(event: dict) -> None:
             return
         short_id = parts[0]
         query = parts[1]
-        groups = _list_group_sessions()
+        groups = memory._list_group_sessions()
         target = next((g for g in groups if g["short_id"] == short_id), None)
         if not target:
             reply_message(message_id, f"未找到群 {short_id}。用 /groups 查看可用群。")
@@ -822,8 +587,8 @@ def _process_message(event: dict) -> None:
         if not check_membership(target["conv_id"], sender_id):
             reply_message(message_id, f"你不在群 {short_id} 中，无法查询。用 /groups 查看你已加入的群。")
             return
-        transcript = _read_group_transcript(target["conv_id"], limit=30)
-        group_mem, _ = _load_memory(target["conv_id"], "group", "")
+        transcript = memory._read_group_transcript(target["conv_id"], limit=30)
+        group_mem, _ = memory._load_memory(target["conv_id"], "group", "")
         label = target["label"] or short_id
         parts = []
         if group_mem:
@@ -832,7 +597,7 @@ def _process_message(event: dict) -> None:
             parts.append(f"[{label} 最近消息]\n{transcript}")
         if parts:
             group_context = "\n\n".join(parts)
-        text = query  # replace the command with the actual query
+        text = query
 
     # Pre-process /new and /clear — consolidate memory before resetting
     if cmd_lower in ("/new", "/clear", "new", "clear", "/reset", "reset"):
@@ -841,8 +606,8 @@ def _process_message(event: dict) -> None:
         def _do_reset_with_consolidation():
             summary = ""
             try:
-                _, summary = _consolidate_session(conv_id)
-            except Exception as e:
+                _, summary = memory._consolidate_session(conv_id)
+            except (OSError, ValueError, RuntimeError) as e:
                 print(f"[整理] /new 前整理失败: {e}", flush=True)
             _reset_session(conv_id)
             if summary:
@@ -854,7 +619,7 @@ def _process_message(event: dict) -> None:
 
     # Step 1: Exact-match commands (fast path, no Claude)
     if text.strip().lower() in _EXACT_COMMANDS:
-        cmd_reply = _handle_command(chat_id, chat_type, sender_id, text, message_id)
+        cmd_reply = _handle_command(chat_id, chat_type, text)
         if cmd_reply is not None:
             threading.Thread(target=reply_message, args=(message_id, cmd_reply), daemon=True).start()
             return
@@ -864,7 +629,7 @@ def _process_message(event: dict) -> None:
 
     # Step 2: Semantic command parsing
     has_keywords = any(kw in text for kw in _COMMAND_KEYWORDS)
-    stock_query = text
+    stock_query: str = text
     action_summary = ""
 
     if has_keywords:
@@ -879,7 +644,8 @@ def _process_message(event: dict) -> None:
                     conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" else chat_id
 
             if analysis_actions:
-                stock_query = analysis_actions[0].get("args", {}).get("query", text)
+                query_arg = analysis_actions[0].get("args", {}).get("query")
+                stock_query = str(query_arg) if query_arg else text
 
             if not analysis_actions:
                 msg = action_summary or "指令已执行。"
@@ -911,8 +677,6 @@ def _process_message(event: dict) -> None:
             args=(message_id, welcome),
             daemon=True,
         ).start()
-        # The welcome message sent by reply_message is a Feishu reply, not
-        # a Claude response — it won't appear in the Claude Code transcript.
 
     # Step 5: Processing lock per session (not per conversation)
     with _processing_lock:
@@ -928,20 +692,15 @@ def _process_message(event: dict) -> None:
     # Step 6: Build prompt and dispatch
     def handle():
         try:
-            # Format user message
             if chat_type == "p2p":
                 user_message = stock_query
             else:
-                label = get_user_label(sender_id)
-                user_message = f"[{label}]: {stock_query}"
+                user_label = get_user_label(sender_id) or sender_id
+                user_message = f"[{user_label}]: {stock_query}"
 
-            # Fetch stock data
             data_context, data_ok = _fetch_stock_context(stock_query)
-
-            # Match skills
             skill_context = _match_skills(stock_query)
 
-            # Build context blocks (appended after user message, separated by ---)
             context_parts = []
 
             # Inject memory on new session — only if it has meaningful content
@@ -950,14 +709,13 @@ def _process_message(event: dict) -> None:
                 and not _sessions[conv_id].get("memory_injected", True)
             )
             if needs_memory:
-                mem_content, mem_path = _load_memory(conv_id, chat_type, sender_id)
+                mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
                 if not mem_content:
                     name = get_user_label(sender_id) if chat_type == "p2p" else ("群聊 " + chat_id[-6:])
                     mem_type = "user" if chat_type == "p2p" else "group"
                     open_id = sender_id if chat_type == "p2p" else chat_id
-                    _create_memory_skeleton(open_id, name, mem_type)
-                    mem_content, mem_path = _load_memory(conv_id, chat_type, sender_id)
-                # Only inject if memory has real content (skip empty skeleton)
+                    memory._create_memory_skeleton(open_id, name, mem_type)
+                    mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
                 if mem_content and "（待探索）" not in mem_content and "（暂无）" not in mem_content:
                     context_parts.append(f"[用户记忆]\n{mem_content[:800]}")
                 with _session_lock:
@@ -986,7 +744,6 @@ def _process_message(event: dict) -> None:
             if action_summary:
                 context_parts.append(f"[操作结果: {action_summary}]")
 
-            # Build final prompt: user message first, context after --- separator
             if context_parts:
                 prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
             else:
@@ -996,13 +753,13 @@ def _process_message(event: dict) -> None:
 
             reply_message(message_id, response)
             print(f"[回复] 已发送到 {chat_id}", flush=True)
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             print(f"[错误] 处理消息失败: {e}", flush=True)
             import traceback
             traceback.print_exc()
             try:
                 reply_message(message_id, f"分析出错了: {e}")
-            except Exception:
+            except OSError:
                 pass
         finally:
             with _processing_lock:
@@ -1022,7 +779,7 @@ def _handle_sdk_event(event_obj) -> None:
         try:
             dump = json.dumps(event_dict, ensure_ascii=False, default=str)
             print(f"[WS事件] {dump[:500]}", flush=True)
-        except Exception:
+        except (TypeError, ValueError):
             pass
         event = parse_event(event_dict)
         if event is None:
@@ -1036,7 +793,7 @@ def _handle_sdk_event(event_obj) -> None:
             print(f"[入群] 已发送欢迎消息到 {chat_id}", flush=True)
             return
         _process_message(event)
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         print(f"[WS] 事件处理异常: {e}", flush=True)
         import traceback
         traceback.print_exc()
@@ -1044,15 +801,16 @@ def _handle_sdk_event(event_obj) -> None:
 
 # === FastAPI App ===
 
-_ws_thread = None
+_ws_thread: threading.Thread | None = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     global _sessions, _subscribers, _ws_thread, _skills
     _sessions = _load_sessions()
     _subscribers = _load_subs()
-    update_subscribers(list(_subscribers))
+    memory.set_session_state(_sessions, _session_lock)
+    set_subscribers(list(_subscribers))
     _skills = _load_skills()
     start_scheduler()
     _ws_thread = start_ws_listener(_handle_sdk_event)

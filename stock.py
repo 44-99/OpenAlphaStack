@@ -12,7 +12,7 @@ def _cache_path(name: str) -> str:
     return os.path.join(STOCK_DATA_DIR, f"{name}.json")
 
 
-CACHE_TTL = int(os.getenv("STOCK_CACHE_TTL", "600"))  # default 10 min
+CACHE_TTL = int(os.getenv("STOCK_CACHE_TTL", "600"))
 
 
 def _read_cache(name: str, max_age_seconds: int = None) -> dict | None:
@@ -42,25 +42,22 @@ def get_market_overview() -> dict:
     try:
         import akshare as ak
 
-        # Major A-share indices
         indices = ak.stock_zh_index_spot_em()
         key_indices = ["上证指数", "深证成指", "创业板指", "科创50", "沪深300", "中证500"]
         idx_data = indices[indices["名称"].isin(key_indices)][["名称", "最新价", "涨跌幅", "成交量", "成交额"]].to_dict("records")
 
-        # Hot industry sectors
         try:
             sectors = ak.stock_board_industry_name_spot_em()
             top_sectors = sectors.nlargest(5, "涨跌幅")[["板块名称", "涨跌幅", "领涨股票"]].to_dict("records")
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             top_sectors = []
 
-        # Market breadth
         try:
             all_stocks = ak.stock_zh_a_spot_em()
             up_count = int((all_stocks["涨跌幅"] > 0).sum())
             down_count = int((all_stocks["涨跌幅"] < 0).sum())
             flat_count = int((all_stocks["涨跌幅"] == 0).sum())
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             up_count = down_count = flat_count = 0
 
         data = {
@@ -72,7 +69,7 @@ def get_market_overview() -> dict:
         _write_cache("market_overview", data)
         return data
 
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return {"error": str(e), "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
 
@@ -92,7 +89,7 @@ def get_hot_stocks(top_n: int = 10) -> dict:
         _write_cache("hot_stocks", data)
         return data
 
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -105,7 +102,6 @@ def get_stock_detail(code: str) -> dict:
     try:
         import akshare as ak
 
-        # Real-time quote
         spot = ak.stock_zh_a_spot_em()
         stock = spot[spot["代码"] == code]
         if stock.empty:
@@ -130,18 +126,17 @@ def get_stock_detail(code: str) -> dict:
             "昨收": float(row["昨收"]),
         }
 
-        # Recent daily data for technical context
         try:
             hist = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
             recent = hist.tail(20)
             data["recent_20_days"] = recent[["日期", "开盘", "收盘", "最高", "最低", "成交量", "涨跌幅"]].to_dict("records")
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             data["recent_20_days"] = []
 
         _write_cache(f"stock_{code}", data)
         return data
 
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -153,7 +148,7 @@ def get_top_gainers(top_n: int = 10) -> dict:
         all_stocks = ak.stock_zh_a_spot_em()
         gainers = all_stocks.nlargest(top_n, "涨跌幅")[["代码", "名称", "最新价", "涨跌幅", "换手率", "成交额"]].to_dict("records")
         return {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "top_gainers": gainers}
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -167,19 +162,16 @@ def get_potential_picks() -> dict:
         import akshare as ak
 
         df = ak.stock_zh_a_spot_em()
-        # Exclude ST, new stocks (<60 days listed), extreme prices
         df = df[~df["名称"].str.contains("ST|退市")]
         df = df[(df["最新价"] > 5) & (df["最新价"] < 200)]
-        df = df[df["成交额"] > 1e8]  # min turnover 100M
+        df = df[df["成交额"] > 1e8]
 
-        # Short-term criteria
         df_short = df[
-            (df["涨跌幅"] > 2) & (df["涨跌幅"] < 9) &  # strong but not limit-up
-            (df["换手率"] > 3) & (df["换手率"] < 20) &  # active but not crazy
-            (df["量比"] > 1.5)  # volume expansion
+            (df["涨跌幅"] > 2) & (df["涨跌幅"] < 9) &
+            (df["换手率"] > 3) & (df["换手率"] < 20) &
+            (df["量比"] > 1.5)
         ].nlargest(15, "涨跌幅")
 
-        # Medium-term criteria
         df_medium = df[
             (df["市盈率-动态"] > 0) & (df["市盈率-动态"] < 50) &
             (df["市净率"] > 0) & (df["市净率"] < 8) &
@@ -195,7 +187,7 @@ def get_potential_picks() -> dict:
             "short_term_candidates": short,
             "medium_term_candidates": medium,
         }
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         return {"error": str(e)}
 
 
@@ -208,7 +200,6 @@ def format_market_report() -> str:
 
     report = f"=== 市场数据报告 (生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}) ===\n\n"
 
-    # Market overview
     report += "【大盘指数】\n"
     if "indices" in overview:
         for idx in overview["indices"]:
@@ -219,25 +210,21 @@ def format_market_report() -> str:
         b = overview["breadth"]
         report += f"  上涨/下跌/平盘: {b['up']}/{b['down']}/{b['flat']}\n"
 
-    # Hot sectors
     if "top_sectors" in overview and overview["top_sectors"]:
         report += "\n【热门板块】\n"
         for s in overview["top_sectors"]:
             report += f"  {s['板块名称']}: {s['涨跌幅']}% (领涨: {s.get('领涨股票', '')})\n"
 
-    # Hot stocks
     if "hot_stocks" in hot:
         report += "\n【人气热度榜 TOP10】\n"
         for s in hot["hot_stocks"]:
             report += f"  {s['个股代码']} {s['个股名称']} | 现价:{s['现价']} | 涨跌:{s['涨跌幅']}% | 热度:{s['热度']}\n"
 
-    # Top gainers
     if "top_gainers" in gainers:
         report += "\n【今日涨幅榜 TOP10】\n"
         for s in gainers["top_gainers"]:
             report += f"  {s['代码']} {s['名称']} | {s['最新价']} | {s['涨跌幅']}% | 换手:{s['换手率']}%\n"
 
-    # Screening picks
     if "short_term_candidates" in picks:
         report += "\n【短线候选标的(多因子筛选)】\n"
         report += "条件: 涨幅2-9%, 换手3-20%, 量比>1.5, 成交额>1亿\n"

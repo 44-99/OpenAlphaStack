@@ -6,7 +6,7 @@ import os
 import re
 from config import CLAUDE_CMD, CLAUDE_TIMEOUT
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(
     os.path.expanduser("~"), ".claude", "projects", "E--Project-AlphaClaude"
 )
@@ -18,19 +18,19 @@ def _session_exists(session_id: str) -> bool:
 
 def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOUT) -> str:
     """Run claude -p. If session_id given, use --resume or --session-id for persistent context."""
-    try:
-        prompt = prompt.strip()
-        if not prompt:
-            return "抱歉，无法处理空消息。"
+    prompt = prompt.strip()
+    if not prompt:
+        return "抱歉，无法处理空消息。"
 
-        if session_id:
-            if _session_exists(session_id):
-                cmd = [CLAUDE_CMD, "--resume", session_id, "-p", prompt]
-            else:
-                cmd = [CLAUDE_CMD, "--session-id", session_id, "-p", prompt]
+    if session_id:
+        if _session_exists(session_id):
+            cmd = [CLAUDE_CMD, "--resume", session_id, "-p", prompt]
         else:
-            cmd = [CLAUDE_CMD, "-p", prompt]
+            cmd = [CLAUDE_CMD, "--session-id", session_id, "-p", prompt]
+    else:
+        cmd = [CLAUDE_CMD, "-p", prompt]
 
+    try:
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -45,7 +45,6 @@ def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOU
             if "Input must be provided" not in stderr_text:
                 output += "\n" + stderr_text
 
-        # Strip ANSI escape codes
         output = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
         return output.strip()
 
@@ -53,13 +52,13 @@ def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOU
         return "分析超时，请稍后再试。"
     except FileNotFoundError:
         return "Claude Code CLI 未找到，请确认已安装。"
-    except Exception as e:
+    except (OSError, ValueError) as e:
         return f"分析出错: {str(e)}"
 
 
 def build_trading_prompt(market_data: str, context: str = "") -> str:
     """Build a comprehensive prompt for stock trading analysis."""
-    prompt = f"""你是一位资深的A股股票分析师，擅长短线和中线交易策略。
+    return f"""你是一位资深的A股股票分析师，擅长短线和中线交易策略。
 
 请基于以下实时市场数据，给出专业的分析和推荐：
 
@@ -102,4 +101,3 @@ def build_trading_prompt(market_data: str, context: str = "") -> str:
 4. 务必提醒风险，不可只讲机会
 5. 用中文回复，表达简洁有力
 """
-    return prompt

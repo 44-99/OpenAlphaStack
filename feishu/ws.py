@@ -24,7 +24,7 @@ def listen(event_handler, reconnect_delay: int = 3):
         """Called by SDK when an im.message.receive_v1 event arrives."""
         try:
             _event_handler(event_obj)
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             print(f"[WS] 事件处理异常: {e}")
             import traceback
             traceback.print_exc()
@@ -45,7 +45,7 @@ def listen(event_handler, reconnect_delay: int = 3):
             )
             print(f"[WS] 已连接", flush=True)
             client.start()
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             print(f"[WS] 连接断开: {e}，{reconnect_delay}秒后重连...", flush=True)
             import time
             time.sleep(reconnect_delay)
