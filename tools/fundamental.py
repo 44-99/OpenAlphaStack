@@ -31,60 +31,73 @@ def _write_cache(name: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
 
+def _sina_quote(code: str) -> dict:
+    """Get name and price from Sina Finance real-time quote."""
+    import requests
+    sina_code = f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+    resp = requests.get(
+        f"https://hq.sinajs.cn/list={sina_code}",
+        timeout=10,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/"},
+    )
+    resp.encoding = "gbk"
+    raw = resp.text
+    if "=" not in raw:
+        return {}
+    fields = raw.split("=", 1)[1].strip().strip('"').split(",")
+    if len(fields) < 10:
+        return {}
+    return {"name": fields[0], "price": float(fields[3])}
+
+
 def get_fundamentals(code: str) -> dict:
     """Get fundamental indicators for a stock."""
+    import pandas as pd
+
     try:
         import akshare as ak
 
-        # Real-time valuation from spot
-        spot = ak.stock_zh_a_spot_em()
-        stock = spot[spot["代码"] == code]
-        if stock.empty:
+        quote = _sina_quote(code)
+        if not quote:
             return {"error": f"Stock not found: {code}"}
 
-        row = stock.iloc[0]
         result = {
             "code": code,
-            "name": str(row["名称"]),
-            "price": float(row["最新价"]),
-            "pe": float(row.get("市盈率-动态", 0) or 0),
-            "pb": float(row.get("市净率", 0) or 0),
-            "total_market_cap": float(row.get("总市值", 0) or 0),
-            "circulating_market_cap": float(row.get("流通市值", 0) or 0),
+            "name": quote["name"],
+            "price": quote["price"],
             "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
 
-        # Financial indicators (quarterly)
+        # Financial indicators from akshare financial_abstract
         try:
-            fin = ak.stock_financial_analysis_indicator(symbol=code)
+            fin = ak.stock_financial_abstract(symbol=code)
             if not fin.empty:
-                latest = fin.iloc[0]
-                result["roe"] = float(latest.get("净资产收益率", 0) or 0)
-                result["net_profit_growth"] = float(latest.get("净利润同比增长率", 0) or 0)
-                result["revenue_growth"] = float(latest.get("营业收入同比增长率", 0) or 0)
-                result["gross_margin"] = float(latest.get("销售毛利率", 0) or 0)
-                result["net_margin"] = float(latest.get("销售净利率", 0) or 0)
-                result["debt_ratio"] = float(latest.get("资产负债率", 0) or 0)
-                result["eps"] = float(latest.get("每股收益", 0) or 0)
-                result["bvps"] = float(latest.get("每股净资产", 0) or 0)
-                result["report_period"] = str(latest.get("报告期", ""))
+                val_cols = [c for c in fin.columns if c not in ("选项", "指标")]
+                indicators = {}
+                for _, row in fin.iterrows():
+                    key = str(row["指标"])
+                    for col in val_cols:
+                        v = row.get(col)
+                        if pd.notna(v) and v != 0:
+                            indicators[key] = float(v)
+                            break
+
+                result["roe"] = indicators.get("净资产收益率(ROE)")
+                result["revenue_growth"] = indicators.get("营业总收入增长率")
+                result["net_profit_growth"] = indicators.get("归属母公司净利润增长率")
+                result["gross_margin"] = indicators.get("毛利率")
+                result["net_margin"] = indicators.get("销售净利率")
+                result["debt_ratio"] = indicators.get("资产负债率")
+                result["eps"] = indicators.get("基本每股收益")
+                result["bvps"] = indicators.get("每股净资产")
+                result["report_period"] = str(val_cols[0]) if val_cols else ""
+
+                if result["eps"] and result["eps"] > 0:
+                    result["pe"] = round(quote["price"] / result["eps"], 2)
+                if result["bvps"] and result["bvps"] > 0:
+                    result["pb"] = round(quote["price"] / result["bvps"], 2)
         except Exception as e:
             result["financial_detail_error"] = str(e)
-
-        # Industry comparison
-        try:
-            industry = ak.stock_board_industry_name_spot_em()
-            sector_name = str(stock.iloc[0].get("板块", "")) if "板块" in stock.columns else ""
-            if sector_name:
-                sector_row = industry[industry["板块名称"] == sector_name]
-                if not sector_row.empty:
-                    result["industry"] = {
-                        "name": sector_name,
-                        "sector_change_pct": float(sector_row.iloc[0].get("涨跌幅", 0)),
-                        "sector_pe_avg": float(sector_row.iloc[0].get("市盈率", 0) or 0),
-                    }
-        except Exception:
-            pass
 
         return result
 

@@ -34,19 +34,30 @@ def _write_cache(name: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
 
+def _sina_code(code: str) -> str:
+    return f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+
+
 def fetch_hist(code: str, days: int = 120) -> pd.DataFrame:
-    """Fetch daily historical OHLCV data."""
-    import akshare as ak
-    df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-    if df.empty:
-        return df
-    df["日期"] = pd.to_datetime(df["日期"])
-    df = df.sort_values("日期").tail(days)
-    return df.rename(columns={
-        "日期": "date", "开盘": "open", "收盘": "close",
-        "最高": "high", "最低": "low", "成交量": "volume",
-        "成交额": "amount", "涨跌幅": "change_pct",
-    })
+    """Fetch daily historical OHLCV data from Sina Finance."""
+    import requests
+    url = (
+        f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+        f"CN_MarketData.getKLineData?symbol={_sina_code(code)}&scale=240&ma=no&datalen={days}"
+    )
+    resp = requests.get(url, timeout=15,
+                        headers={"User-Agent": "Mozilla/5.0",
+                                 "Referer": "https://finance.sina.com.cn/"})
+    resp.encoding = "gbk"
+    data = json.loads(resp.text)
+    if not data or not isinstance(data, list):
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    df = df.rename(columns={"day": "date"})
+    df["date"] = pd.to_datetime(df["date"])
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col])
+    return df.sort_values("date").tail(days).reset_index(drop=True)
 
 
 def calc_ma(df: pd.DataFrame, periods: list[int] | None = None) -> dict:

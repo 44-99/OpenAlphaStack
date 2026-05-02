@@ -35,7 +35,7 @@ def get_stock_news(code: str, limit: int = 10) -> dict:
     """Get recent news for a stock."""
     try:
         import akshare as ak
-        df = ak.stock_news_em(stock=code)
+        df = ak.stock_news_em(symbol=code)
 
         if df.empty:
             return {"code": code, "news": [], "count": 0, "note": "No news found"}
@@ -44,9 +44,9 @@ def get_stock_news(code: str, limit: int = 10) -> dict:
         news_list = []
         for _, row in recent.iterrows():
             item = {
-                "title": str(row.get("标题", row.get("title", ""))),
+                "title": str(row.get("新闻标题", row.get("title", ""))),
                 "time": str(row.get("发布时间", row.get("time", ""))),
-                "source": str(row.get("来源", row.get("source", "")))[:50],
+                "source": str(row.get("文章来源", row.get("source", "")))[:50],
                 "url": str(row.get("新闻链接", row.get("url", "")))[:200],
             }
             news_list.append(item)
@@ -90,7 +90,7 @@ def get_market_news(limit: int = 15) -> dict:
         all_news = []
         for code in ["600519", "000858", "300750", "601318"]:
             try:
-                df = ak.stock_news_em(stock=code)
+                df = ak.stock_news_em(symbol=code)
                 if not df.empty:
                     all_news.extend(df.head(3).to_dict("records"))
             except Exception:
@@ -99,7 +99,7 @@ def get_market_news(limit: int = 15) -> dict:
         seen = set()
         unique = []
         for n in all_news:
-            title = str(n.get("标题", n.get("title", "")))
+            title = str(n.get("新闻标题", n.get("title", "")))
             if title and title not in seen:
                 seen.add(title)
                 unique.append({"title": title, "time": str(n.get("发布时间", ""))})

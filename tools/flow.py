@@ -32,35 +32,48 @@ def _write_cache(name: str, data: dict) -> None:
 
 
 def get_north_bound_flow() -> dict:
-    """Get north-bound (沪港通/深港通) capital flow."""
+    """Get north-bound (沪港通/深港通) capital flow snapshot."""
+    import math
+
     try:
         import akshare as ak
-        df = ak.stock_hsgt_north_net_flow_in_em(symbol="北上")
-        today = df.iloc[-1] if not df.empty else None
-        yesterday = df.iloc[-2] if len(df) > 1 else None
+        df = ak.stock_hsgt_fund_flow_summary_em()
+        if df.empty:
+            return {"error": "No north-bound data available"}
 
-        data = {
+        def _safe_float(val) -> float:
+            try:
+                v = float(val)
+                return 0.0 if math.isnan(v) else v
+            except (ValueError, TypeError):
+                return 0.0
+
+        north = df[df["资金方向"] == "北向"]
+        if north.empty:
+            return {"error": "No north-bound flow data"}
+
+        total_net = round(sum(_safe_float(v) for v in north["资金净流入"]), 2)
+        total_buy = round(sum(_safe_float(v) for v in north["成交净买额"]), 2)
+        sh_row = north[north["板块"] == "沪股通"]
+        sz_row = north[north["板块"] == "深股通"]
+        sh_net = _safe_float(sh_row.iloc[0]["成交净买额"]) if not sh_row.empty else 0
+        sz_net = _safe_float(sz_row.iloc[0]["成交净买额"]) if not sz_row.empty else 0
+
+        trade_date = str(df.iloc[0]["交易日"])
+        status = int(df.iloc[0]["交易状态"]) if "交易状态" in df.columns else 0
+        market_open = status not in (3,)
+
+        return {
             "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "today": {
-                "net_flow": float(today["value"]) if today is not None else 0,
-                "date": str(today["date"]) if today is not None else "",
-            },
-            "yesterday": {
-                "net_flow": float(yesterday["value"]) if yesterday is not None else 0,
-                "date": str(yesterday["date"]) if yesterday is not None else "",
-            },
+            "trade_date": trade_date,
+            "market_open": market_open,
+            "north_net_flow": total_net,
+            "north_net_buy": total_buy,
+            "sh_net_buy": sh_net,
+            "sz_net_buy": sz_net,
+            "trend": "inflow" if total_net > 0 else ("outflow" if total_net < 0 else "flat"),
+            "note": "" if market_open else "Market closed (holiday/weekend)",
         }
-
-        recent = df.tail(5)
-        total_5d = float(recent["value"].sum())
-        data["five_day_total"] = round(total_5d, 2)
-        data["trend"] = "inflow_accelerating" if (
-            data["today"]["net_flow"] > data["yesterday"]["net_flow"] > 0
-        ) else "outflow_slowing" if (
-            data["today"]["net_flow"] > data["yesterday"]["net_flow"]
-        ) else "stable"
-
-        return data
     except Exception as e:
         return {"error": friendly_error("north", e)}
 
