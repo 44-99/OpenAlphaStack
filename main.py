@@ -232,10 +232,22 @@ def _load_skills() -> list[dict]:
     skills = []
     if not os.path.isdir(SKILLS_DIR):
         return skills
-    for fname in os.listdir(SKILLS_DIR):
-        if not fname.endswith(".md") or fname == "README.md":
-            continue
-        fpath = os.path.join(SKILLS_DIR, fname)
+    # Collect skill files: root-level .md files + subdirectory SKILL.md files
+    skill_files = []
+    for entry in os.listdir(SKILLS_DIR):
+        epath = os.path.join(SKILLS_DIR, entry)
+        if os.path.isdir(epath):
+            skill_md = os.path.join(epath, "SKILL.md")
+            if os.path.isfile(skill_md):
+                skill_files.append(skill_md)
+        elif entry.endswith(".md") and entry != "README.md":
+            skill_files.append(epath)
+
+    for fpath in skill_files:
+        fname = os.path.basename(fpath)
+        parent = os.path.basename(os.path.dirname(fpath))
+        if fname == "SKILL.md":
+            fname = f"{parent}/SKILL.md"
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 content = f.read()
