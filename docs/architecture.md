@@ -26,7 +26,7 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 
 | 维度 | 我们的方案 |
 |------|-----------|
-| **工具** | 项目根目录下的 Python 脚本 + `skills/*/scripts/` |
+| **工具** | `tools/` 下的 Python CLI 脚本 |
 | **调用** | Bash 子进程（Claude Code 内置） |
 | **状态** | 无状态 — 每次调用独立，即时返回 |
 | **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
@@ -51,25 +51,24 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
    │        │        │        │        │
    ▼        ▼        ▼        ▼        ▼
 ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │stock │ │sched │ │ feishu/  │
+│memory│ │claude│ │sched │ │config│ │ feishu/  │
 │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
 │      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──────┘ └──────┘ └──┬───┘ └──────────┘
-   │                          │
-   ▼                          ▼
-┌──────┐              ┌──────────────┐
-│config│              │  skills/     │
-│ .py  │              │  SKILL.md    │
-└──────┘              │  references/ │
-                      │  scripts/    │
-                      └──────────────┘
+└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──────────┘
+   │        │        │
+   ▼        ▼        ▼
+┌──────┐ ┌──────┐ ┌──────────────┐
+│ data/│ │tools/│ │  skills/     │
+│mem/c │ │ CLI  │ │  SKILL.md    │
+│ache  │ │ JSON │ │  references/ │
+└──────┘ └──────┘ └──────────────┘
 ```
 
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, stock, scheduler, feishu
-scheduler ──→ memory, claude, stock, feishu
+main ──→ memory, claude, scheduler, feishu, config
+scheduler ──→ memory, claude, feishu
 memory ──→ claude, config
 ```
 
