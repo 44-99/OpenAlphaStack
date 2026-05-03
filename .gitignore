@@ -15,6 +15,7 @@ data/*.json
 data/*.log
 data/memory/
 data/cache/
+data/output/
 *.log
 
 .idea/

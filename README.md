@@ -2,63 +2,74 @@
 
 ![AlphaClaude](docs/poster.png)
 
-基于 **Claude Code** 驱动的 A 股量化分析机器人，运行在飞书（Lark）上。
+基于 **Claude Code** 驱动的 A 股 Agent 量化交易系统，运行在飞书（Lark）上。
 
-**数据层**：腾讯→新浪→akshare 三级 fallback，13 个 CLI 工具覆盖行情/技术/基本面/资金/形态/情绪。
+**数据层**：腾讯→新浪→akshare 三级 fallback，15 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控。
 **策略层**：3 条场景化技能管线 + 7 条交易铁律前置约束，description-based 智能激活。
-**运维层**：交易日定时报告、订阅推送、双层记忆系统、自然语言创建定时任务、跨群查询、会话隔离。
+**引擎层**：统一 Agent 引擎（回测/模拟盘/实盘三模式共享同一代码路径），双速架构（Python 快车道 + Claude Code 慢车道）。
+**运维层**：Docker 部署、结构化日志、双层记忆系统、双模式 CI（快速 CI + Agent 回测 CI）。
 
 ## 功能特性
 
-- **定时报告** — 9:00 早盘简报、12:00 午间更新、15:30 收盘总结（交易日）
+- **Agent 自主交易** — 统一引擎驱动，回测/模拟盘/实盘三种模式共享代码路径。Claude Code 每天一个会话，从盘前竞价到收盘复盘全程自主决策
+- **策略闭环** — Agent 回测（含 Claude Code 判断层）→ 模拟盘验证 → 策略迭代 → 实盘准入
 - **多因子选股** — 腾讯行情主源（88字段）、新浪/akshare fallback，短线/中线/热钱 3 策略
-- **交互对话** — 飞书私聊/群聊中询问个股、大盘、持仓
-- **自定义任务** — `/task 每天早上8点分析茅台` — 自然语言创建定时任务
-- **跨群查询** — `/group <群ID> <问题>` — 私聊中查询任意已注册群聊
+- **交互对话** — 飞书私聊/群聊中询问个股、大盘、持仓，自然语言开启/关闭实盘
 - **双层记忆** — Claude Code transcript + 项目 memory 文件，每 12 小时自动整合
 - **技能系统** — 3 个场景化技能管线，description-based 激活，渐进式展开
-- **订阅推送** — `/sub` `/unsub` `/status` — 按群自主订阅每日推送
+- **风控硬约束** — 信号校验层 + 确定性风险计算器 + 双层安全闸门
 
 ## 架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      飞书 (Lark)                         │
-│               WebSocket 长连接                           │
-└──────────────────────┬──────────────────────────────────┘
-                       │ 事件
-                       ▼
-┌─────────────────────────────────────────────────────────┐
-│                      main.py                             │
-│  消息编排 · 会话管理 · 指令处理 · 技能加载               │
-└──┬────────┬────────┬────────┬────────┬────────┬──────────┘
-   │        │        │        │        │        │
-   ▼        ▼        ▼        ▼        ▼        ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │sched │ │config│ │stock │ │ feishu/  │
-│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
-│      │ │      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──┬───┘ └──────────┘
-   │        │        │                 │
-   ▼        ▼        ▼                 ▼
-┌──────┐ ┌──────┐ ┌──────────────┐
-│ data/│ │tools/│ │  skills/     │
-│mem/c │ │ CLI  │ │  SKILL.md    │
-│ache  │ │ JSON │ │  references/ │
-└──────┘ └──────┘ └──────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       飞书 (Lark)                           │
+│                WebSocket 长连接                             │
+└───────────────────────┬─────────────────────────────────────┘
+                        │ 事件
+                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       main.py                               │
+│   消息编排 · 会话管理 · 指令处理 · 技能加载                  │
+└──┬─────────┬──────────┬──────────┬──────────┬───────────────┘
+   │         │          │          │          │
+   ▼         ▼          ▼          ▼          ▼
+┌──────┐ ┌──────┐ ┌────────┐ ┌──────┐ ┌──────────────┐
+│memory│ │claude│ │scheduler│ │config│ │  feishu/     │
+│ .py  │ │ .py  │ │ .py    │ │ .py  │ │ auth bot ws  │
+└──┬───┘ └──┬───┘ └───┬────┘ └──────┘ └──────────────┘
+   │        │         │
+   ▼        ▼         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Unified Agent Engine                       │
+│                                                             │
+│  ┌─ Python 快车道 ──────────────────────────────────────┐  │
+│  │  tools/: 15 CLI 工具 (JSON 进/出，无状态)            │  │
+│  │  · 行情/技术/基本面/资金/形态/情绪/信号/风控         │  │
+│  │  · 止盈止损监控 · 规则信号触发 · 异动检测            │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌─ Claude Code 慢车道 ─────────────────────────────────┐  │
+│  │  skills/: 3 条技能管线 + 7 条交易铁律                │  │
+│  │  · 每天一个会话 (盘前→盘中→盘后)                     │  │
+│  │  · 决策账本跨会话连续 · 策略判断 · 计划产出          │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                             │
+│  模式: backtest / paper / live  (完全相同代码路径)         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, scheduler, feishu, config, stock
-scheduler ──→ memory, claude, feishu, stock
+main ──→ memory, claude, scheduler, feishu, config
+scheduler ──→ memory, claude, feishu
 memory ──→ claude, config
 ```
 
 ## 设计理念
 
-以 Claude Code CLI 为执行核心。`tools/` 下的 13 个 CLI 脚本为 Claude Code 提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback）；`stock.py` 为机器人内部定时报告和上下文注入提供批量数据。飞书作为通信渠道。详见 [docs/architecture.md](docs/architecture.md)。
+以 Claude Code CLI 为策略大脑，Python 引擎为执行躯干。`tools/` 下的 15 个 CLI 脚本提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback），`skills/` 提供交易策略框架。飞书作为通信渠道。回测、模拟盘、实盘三模式共享完全相同的代码路径——在回测里证明有效的策略，在实盘里同样有效。详见 [docs/architecture.md](docs/architecture.md) 和 [docs/roadmap.md](docs/roadmap.md)。
 
 ## 快速开始
 
@@ -108,10 +119,9 @@ python main.py
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 健康检查 + WebSocket 状态 |
+| GET | `/health` | 健康检查 + WebSocket 状态 + 引擎状态 |
 | GET | `/subscribers` | 列出已订阅的聊天 ID |
 | GET | `/sessions` | 列出活跃会话 |
-| POST | `/trigger/now?session=morning` | 手动触发任务 (`morning`/`midday`/`closing`/`dream`) |
 
 ### Windows 开机自启
 
@@ -171,19 +181,22 @@ AlphaClaude/
 │   ├── flow.py      — 资金流向、北向资金、主力动向
 │   ├── news.py      — 公告、研报、情绪分析
 │   ├── screen.py    — 多因子筛选（策略内联为 Python 常量）
-│   ├── backtest.py  — 历史形态回测
+│   ├── backtest.py  — 历史形态回测（单股单策略）
 │   ├── trend.py     — MA排列/交叉/乖离/趋势状态
 │   ├── signal_detector.py — 5 种入场信号检测
 │   ├── pivot.py     — 枢轴点/箱体/缠论中枢
 │   ├── fibonacci.py — 斐波那契回撤/扩展位
 │   ├── sentiment.py — 换手热度/量能/ATR/均线粘合/情绪评分
-│   └── portfolio.py — 自选股增删查改、持仓盈亏概览
+│   ├── portfolio.py — 自选股增删查改、持仓盈亏概览
+│   ├── risk.py      — 确定性风险计算（波动率/仓位/回撤/相关性）
+│   └── signal.py    — 交易信号硬校验 + 审计日志写入
 ├── skills/          — 场景化策略技能（渐进式展开）
 │   ├── trading-principles.md    — 前置技能：7 条交易铁律，始终加载
-│   ├── stock-analyzer/SKILL.md  — 个股分析管线 + references/（入场信号/位置管理/高级框架/风险）
-│   ├── market-analyzer/SKILL.md — 市场分析管线 + references/（情绪周期/龙头/板块轮动）
-│   └── stock-screener/SKILL.md  — 选股管线 + references/（短线/中线/热钱参数）
-├── data/            — 运行时数据 (会话、订阅、任务、记忆、缓存)
+│   ├── stock-analyzer/SKILL.md  — 个股分析管线 + references/
+│   ├── market-analyzer/SKILL.md — 市场分析管线 + references/
+│   └── stock-screener/SKILL.md  — 选股管线 + references/
+├── data/            — 运行时数据
+│   └── output/      — Agent 引擎输出 (ledger/state/plan，三种模式统一)
 ├── CLAUDE.md        — Claude Code 系统提示词（工具目录 + 交易纪律）
 └── requirements.txt
 ```
@@ -192,9 +205,9 @@ AlphaClaude/
 
 场景化设计：`SKILL.md` 路由 + `references/` 深度知识。description-based 激活（非关键词触发），Agent 根据用户意图自主选择技能管线。`trading-principles.md` 作为前置技能始终加载。详见 [docs/skills.md](docs/skills.md)。
 
-## 未来工作
+## 路线图
 
-四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。
+四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。当前进度：Phase 1 完成，Phase 2 进行中（2.1-2.3 已完成，2.4 统一 Agent 引擎开发中）。
 
 ## 许可证
 

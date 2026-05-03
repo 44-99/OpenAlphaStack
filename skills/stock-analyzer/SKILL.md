@@ -60,6 +60,22 @@ python tools/flow.py {code}             # 主力资金/大单方向
 
 根据趋势判定只扫描适用市场的信号。匹配到信号后按 reference 中的评分规则调整评分。
 
+### 阶段 3.5：风险量化（仓位约束）
+
+在做出买入建议前，必须先评估仓位风险：
+
+```
+python tools/risk.py {code} --capital {总资金}
+```
+
+获取以下约束：
+1. **波动率等级**：low/medium/high/extreme，决定基础仓位上限
+2. **仓位上限**：position_limit_adjusted（波动率 × 相关性调整后的百分比上限）
+3. **建议股数**：max_shares（按资金和仓位上限计算的手数）
+4. **回撤预警**：current_drawdown_pct > 15% 时警告，建议降低仓位
+
+最终建议仓位不得超过 risk.py 返回的 position_limit_adjusted。
+
 ### 阶段 4：位置判断
 
 加载 `references/position-management.md`：
@@ -90,3 +106,20 @@ python tools/flow.py {code}             # 主力资金/大单方向
 6. **数据时效性**：标注数据时间
 
 若数据不足以得出结论，明确说明缺少什么数据，不编造。
+
+### 阶段 7：信号提交
+
+当给出买入/卖出建议且用户确认后，调用 signal 工具提交信号至模拟盘：
+
+```
+python tools/signal.py submit \
+  --symbol {代码} --action {buy/sell} \
+  --entry {买入价} --stop {止损价} --target {止盈价} \
+  --confidence {置信度0-100} --strategy {策略名} \
+  --reasoning "{操作理由，≤200字}" \
+  --deviation {乖离率%}
+```
+
+工具会自动执行硬校验（止损位、风险回报比 ≥1.5:1、乖离率上限、置信度范围），校验通过后写入 `data/signals.jsonl` 并返回 trade_id。校验失败则返回具体错误，修正后重试。
+
+**注意**：仅在用户明确要求下单或确认操作时才提交。分析阶段不自动提交。

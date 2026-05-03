@@ -88,6 +88,15 @@
 |------|----------|------|
 | `portfolio` | `python tools/portfolio.py <add/remove/list/overview>` | 自选股增删查改、持仓实时盈亏概览 |
 
+### 风控与交易
+
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `risk` | `python tools/risk.py <code> --capital <金额>` | 波动率、仓位上限、回撤检查、持仓相关性——纯数学计算，无 LLM |
+| `signal` | `python tools/signal.py submit --symbol <代码> --action buy/sell --entry <价> --stop <价> --target <价> --confidence <0-100> --strategy <策略> --reasoning <理由> --deviation <乖离率>` | 提交交易信号——硬校验通过后写入 `data/signals.jsonl` |
+| `signal` | `python tools/signal.py list --limit 20` | 查看最近信号记录 |
+| `signal` | `python tools/signal.py stats` | 信号统计（多空比、策略分布、胜率） |
+
 ### 使用规则
 
 1. **先查再分析**: 用户问股票→先调用工具获取数据→基于数据给出结论
