@@ -16,7 +16,7 @@ STOCK_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"
 
 # Claude CLI
 CLAUDE_CMD = os.getenv("CLAUDE_CMD", r"C:\Users\Administrator\AppData\Roaming\npm\claude.cmd")
-CLAUDE_TIMEOUT = int(os.getenv("CLAUDE_TIMEOUT", "120"))
+CLAUDE_TIMEOUT = int(os.getenv("CLAUDE_TIMEOUT", "300"))
 
 # Default chat ID for scheduled broadcasts
 # Set this after capturing from first message

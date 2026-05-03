@@ -1,5 +1,7 @@
 """
-Stock data fetching via akshare.
+Bot-internal market data layer — scheduled reports and context injection.
+Uses akshare for broad market scanning. Claude Code uses tools/ CLI scripts
+for per-stock analysis (Tencent → Sina → akshare fallback chain).
 """
 import json
 import os

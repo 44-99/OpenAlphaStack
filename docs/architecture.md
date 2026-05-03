@@ -18,7 +18,7 @@
 - **继承一切**: 多轮对话、工具编排、会话管理、MCP 协议 — 全部内置在 Claude Code 中。我们不重复造轮子。
 - **通用能力**: 超越股票交易 — 编程帮助、写作、知识问答、跨平台聊天 — Claude Code 有的能力 AlphaClaude 都有。
 
-本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，Python 脚本作为数据计算，飞书作为通信渠道。
+本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，`tools/` 下的 CLI 脚本（腾讯→新浪→akshare）作为 Claude Code 的数据计算层，`stock.py` 为机器人内部定时报告和上下文注入提供批量数据，飞书作为通信渠道。
 
 ## 为什么用无状态脚本而不是 MCP Server
 
@@ -31,7 +31,7 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 | **状态** | 无状态 — 每次调用独立，即时返回 |
 | **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
 
-我们所有的工具都是轻量 Python 函数（akshare HTTP 调用、公式计算）。它们无状态、即时返回、无特殊要求。Claude Code 的 Bash 工具原生处理它们 — 不需要单独的 MCP server、进程池或回调系统。
+我们所有的工具都是轻量 Python 函数（腾讯/Sina HTTP 调用、公式计算）。它们无状态、即时返回、无特殊要求。Claude Code 的 Bash 工具原生处理它们 — 不需要单独的 MCP server、进程池或回调系统。
 
 当 Phase 3 自动交易需要专用信号监控进程时，它将是一个独立的 sidecar 守护进程，而非分层的服务网格。
 
@@ -47,16 +47,16 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 ┌─────────────────────────────────────────────────────────┐
 │                      main.py                             │
 │  消息编排 · 会话管理 · 指令处理 · 技能加载               │
-└──┬────────┬────────┬────────┬────────┬─────────────────┘
-   │        │        │        │        │
-   ▼        ▼        ▼        ▼        ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │sched │ │config│ │ feishu/  │
-│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
-│      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──────────┘
-   │        │        │
-   ▼        ▼        ▼
+└──┬────────┬────────┬────────┬────────┬────────┬──────────┘
+   │        │        │        │        │        │
+   ▼        ▼        ▼        ▼        ▼        ▼
+┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
+│memory│ │claude│ │sched │ │config│ │stock │ │ feishu/  │
+│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
+│      │ │      │ │      │ │      │ │      │ │ group ws │
+└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──┬───┘ └──────────┘
+   │        │        │                 │
+   ▼        ▼        ▼                 ▼
 ┌──────┐ ┌──────┐ ┌──────────────┐
 │ data/│ │tools/│ │  skills/     │
 │mem/c │ │ CLI  │ │  SKILL.md    │
@@ -67,8 +67,8 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, scheduler, feishu, config
-scheduler ──→ memory, claude, feishu
+main ──→ memory, claude, scheduler, feishu, config, stock
+scheduler ──→ memory, claude, feishu, stock
 memory ──→ claude, config
 ```
 

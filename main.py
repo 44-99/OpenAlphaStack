@@ -64,7 +64,7 @@ def _get_or_create_session(conv_id: str, session_type: str, label: str = "") -> 
     with _session_lock:
         if conv_id in _sessions:
             return _sessions[conv_id]["session_id"]
-        sid = _uuid.uuid4().hex
+        sid = str(_uuid.uuid4())
         _sessions[conv_id] = {
             "session_id": sid,
             "type": session_type,
@@ -81,7 +81,7 @@ def _reset_session(conv_id: str) -> str:
     """Delete old session, create new UUID. Used by /new /clear."""
     with _session_lock:
         old = _sessions.pop(conv_id, None)
-        sid = _uuid.uuid4().hex
+        sid = str(_uuid.uuid4())
         _sessions[conv_id] = {
             "session_id": sid,
             "type": old["type"] if old else "dm",

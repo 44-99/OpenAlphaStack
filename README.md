@@ -1,11 +1,17 @@
 # AlphaClaude
 
-基于 **Claude Code** 驱动的 AI 股票交易机器人。每日 A 股市场分析和个股推荐，通过飞书（Lark）推送。
+![AlphaClaude](docs/poster.png)
+
+基于 **Claude Code** 驱动的 A 股量化分析机器人，运行在飞书（Lark）上。
+
+**数据层**：腾讯→新浪→akshare 三级 fallback，13 个 CLI 工具覆盖行情/技术/基本面/资金/形态/情绪。
+**策略层**：3 条场景化技能管线 + 7 条交易铁律前置约束，description-based 智能激活。
+**运维层**：交易日定时报告、订阅推送、双层记忆系统、自然语言创建定时任务、跨群查询、会话隔离。
 
 ## 功能特性
 
 - **定时报告** — 9:00 早盘简报、12:00 午间更新、15:30 收盘总结（交易日）
-- **多因子选股** — 基于 akshare 的短线（1-5天）和中线（1-4周）选股
+- **多因子选股** — 腾讯行情主源（88字段）、新浪/akshare fallback，短线/中线/热钱 3 策略
 - **交互对话** — 飞书私聊/群聊中询问个股、大盘、持仓
 - **自定义任务** — `/task 每天早上8点分析茅台` — 自然语言创建定时任务
 - **跨群查询** — `/group <群ID> <问题>` — 私聊中查询任意已注册群聊
@@ -25,16 +31,16 @@
 ┌─────────────────────────────────────────────────────────┐
 │                      main.py                             │
 │  消息编排 · 会话管理 · 指令处理 · 技能加载               │
-└──┬────────┬────────┬────────┬────────┬─────────────────┘
-   │        │        │        │        │
-   ▼        ▼        ▼        ▼        ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │sched │ │config│ │ feishu/  │
-│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
-│      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──────────┘
-   │        │        │
-   ▼        ▼        ▼
+└──┬────────┬────────┬────────┬────────┬────────┬──────────┘
+   │        │        │        │        │        │
+   ▼        ▼        ▼        ▼        ▼        ▼
+┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
+│memory│ │claude│ │sched │ │config│ │stock │ │ feishu/  │
+│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
+│      │ │      │ │      │ │      │ │      │ │ group ws │
+└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──┬───┘ └──────────┘
+   │        │        │                 │
+   ▼        ▼        ▼                 ▼
 ┌──────┐ ┌──────┐ ┌──────────────┐
 │ data/│ │tools/│ │  skills/     │
 │mem/c │ │ CLI  │ │  SKILL.md    │
@@ -45,14 +51,14 @@
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, scheduler, feishu, config
-scheduler ──→ memory, claude, feishu
+main ──→ memory, claude, scheduler, feishu, config, stock
+scheduler ──→ memory, claude, feishu, stock
 memory ──→ claude, config
 ```
 
 ## 设计理念
 
-以 Claude Code CLI 为执行核心，通过 Python 无状态脚本提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback），飞书作为通信渠道。详见 [docs/architecture.md](docs/architecture.md)。
+以 Claude Code CLI 为执行核心。`tools/` 下的 13 个 CLI 脚本为 Claude Code 提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback）；`stock.py` 为机器人内部定时报告和上下文注入提供批量数据。飞书作为通信渠道。详见 [docs/architecture.md](docs/architecture.md)。
 
 ## 快速开始
 
@@ -87,7 +93,7 @@ FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Claude CLI
 CLAUDE_CMD=C:\Users\YourName\AppData\Roaming\npm\claude.cmd
-CLAUDE_TIMEOUT=120
+CLAUDE_TIMEOUT=300
 ```
 
 ### 运行
@@ -151,6 +157,7 @@ AlphaClaude/
 ├── claude.py        — Claude Code CLI 封装
 ├── scheduler.py     — APScheduler 定时任务 + 动态任务 CRUD
 ├── config.py        — 环境变量加载
+├── stock.py         — 机器人内部数据层（定时报告 & 上下文注入），akshare 批量扫描
 ├── feishu/          — 飞书 SDK 集成
 │   ├── auth.py      — 租户访问令牌
 │   ├── bot.py       — send_text / send_post / reply_message / parse_event
