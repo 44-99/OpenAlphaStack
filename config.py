@@ -15,9 +15,12 @@ FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
 STOCK_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 # Claude CLI
-CLAUDE_CMD = os.getenv("CLAUDE_CMD", r"C:\Users\Administrator\AppData\Roaming\npm\claude.cmd")
+CLAUDE_CMD = os.getenv("CLAUDE_CMD", "claude")
 CLAUDE_TIMEOUT = int(os.getenv("CLAUDE_TIMEOUT", "300"))
 
-# Default chat ID for scheduled broadcasts
-# Set this after capturing from first message
-TARGET_CHAT_IDS = []  # list of chat_ids to send scheduled reports to
+# Logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Crash alert — comma-separated Feishu chat IDs that receive crash notifications
+_alert_raw = os.getenv("ALERT_CHAT_IDS", "")
+ALERT_CHAT_IDS = [cid.strip() for cid in _alert_raw.split(",") if cid.strip()]

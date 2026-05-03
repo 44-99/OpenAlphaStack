@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.example
+data/*.log
+data/*.json
+data/memory/
+data/cache/
+*.md
+docs/
+.gitattributes
+start_bot.bat
+.idea/
+.claude/

@@ -4,21 +4,26 @@ Receives events via Feishu WebSocket long-connection.
 https://github.com/44-99/AlphaClaude
 """
 import json
+import logging
 import os
+import queue
 import re
+import sys
 import threading
+import traceback
 import uuid as _uuid
 from datetime import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from config import STOCK_DATA_DIR
+from config import ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR
 from feishu.bot import parse_event, reply_message, send_text
 from feishu.group import check_membership
 from feishu.user import get_user_label
 from feishu.ws import start_ws_listener
 from claude import ask_claude
+from logging_config import setup_logging
 from scheduler import (
     run_morning_analysis,
     run_midday_update,
@@ -32,6 +37,8 @@ from scheduler import (
 )
 import memory
 
+logger = setup_logging(STOCK_DATA_DIR, LOG_LEVEL)
+
 SESSIONS_FILE = os.path.join(STOCK_DATA_DIR, "sessions.json")
 SUBS_FILE = os.path.join(STOCK_DATA_DIR, "subscribers.json")
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
@@ -39,8 +46,8 @@ _sessions: dict[str, dict] = {}        # conv_id → {session_id, type, label}
 _subscribers: list[str] = []
 _session_lock = threading.RLock()
 _subs_lock = threading.RLock()
-_processing: dict[str, str] = {}       # session_uuid → conv_id (for lock message)
-_processing_lock = threading.Lock()
+_session_queues: dict[str, tuple[queue.Queue, threading.Thread]] = {}
+_session_queue_lock = threading.Lock()
 _skills: list[dict] = []
 
 
@@ -73,7 +80,7 @@ def _get_or_create_session(conv_id: str, session_type: str, label: str = "") -> 
             "created_at": datetime.now().isoformat(),
         }
         _save_sessions()
-        print(f"[会话] 新建 {session_type} session: {conv_id} → {sid[:8]}", flush=True)
+        logger.info("新建 %s session: %s → %s", session_type, conv_id, sid[:8], extra={"category": "session", "session_id": sid})
         return sid
 
 
@@ -91,7 +98,7 @@ def _reset_session(conv_id: str) -> str:
         }
         _save_sessions()
         if old:
-            print(f"[会话] 重置: {conv_id} → {sid[:8]}", flush=True)
+            logger.info("重置: %s → %s", conv_id, sid[:8], extra={"category": "session", "session_id": sid})
         return sid
 
 
@@ -285,9 +292,9 @@ def _load_skills() -> list[dict]:
                         cfg["always_load"] = always_load
                         skills.append(cfg)
                         tag = "前置" if always_load else f"触发: {cfg['triggers']}"
-                        print(f"[技能] 已加载: {cfg.get('name', fname)} {tag}", flush=True)
+                        logger.info("已加载: %s %s", cfg.get('name', fname), tag, extra={"category": "skill"})
         except (OSError, ValueError) as e:
-            print(f"[技能] 加载失败 {fname}: {e}", flush=True)
+            logger.warning("加载失败 %s: %s", fname, e, extra={"category": "skill"})
     return skills
 
 
@@ -574,6 +581,145 @@ def _create_task_from_nl(chat_id: str, description: str) -> str:
         return f"创建任务失败: {e}"
 
 
+# === Session queue ===
+
+
+def _session_worker(session_id: str, q: queue.Queue) -> None:
+    """Process messages for a single session FIFO. Exits after 600s idle."""
+    while True:
+        try:
+            task = q.get(timeout=600)
+        except queue.Empty:
+            with _session_queue_lock:
+                if q.empty():
+                    _session_queues.pop(session_id, None)
+            return
+
+        try:
+            _process_one_message(task, session_id)
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.error("会话工作线程异常: %s", e, exc_info=True,
+                         extra={"category": "error", "session_id": session_id})
+        finally:
+            q.task_done()
+
+
+def _ensure_session_worker(session_id: str) -> queue.Queue:
+    """Return the queue for session_id, creating a worker thread if needed."""
+    with _session_queue_lock:
+        entry = _session_queues.get(session_id)
+        if entry is None or not entry[1].is_alive():
+            q = queue.Queue()
+            t = threading.Thread(
+                target=_session_worker, args=(session_id, q), daemon=True
+            )
+            t.start()
+            _session_queues[session_id] = (q, t)
+            return q
+        return entry[0]
+
+
+def _process_one_message(task: dict, session_id: str) -> None:
+    """Build prompt and send to Claude, then reply. Extracted from handle()."""
+    chat_id = task["chat_id"]
+    chat_type = task["chat_type"]
+    sender_id = task["sender_id"]
+    stock_query = task["stock_query"]
+    conv_id = task["conv_id"]
+    group_context = task["group_context"]
+    action_summary = task["action_summary"]
+    message_id = task["message_id"]
+
+    if chat_type == "p2p":
+        user_message = stock_query
+    else:
+        user_label = get_user_label(sender_id) or sender_id
+        user_message = f"[{user_label}]: {stock_query}"
+
+    data_context, data_ok = _fetch_stock_context(stock_query)
+    skill_context = _match_skills(stock_query)
+    always_load_context = _get_always_load_skills()
+
+    context_parts = []
+
+    if always_load_context:
+        context_parts.append(always_load_context)
+
+    # Inject memory on new session
+    needs_memory = (
+        conv_id in _sessions
+        and not _sessions[conv_id].get("memory_injected", True)
+    )
+    if needs_memory:
+        mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
+        if not mem_content:
+            name = get_user_label(sender_id) if chat_type == "p2p" else ("群聊 " + chat_id[-6:])
+            mem_type = "user" if chat_type == "p2p" else "group"
+            open_id = sender_id if chat_type == "p2p" else chat_id
+            memory._create_memory_skeleton(open_id, name, mem_type)
+            mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
+        if mem_content and "（待探索）" not in mem_content and "（暂无）" not in mem_content:
+            context_parts.append(f"[用户记忆]\n{mem_content[:800]}")
+        with _session_lock:
+            if conv_id in _sessions:
+                _sessions[conv_id]["memory_injected"] = True
+                _save_sessions()
+
+    if group_context:
+        context_parts.append(group_context)
+    if data_context:
+        context_parts.append(data_context)
+    if not data_ok:
+        codes = _extract_stock_codes(stock_query)
+        has_stock = bool(codes) or any(
+            kw in stock_query for kw in (
+                "大盘", "指数", "行情", "市场", "板块", "走势", "涨跌",
+                "股票", "涨停", "跌停", "开盘", "收盘", "短线", "中线",
+                "仓位", "买入", "卖出", "止损", "止盈", "推荐", "分析",
+                "预测", "建议", "估值", "PE", "PB",
+            )
+        )
+        if has_stock:
+            context_parts.append("当前休市中，无实时行情数据。请基于训练知识给出分析，注明「基于历史数据」。")
+    if skill_context:
+        context_parts.append(f"[技能提示]\n{skill_context}")
+    if action_summary:
+        context_parts.append(f"[操作结果: {action_summary}]")
+
+    if context_parts:
+        prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
+    else:
+        prompt = user_message
+
+    response = ask_claude(prompt, session_id=session_id)
+
+    reply_message(message_id, response)
+    logger.info("已发送到 %s", chat_id, extra={"category": "reply", "chat_id": chat_id})
+
+
+# === Crash hook ===
+
+
+def _setup_crash_hook(alert_chat_ids: list[str]) -> None:
+    """Install global exception hook: log + best-effort Feishu alert."""
+    _prev_hook = sys.excepthook
+
+    def _crash_handler(exc_type, exc_value, exc_tb):
+        logger.critical("未捕获异常，进程即将崩溃", exc_info=(exc_type, exc_value, exc_tb),
+                        extra={"category": "crash"})
+        if alert_chat_ids:
+            tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+            alert = f"[AlphaClaude 崩溃告警]\n{exc_type.__name__}: {exc_value}\n\n{''.join(tb_lines[-5:])[:500]}"
+            for cid in alert_chat_ids:
+                try:
+                    send_text(cid, alert)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+        _prev_hook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _crash_handler
+
+
 # === Message processing ===
 
 def _process_message(event: dict) -> None:
@@ -587,7 +733,7 @@ def _process_message(event: dict) -> None:
     if not text:
         return
 
-    print(f"[消息] {sender_id} @ {chat_id}: {text[:100]}", flush=True)
+    logger.info("%s @ %s: %s", sender_id, chat_id, text[:100], extra={"category": "message", "chat_id": chat_id})
 
     cmd_lower = text.strip().lower()
 
@@ -634,7 +780,7 @@ def _process_message(event: dict) -> None:
             try:
                 _, summary = memory._consolidate_session(conv_id)
             except (OSError, ValueError, RuntimeError) as e:
-                print(f"[整理] /new 前整理失败: {e}", flush=True)
+                logger.warning("/new 前整理失败: %s", e, extra={"category": "consolidate"})
             _reset_session(conv_id)
             if summary:
                 reply_message(message_id, f"[记忆已整理] {summary}\n对话已重置，新会话已就绪。")
@@ -704,98 +850,26 @@ def _process_message(event: dict) -> None:
             daemon=True,
         ).start()
 
-    # Step 5: Processing lock per session (not per conversation)
-    with _processing_lock:
-        if session_id in _processing:
-            threading.Thread(
-                target=reply_message,
-                args=(message_id, "正在分析中，请稍候..."),
-                daemon=True,
-            ).start()
-            return
-        _processing[session_id] = conv_id
-
-    # Step 6: Build prompt and dispatch
-    def handle():
-        try:
-            if chat_type == "p2p":
-                user_message = stock_query
-            else:
-                user_label = get_user_label(sender_id) or sender_id
-                user_message = f"[{user_label}]: {stock_query}"
-
-            data_context, data_ok = _fetch_stock_context(stock_query)
-            skill_context = _match_skills(stock_query)
-            always_load_context = _get_always_load_skills()
-
-            context_parts = []
-
-            if always_load_context:
-                context_parts.append(always_load_context)
-
-            # Inject memory on new session — only if it has meaningful content
-            needs_memory = (
-                conv_id in _sessions
-                and not _sessions[conv_id].get("memory_injected", True)
-            )
-            if needs_memory:
-                mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
-                if not mem_content:
-                    name = get_user_label(sender_id) if chat_type == "p2p" else ("群聊 " + chat_id[-6:])
-                    mem_type = "user" if chat_type == "p2p" else "group"
-                    open_id = sender_id if chat_type == "p2p" else chat_id
-                    memory._create_memory_skeleton(open_id, name, mem_type)
-                    mem_content, mem_path = memory._load_memory(conv_id, chat_type, sender_id)
-                if mem_content and "（待探索）" not in mem_content and "（暂无）" not in mem_content:
-                    context_parts.append(f"[用户记忆]\n{mem_content[:800]}")
-                with _session_lock:
-                    if conv_id in _sessions:
-                        _sessions[conv_id]["memory_injected"] = True
-                        _save_sessions()
-
-            if group_context:
-                context_parts.append(group_context)
-            if data_context:
-                context_parts.append(data_context)
-            if not data_ok:
-                codes = _extract_stock_codes(stock_query)
-                has_stock = bool(codes) or any(
-                    kw in stock_query for kw in (
-                        "大盘", "指数", "行情", "市场", "板块", "走势", "涨跌",
-                        "股票", "涨停", "跌停", "开盘", "收盘", "短线", "中线",
-                        "仓位", "买入", "卖出", "止损", "止盈", "推荐", "分析",
-                        "预测", "建议", "估值", "PE", "PB",
-                    )
-                )
-                if has_stock:
-                    context_parts.append("当前休市中，无实时行情数据。请基于训练知识给出分析，注明「基于历史数据」。")
-            if skill_context:
-                context_parts.append(f"[技能提示]\n{skill_context}")
-            if action_summary:
-                context_parts.append(f"[操作结果: {action_summary}]")
-
-            if context_parts:
-                prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
-            else:
-                prompt = user_message
-
-            response = ask_claude(prompt, session_id=session_id)
-
-            reply_message(message_id, response)
-            print(f"[回复] 已发送到 {chat_id}", flush=True)
-        except (OSError, ValueError, RuntimeError) as e:
-            print(f"[错误] 处理消息失败: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            try:
-                reply_message(message_id, f"分析出错了: {e}")
-            except OSError:
-                pass
-        finally:
-            with _processing_lock:
-                _processing.pop(session_id, None)
-
-    threading.Thread(target=handle, daemon=True).start()
+    # Step 5: Enqueue message to per-session queue (FIFO, no rejection)
+    task = {
+        "message_id": message_id,
+        "chat_id": chat_id,
+        "chat_type": chat_type,
+        "sender_id": sender_id,
+        "stock_query": stock_query,
+        "conv_id": conv_id,
+        "group_context": group_context,
+        "action_summary": action_summary,
+    }
+    q = _ensure_session_worker(session_id)
+    depth = q.qsize()
+    if depth > 0:
+        threading.Thread(
+            target=reply_message,
+            args=(message_id, f"排队中（前面还有{depth}个请求），请稍候..."),
+            daemon=True,
+        ).start()
+    q.put(task)
 
 
 # === WebSocket event handler ===
@@ -808,25 +882,23 @@ def _handle_sdk_event(event_obj) -> None:
             event_dict = event_obj
         try:
             dump = json.dumps(event_dict, ensure_ascii=False, default=str)
-            print(f"[WS事件] {dump[:500]}", flush=True)
+            logger.debug("WS事件: %s", dump[:500], extra={"category": "ws"})
         except (TypeError, ValueError):
             pass
         event = parse_event(event_dict)
         if event is None:
-            print(f"[WS] 未识别事件类型，跳过", flush=True)
+            logger.info("未识别事件类型，跳过", extra={"category": "ws"})
             return
         if event["type"] == "challenge":
             return
         if event["type"] == "member_added":
             chat_id = event["chat_id"]
             send_text(chat_id, _GROUP_WELCOME_MSG)
-            print(f"[入群] 已发送欢迎消息到 {chat_id}", flush=True)
+            logger.info("已发送欢迎消息到 %s", chat_id, extra={"category": "member_added", "chat_id": chat_id})
             return
         _process_message(event)
     except (OSError, ValueError, RuntimeError) as e:
-        print(f"[WS] 事件处理异常: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
+        logger.error("事件处理异常: %s", e, exc_info=True, extra={"category": "ws"})
 
 
 # === FastAPI App ===
@@ -842,11 +914,12 @@ async def lifespan(_: FastAPI):
     memory.set_session_state(_sessions, _session_lock)
     set_subscribers(list(_subscribers))
     _skills = _load_skills()
+    _setup_crash_hook(ALERT_CHAT_IDS)
     start_scheduler()
     _ws_thread = start_ws_listener(_handle_sdk_event)
-    print("飞书股票机器人已启动 (WebSocket长连接)", flush=True)
+    logger.info("飞书股票机器人已启动 (WebSocket长连接)", extra={"category": "startup"})
     yield
-    print("飞书股票机器人已停止")
+    logger.info("飞书股票机器人已停止", extra={"category": "shutdown"})
 
 
 app = FastAPI(title="StockTrading Bot", lifespan=lifespan)
@@ -886,11 +959,4 @@ async def get_sessions():
 
 if __name__ == "__main__":
     import uvicorn
-    import logging
-    for handler in logging.getLogger().handlers:
-        if hasattr(handler, "stream"):
-            handler.stream.reconfigure(encoding="utf-8")
-    for handler in logging.getLogger("uvicorn").handlers:
-        if hasattr(handler, "stream"):
-            handler.stream.reconfigure(encoding="utf-8")
     uvicorn.run(app, host="0.0.0.0", port=8800, log_level="info")

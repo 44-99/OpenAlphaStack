@@ -1,0 +1,53 @@
+name: Scheduled Analysis
+
+on:
+  schedule:
+    # All times UTC = CST-8
+    # 09:00 CST (01:00 UTC) Mon-Fri — Morning analysis
+    - cron: '0 1 * * 1-5'
+    # 12:00 CST (04:00 UTC) Mon-Fri — Midday update
+    - cron: '0 4 * * 1-5'
+    # 15:30 CST (07:30 UTC) Mon-Fri — Closing summary
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      session:
+        description: 'Analysis session to trigger'
+        required: true
+        type: choice
+        options:
+          - morning
+          - midday
+          - closing
+          - dream
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger morning analysis
+        if: |
+          (github.event_name == 'schedule' && github.event.schedule == '0 1 * * 1-5') ||
+          (github.event_name == 'workflow_dispatch' && inputs.session == 'morning')
+        run: |
+          curl -fsS -X POST "${{ secrets.BOT_URL }}/trigger/now?session=morning"
+
+      - name: Trigger midday update
+        if: |
+          (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1-5') ||
+          (github.event_name == 'workflow_dispatch' && inputs.session == 'midday')
+        run: |
+          curl -fsS -X POST "${{ secrets.BOT_URL }}/trigger/now?session=midday"
+
+      - name: Trigger closing summary
+        if: |
+          (github.event_name == 'schedule' && github.event.schedule == '30 7 * * 1-5') ||
+          (github.event_name == 'workflow_dispatch' && inputs.session == 'closing')
+        run: |
+          curl -fsS -X POST "${{ secrets.BOT_URL }}/trigger/now?session=closing"
+
+      - name: Trigger dream consolidation
+        if: github.event_name == 'workflow_dispatch' && inputs.session == 'dream'
+        run: |
+          curl -fsS -X POST "${{ secrets.BOT_URL }}/trigger/now?session=dream"
