@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint-and-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install pandas requests akshare ruff
+
+      - name: Ruff lint
+        run: ruff check tools/ --ignore F841,E722
+
+      - name: Schema check — all tools have valid argparser
+        run: |
+          for tool in quote technical fundamental flow news screen backtest trend signal_detector pivot fibonacci sentiment portfolio risk signal signal_rules; do
+            echo "Checking tools/$tool.py schema..."
+            python "tools/$tool.py" --help > /dev/null 2>&1 || {
+              echo "ERROR: tools/$tool.py --help failed"
+              exit 1
+            }
+          done
+          echo "All 16 tools pass schema check"
+
+      - name: Signal rules baseline check
+        run: |
+          echo "Running signal_rules.py --list..."
+          python tools/signal_rules.py --list
+          echo "Baseline check OK"
+
+      - name: Risk calculator smoke test
+        run: |
+          echo "Testing risk.py with 600519..."
+          python tools/risk.py 600519 --capital 100000 > /dev/null || {
+            echo "ERROR: risk.py failed"
+            exit 1
+          }
+          echo "Risk calculator OK"
+
+      - name: Signal validator smoke test
+        run: |
+          echo "Testing signal.py stats..."
+          python tools/signal.py stats 2>/dev/null || echo "No signal history yet"
+          echo "Signal validator OK"

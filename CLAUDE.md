@@ -80,7 +80,9 @@
 
 | 工具 | 调用方式 | 场景 |
 |------|----------|------|
-| `backtest` | `python tools/backtest.py <code> -s <策略>` 或 `--list` | 策略历史胜率与收益验证 |
+| `backtest` | `python tools/backtest.py <code> -s <策略>` 或 `--list` | 策略历史胜率与收益验证——单股单策略 |
+| `backtest_runner` | `python tools/backtest_runner.py --start 2024-01-01 --end 2024-06-30 -u default` | 完整回测入口——支持 screen 策略名或代码列表，调 paper_engine |
+| `paper_engine` | `python tools/paper_engine.py --mode backtest --start ... --end ...` | 统一 Agent 引擎 (v2) — 盘后 Claude Code 三阶段 + 盘中 Python 执行，backtest/paper/live 三模式共享代码路径 |
 
 ### 自选股
 
@@ -96,6 +98,13 @@
 | `signal` | `python tools/signal.py submit --symbol <代码> --action buy/sell --entry <价> --stop <价> --target <价> --confidence <0-100> --strategy <策略> --reasoning <理由> --deviation <乖离率>` | 提交交易信号——硬校验通过后写入 `data/signals.jsonl` |
 | `signal` | `python tools/signal.py list --limit 20` | 查看最近信号记录 |
 | `signal` | `python tools/signal.py stats` | 信号统计（多空比、策略分布、胜率） |
+| `signal_rules` | `python tools/signal_rules.py <code>` 或 `--watchlist <代码列表>` | 规则信号引擎——6 条纯 Python 规则（金叉/放量/乖离/排列/缺口/量能），零 LLM |
+
+### 报表
+
+| 工具 | 调用方式 | 场景 |
+|------|----------|------|
+| `daily_report` | `python tools/daily_report.py <run_id>` 或 `--all` | 日交易报表——P&L/胜率/回撤/持仓，可选飞书推送 |
 
 ### 使用规则
 
@@ -105,6 +114,8 @@
 4. **数据时效性**: 每次返回结果包含 `time` 字段，标注数据时间
 5. **错误处理**: 如果返回 `{"error": "..."}` ，如实告知用户数据获取失败
 6. **缓存**: 工具内部有缓存（行情300s，基本面3600s），短时间内重复调用不会重复请求
+7. **引擎运行 (v2)**: `paper_engine.py` 盘后批量分析 + 次日执行。Claude Code 盘后三阶段（定方向→选标的→风控），盘中 Python 机械执行。紧急：大盘跌>3%或持仓跌>5%触发 Claude Code
+8. **回测**: `--mode backtest --dry-run` 仅 Python 快车道；完整回测不加 `--dry-run`，每交易日盘后调 Claude Code 历史重放
 
 ## 交易纪律（必须遵守）
 

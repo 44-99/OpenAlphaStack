@@ -53,58 +53,51 @@
 
 ## Phase 2: 统一 Agent 引擎 + 策略闭环 (P0)
 
-**核心目标**：构建一个在回测、模拟盘、实盘三种模式下运行完全相同代码路径的统一引擎。回测用历史数据加速回放，模拟盘和实盘用实时行情——除此之外没有任何区别。这是整个系统的信任基础。
+**核心目标**：构建一个在回测、模拟盘、实盘三种模式下运行完全相同代码路径的统一引擎。架构为 **盘后 Claude Code 批量分析 + 次日 Python 机械执行**，利用 A 股 T+1 制度和政策驱动特性获取 Alpha。
 
-### 架构总览
+### 架构总览 (v2 — Overnight Batch + Day Execution)
 
 ```
-┌─ Python Engine (常驻进程) ───────────────────────────────────┐
-│                                                               │
-│  根据 MODE 切换数据源:                                         │
-│    backtest → 历史 K 线逐日回放                                │
-│    paper    → 腾讯/新浪实时行情                                 │
-│    live     → 腾讯/新浪 + 券商 API                             │
-│                                                               │
-│  快车道 (1-5s, backtest 模式下加速):                           │
-│    · 价格监控 → 止盈止损触发 → 立即撮合                         │
-│    · 规则信号 (金叉/放量) → signal.py → 自动执行               │
-│    · 异动检测 → 写入 event_queue.jsonl                         │
-│    · 按 plan.json 执行当前持仓计划                              │
-│                                                               │
-│  会话管理 (单实例锁):                                           │
-│    · 9:15 启动 Claude Code session                             │
-│    · 维持单会话至 15:30 收盘                                    │
-│    · 盘前竞价 9:15-9:25 独立处理                                │
-│    · 全局互斥锁 — 同一时间只有 1 个 Claude Code                  │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
-
-┌─ Claude Code (每天一个会话) ──────────────────────────────────┐
-│                                                               │
-│  启动 → 读 state.json + plan.json + ledger.jsonl + 当日数据    │
-│  盘中 → Python 推送事件 → tools 分析 → skills 策略 → 决策      │
-│  结束 → 写 ledger.jsonl + state.json + plan.json               │
-│                                                               │
-│  回测时钟模型:                                                  │
-│    · 异动触发 → 仿真时钟暂停                                    │
-│    · Claude Code 分析 ~60s（现实时间）                          │
-│    · 决策产出 → 仿真时钟 +60s → 以此时历史价成交                 │
-│    · 仿真时钟继续 ▶                                             │
-│    · 无信号的时段快速扫描（毫秒级跳过）                          │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
+┌─ 盘后 (15:00 → 次日 9:00) ────────────────────────────────────┐
+│                                                                 │
+│  Claude Code 三阶段分析 (每天 1 次)                               │
+│                                                                 │
+│  Stage 1 定方向: Tavily 搜索政策/公告 → market_bias + 仓位上限    │
+│  Stage 2 选标的: 政策受益(B) ∩ 技术筛选(C) + 持仓调整(A)         │
+│  Stage 3 风控:   risk.py + signal.py 硬校验 → 最终 plan.json     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼ plan.json (buy_candidates + holding_adjustments + triggers)
+┌─ 盘中 (9:15 → 15:00) ────────────────────────────────────────────┐
+│                                                                 │
+│  Python 引擎 (零 LLM 调用，除非紧急)                               │
+│                                                                 │
+│  · 9:25  执行持仓调整指令 (加仓/减仓/调止损)                       │
+│  · 每 5s 止盈止损检查 → 候选买入(限价) → 规则信号(卫星仓位)       │
+│  · 紧急: 大盘跌 >3% 或 持仓跌 >5% → 触发 Claude Code              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**三层统一，完全相同的代码路径：**
+**仓位模型：核心+卫星 (50/30/20)**
+
+| 层级 | 占比 | 来源 | 持有周期 | 单票上限 | 止损 |
+|------|------|------|----------|----------|------|
+| 核心 | 50% | Claude Code 政策/事件选股 | 1-4 周 | 20% | -6% |
+| 卫星 | 30% | screen.py + signal_rules.py | 1-5 天 | 7.5% | -5% |
+| 现金 | 20% | T+1 缓冲 + 极端机会 + 空仓储备 | — | — | — |
+
+**空仓条件（双重确认）**：技术面恶化（上证 MA5<MA20 + 连跌 3 日）+ Claude Code bearish 同时满足 → 空仓至 20%。
+
+**三种模式统一：**
 
 | 维度 | Backtest | Paper | Live |
 |------|----------|-------|------|
 | 数据源 | 历史 K 线回放 | 实时行情 | 实时行情 |
-| 资金账户 | 虚拟 | 虚拟 | 券商真实 |
-| 时钟 | 加速（Claude Code 时暂停） | 真实 | 真实 |
-| Claude Code | 每天一个会话 | 每天一个会话 | 每天一个会话 |
-| 信号校验 | signal.py | signal.py | signal.py |
-| 文件结构 | backtest_YYYY-MM-DD_HHMMSS/ | paper_YYYY-MM-DD_HHMMSS/ | live_YYYY-MM-DD_HHMMSS/ |
+| Claude Code | 盘后 1 次/日（历史重放） | 盘后 1 次/日 | 盘后 1 次/日 |
+| 盘中 Claude Code | 无（紧急同样仿真） | 仅紧急触发 | 仅紧急触发 |
+| Python 执行 | 完全相同 | 完全相同 | 完全相同 |
 
 **文件结构（三种模式统一）：**
 
@@ -113,7 +106,7 @@ data/output/
   {mode}_{start_iso}/
     ledger.jsonl    # 决策账本 — 每天追加，跨会话连续
     state.json      # 完整状态 {cash, holdings, nav_curve, data_time}
-    plan.json       # 当前持仓计划（止盈止损位、持仓预期）
+    plan.json       # v2: market_bias + buy_candidates + holding_adjustments + risk_report
 ```
 
 `data_time`：backtest 模式 = 回放到的历史日期时间；paper/live 模式 = 真实世界时间。
@@ -151,153 +144,51 @@ data/output/
 | `calc_position_size()` | 综合波动率 + 相关性 → 建议股数 |
 | `max_drawdown_check()` | 当前回撤 vs 历史最大回撤 |
 
-### 2.4 统一 Agent 引擎 — `tools/paper_engine.py`
+### 2.4 统一 Agent 引擎 v2 — `tools/paper_engine.py` 🔧 重构中
 
-Phase 2 的核心交付物。一个引擎，三种模式。
+Phase 2 核心交付物。架构从"盘中 Claude Code 调用"重构为"盘后批量分析 + 次日机械执行"。
 
-**双速架构：**
+**内部模块：**
 
-| 车道 | 执行者 | 速度 | 职责 |
-|------|--------|------|------|
-| 快车道 | Python | 1-5s | 止盈止损、规则信号、异动检测、执行 plan.json |
-| 慢车道 | Claude Code | 按需 | 策略判断、多因子综合、计划更新、写 ledger |
+| 模块 | 职责 |
+|------|------|
+| `OvernightPipeline` | 三阶段盘后分析（定方向→选标的→风控），调 Claude Code 1 次/日 |
+| `PlanV2` | plan.json v2 读写（market_bias / buy_candidates / holding_adjustments / emergency_triggers / risk_report） |
+| `FastLane` | 盘中纯 Python 执行：止盈止损 + 候选买入(限价) + 规则信号(卫星) |
+| `EmergencyTrigger` | 大盘跌 >3% 或 持仓跌 >5% → 暂停自动交易 → Claude Code 紧急会话 |
+| `BacktestRunner` | 历史重放回测，Claude Code 看到仿真日期的历史新闻 |
+| `Ledger` / `State` / `Clock` | 决策账本 / 资金持仓状态 / 仿真时钟（v1 基本不变） |
 
-**策略两层模型：**
+**已复用组件（无需修改）：** `signal_rules.py`（规则信号引擎）、`signal.py`（校验层）、`risk.py`（风险计算器）——在 Stage 3 和 FastLane 中直接调用。
 
-| 层级 | 执行者 | 回测能力 | 模拟盘 | 实盘 |
-|------|--------|----------|--------|------|
-| 规则层 | Python `signal_rules.py` | ✅ 纯 Python 回测 | ✅ 自动执行 | ✅ 自动执行 |
-| 判断层 | Claude Code + skills | ✅ Agent 回测含 LLM | ✅ 交易时段 | ✅ 交易时段 |
-
-- 规则层：金叉/死叉、放量突破、乖离率阈值、均线排列——确定性条件，Python 直接触发
-- 判断层：真突破还是诱多、多因子综合、板块轮动判断——需要 Claude Code 推理
-
-**会话锁 + 事件队列：**
-
-```
-Python 检测事件 → event_queue.jsonl
-触发条件满足 → acquire_lock()（全局互斥）
-→ 启动 Claude Code（单实例）
-→ Claude Code 读累积事件 → 分析 → 决策
-→ 写 ledger + plan + state
-→ release_lock()
-会话期间新事件继续写入队列，等下次触发
-```
-
-**集合竞价 9:15-9:25：**
-
-```
-9:15  引擎启动，监控竞价价格
-9:20  检测开盘价偏离昨收 > 3% → 标记异动
-9:25  撮合出开盘价 → 触发 Claude Code 盘前 session
-9:30  连续竞价开始，按 Claude Code 产出计划运行
-```
-
-### 2.5 规则信号引擎 — `tools/signal_rules.py`
-
-纯 Python，零 LLM。在快车道中运行，产出确定性信号：
-
-- MA 金叉/死叉检测
-- 放量突破（量比 > 1.5 且涨幅 > 2%）
-- 乖离率偏离报警
-- 均线多头/空头排列变化
-- 筹码集中度变化
-
-所有规则信号同样经过 `signal.py` 校验通道。与 Claude Code 信号的区别：规则信号是确定性触发，不需要推理。
-
-### 2.6 策略决策账本 — `ledger.jsonl`
-
-解决 Claude Code 跨 session 上下文丢失导致策略反复横跳。
-
-```
-每行一条决策:
-{"seq": 1, "time": "09:35", "decision": "今日偏多，消费主线",
- "confidence": 75, "evidence": ["降准落地", "北向净流入"]}
-{"seq": 2, "time": "09:42", "decision": "600519 开仓 100 股",
- "reason": "放量突破 + MA5>MA10>MA20", "from_seq": 1}
-```
-
-规则：
-- Claude Code 每次启动**必须读完整 ledger**
-- 要改之前的决策 → 必须给出明确的反向证据
-- 无反向证据 → 默认维持前判，只做微调
-- 不依赖上下文窗口 — 依赖文件系统
-
-### 2.7 Agent 回测体系 — `tools/backtest_runner.py`
-
-**回测 = 模拟盘 + 历史数据。** 代码路径完全相同。
-
-**时钟模型：**
-- Claude Code 运行时 → 仿真时钟暂停
-- 决策产出后 → 仿真时钟 +60s → 以此时历史价成交
-- 无信号时段 → 快速扫描（毫秒级跳过）
-- 延迟模型与模拟盘/实盘一致（都是 ~60s 分析延迟）
-
-**使用方式：**
-```
-# 启动完整 Agent 回测
-python tools/paper_engine.py --mode backtest \
-  --start 2023-01-01 --end 2024-12-31 \
-  --universe screen_breakout --capital 100000
-
-# 断点续跑
-python tools/paper_engine.py --mode backtest --resume day_042
-```
-
-**回测耗时估算：** 250 个交易日 × 日均 1-2 次 Claude Code 调用 × 60s ≈ 4-8 小时。夜间跑一次绰绰有余。
+**回测：** 250 个交易日 × 1 次 Claude Code/日 × 60s ≈ 4-5 小时。盘后执行。
 
 **准入标准（进入实盘的前提）：**
 - ≥ 30 笔交易
 - 胜率 > 55%
 - 夏普 > 1.0
 - 最大回撤 < 25%
+- **新增：模拟盘 ≥ 1 个月验证**
 
-### 2.8 CI/CD
-
-三种模式，按成本和 LLM 参与度分层：
+### 2.5 CI/CD ✅ 已完成
 
 | 工作流 | 触发 | 内容 | LLM |
 |--------|------|------|-----|
-| `ci.yml` | 每次 push | Python 工具 schema 校验、规则层基线对比、代码 lint | 零 |
-| `agent-backtest.yml` | 手动 / 每周 | 完整 Agent 回测（6 个月 / 50-200 只），产出胜率/夏普/回撤报告 | Claude Code 全程参与 |
+| `ci.yml` | 每次 push | 19 个工具 schema 校验、规则层基线对比、ruff lint | 零 |
+| `agent-backtest.yml` | 手动触发 | 完整 Agent 回测，产出胜率/夏普/回撤报告 | Claude Code 全程参与 |
 | `deploy.yml` | 手动触发 | Docker build + push → SSH VPS → docker compose up -d | 零 |
 
-```
-ci.yml (push, 2min):
-  ├─ Python 工具冒烟测试 (13 个工具 schema 校验)
-  ├─ 规则层策略基线对比 (纯 Python, 对比 data/baselines/)
-  └─ 代码 lint
-
-agent-backtest.yml (manual / weekly cron):
-  ├─ 启动 paper_engine.py --mode backtest
-  ├─ 产出报告 → 保存 data/backtest_reports/
-  └─ 基线更新 (可选)
-
-deploy.yml (manual):
-  ├─ docker build + push
-  └─ ssh VPS → docker compose up -d
-```
-
-### 2.9 可靠性加固 ✅ 已完成
+### 2.6 可靠性加固 ✅ 已完成
 
 - Docker Compose + `restart: unless-stopped`
-- `logging_config.py` — JSON 结构化日志 + 自动轮转（3 handler：stdout / JSON debug / JSON error）
-- `.github/workflows/` — CI/CD 管线
-
-### 2.10 收盘日报
-
-每日 15:30 Claude Code 会话结束前产出：
-
-- 当日 P&L、胜率、持仓变动
-- 净值曲线更新
-- 飞书卡片推送（涨绿跌红）
-- 同时写入 `data/{mode}_{start_iso}/daily_reports/`
+- `logging_config.py` — JSON 结构化日志 + 自动轮转（3 handler）
+- `daily_report.py` — 日交易报表（P&L/胜率/回撤，飞书推送）
 
 ---
 
 ## Phase 3: 实盘交易管线 (P1)
 
-**准入条件：** Agent 回测 + 模拟盘同时达标（≥30 笔交易，胜率 > 55%，夏普 > 1.0）。
+**准入条件：** Agent 回测 + 模拟盘 ≥ 1 个月同时达标（≥30 笔交易，胜率 > 55%，夏普 > 1.0，最大回撤 < 25%）。
 
 实盘与模拟盘跑**完全相同的代码**。唯一差异：
 

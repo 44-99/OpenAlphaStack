@@ -4,7 +4,7 @@
 
 基于 **Claude Code** 驱动的 A 股 Agent 量化交易系统，运行在飞书（Lark）上。
 
-**数据层**：腾讯→新浪→akshare 三级 fallback，15 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控。
+**数据层**：腾讯→新浪→akshare 三级 fallback，19 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控/引擎/报表。
 **策略层**：3 条场景化技能管线 + 7 条交易铁律前置约束，description-based 智能激活。
 **引擎层**：统一 Agent 引擎（回测/模拟盘/实盘三模式共享同一代码路径），双速架构（Python 快车道 + Claude Code 慢车道）。
 **运维层**：Docker 部署、结构化日志、双层记忆系统、双模式 CI（快速 CI + Agent 回测 CI）。
@@ -45,8 +45,8 @@
 │                                                             │
 │  ┌─ Python 快车道 ──────────────────────────────────────┐  │
 │  │  tools/: 15 CLI 工具 (JSON 进/出，无状态)            │  │
-│  │  · 行情/技术/基本面/资金/形态/情绪/信号/风控         │  │
-│  │  · 止盈止损监控 · 规则信号触发 · 异动检测            │  │
+│  │  · 行情/技术/基本面/资金/形态/情绪/信号/风控/引擎    │  │
+│  │  · 止盈止损监控 · 规则信号触发 · 异动检测 · 日结算    │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                             │
 │  ┌─ Claude Code 慢车道 ─────────────────────────────────┐  │
@@ -189,7 +189,16 @@ AlphaClaude/
 │   ├── sentiment.py — 换手热度/量能/ATR/均线粘合/情绪评分
 │   ├── portfolio.py — 自选股增删查改、持仓盈亏概览
 │   ├── risk.py      — 确定性风险计算（波动率/仓位/回撤/相关性）
-│   └── signal.py    — 交易信号硬校验 + 审计日志写入
+│   ├── signal.py    — 交易信号硬校验 + 审计日志写入
+│   ├── signal_rules.py — 规则信号引擎（6 条纯 Python 规则，零 LLM）
+│   ├── paper_engine.py — 统一 Agent 引擎（backtest/paper/live 三模式）
+│   ├── backtest_runner.py — 回测 CLI 入口（支持 screen 策略名）
+│   └── daily_report.py — 日交易报表（P&L/胜率/回撤，可选飞书推送）
+├── .github/
+│   └── workflows/   — CI/CD 管线
+│       ├── ci.yml   — push 触发，零 LLM（schema 校验/基线对比/lint）
+│       ├── agent-backtest.yml — 手动触发，完整 Agent 回测
+│       └── deploy.yml — 手动触发，Docker build+push+SSH 部署
 ├── skills/          — 场景化策略技能（渐进式展开）
 │   ├── trading-principles.md    — 前置技能：7 条交易铁律，始终加载
 │   ├── stock-analyzer/SKILL.md  — 个股分析管线 + references/

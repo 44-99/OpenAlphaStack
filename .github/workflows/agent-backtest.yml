@@ -1,0 +1,73 @@
+name: Agent Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD)'
+        required: true
+        type: string
+        default: '2025-01-02'
+      end_date:
+        description: 'End date (YYYY-MM-DD)'
+        required: true
+        type: string
+        default: '2025-12-31'
+      universe:
+        description: 'Stock universe (strategy name or codes)'
+        required: true
+        type: string
+        default: 'default'
+      capital:
+        description: 'Initial capital'
+        required: false
+        type: string
+        default: '100000'
+
+jobs:
+  backtest:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 600  # up to 10 hours for full Agent backtest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: pip install pandas requests akshare
+
+      - name: Verify Claude Code CLI
+        run: |
+          which claude || which claude.cmd || {
+            echo "Claude Code CLI not found on runner"
+            echo "Install via: npm install -g @anthropic-ai/claude-code"
+            exit 1
+          }
+          echo "Claude Code found"
+
+      - name: Run Agent backtest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python tools/backtest_runner.py \
+            --start "${{ inputs.start_date }}" \
+            --end "${{ inputs.end_date }}" \
+            --universe "${{ inputs.universe }}" \
+            --capital "${{ inputs.capital }}"
+
+      - name: Generate summary report
+        if: always()
+        run: |
+          RUN_ID=$(ls -t data/output/backtest_* | head -1 | xargs basename)
+          echo "Run ID: $RUN_ID"
+          python tools/daily_report.py "$RUN_ID" --all
+          echo ""
+          echo "===== FINAL STATS ====="
+          python tools/daily_report.py "$RUN_ID"
+
+      - name: Upload backtest artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-output-${{ github.run_id }}
+          path: data/output/backtest_*/
+          retention-days: 30
