@@ -5,7 +5,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _fallback import get_hist, get_quote
+from _fallback import get_hist
 
 
 def detect_one_yang_three_yin(df) -> dict:
@@ -37,7 +37,7 @@ def detect_one_yang_three_yin(df) -> dict:
 
     for i in range(1, 4):
         row = recent.iloc[i]
-        o, c, h, l, v = float(row["open"]), float(row["close"]), float(row["high"]), float(row["low"]), float(row["volume"])
+        o, c, h, lo, v = float(row["open"]), float(row["close"]), float(row["high"]), float(row["low"]), float(row["volume"])
         entity = abs(c - o) / o * 100
 
         day_info = {"day": i + 1, "entity_pct": round(entity, 2),
@@ -46,7 +46,7 @@ def detect_one_yang_three_yin(df) -> dict:
 
         if entity >= 1.5:
             all_small = False
-        if l < d1_open:
+        if lo < d1_open:
             all_in_range = False
         if v > prev_vol:
             shrinking_volume = False

@@ -17,13 +17,13 @@ def find_pivots(highs: list, lows: list, window: int = 5) -> dict:
 
     for i in range(window, len(highs) - window):
         h = highs[i]
-        l = lows[i]
+        lo = lows[i]
         # Pivot high: higher than all bars in window on each side
         if h == max(highs[i - window:i + window + 1]):
             pivot_highs.append({"index": i, "price": round(h, 2)})
         # Pivot low: lower than all bars in window on each side
-        if l == min(lows[i - window:i + window + 1]):
-            pivot_lows.append({"index": i, "price": round(l, 2)})
+        if lo == min(lows[i - window:i + window + 1]):
+            pivot_lows.append({"index": i, "price": round(lo, 2)})
 
     return {"pivot_highs": pivot_highs, "pivot_lows": pivot_lows, "window": window}
 

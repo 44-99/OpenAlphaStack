@@ -5,7 +5,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _fallback import get_hist, get_quote
+from _fallback import get_hist
 
 
 def calc_atr(df, period: int = 14) -> list:
