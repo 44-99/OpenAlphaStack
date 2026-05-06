@@ -23,6 +23,7 @@ import sys
 import time
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, time as dtime
 
 import pandas as pd
@@ -106,6 +107,10 @@ class EngineState:
     def load(self) -> dict:
         with self._lock:
             return dict(self._data)
+
+    @property
+    def initial_capital(self) -> float:
+        return self._data["initial_capital"]
 
     @property
     def cash(self) -> float:
@@ -867,12 +872,12 @@ class BacktestDataFeed:
 # ═══════════════════════════════════════════════════════════════
 
 class OvernightPipeline:
-    """Three-stage after-hours Claude Code analysis + emergency intraday calls.
+    """v3 after-hours pipeline: sub-agent research → merged Stage → Python risk validation.
 
-    Stage 1 - Direction: Claude Code reads policy/news, outputs market_bias + sectors
-    Stage 2 - Selection: Claude Code cross-references B/C/A sets, outputs candidates
-    Stage 3 - Risk: Python runs risk.py + signal.py, produces final plan.json
-    Emergency - Market/stock anomaly triggers Claude Code during trading hours.
+    Phase 0: 3 parallel claude -p sub-agents (policy, sector, review) → ~500 char summaries
+    Phase 1: Single merged Claude Code call → direction + candidates + adjustments
+    Phase 2: risk.py + signal.py hard validation → final plan.json
+    Emergency: Market/stock anomaly triggers Claude Code during trading hours.
     """
 
     def __init__(self, state: EngineState, plan: PlanManager,
@@ -885,222 +890,325 @@ class OvernightPipeline:
         self.output_dir = output_dir
         self.mode = mode
 
-    # -- Stage 1: Direction ------------------------------------
+    # ── Phase 0: Sub-Agent Research ───────────────────────────────
 
-    def build_stage1_prompt(self) -> str:
-        """Prompt Claude Code to determine market direction from policy/news."""
-        s = self.state.load()
-        p = self.plan.load()
-        recent = self.ledger.read_recent(10)
+    # ── Shared data fetchers (used by sub-agents + merged stage) ──
+
+    def _fetch_market_snapshot(self) -> str:
+        """Fetch market index + north-bound flow data for prompt injection."""
+        lines = []
+        try:
+            from quote import get_market_overview
+            overview = get_market_overview()
+            if overview and not overview.get("error"):
+                for idx in overview.get("indices", []):
+                    pct = idx.get("change_pct", 0)
+                    lines.append(
+                        f"  {idx.get('name','')}: {idx.get('price','N/A')} "
+                        f"{pct:+.2f}%"
+                    )
+        except Exception:
+            lines.append("  (行情数据暂不可用)")
+        lines.append("")
+        try:
+            from flow import get_north_flow
+            nf = get_north_flow()
+            if nf and not nf.get("error"):
+                lines.append(f"  北向资金: 净流入{nf.get('net_inflow','N/A')}亿")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
+    # ── Sub-agent prompt builders ─────────────────────────────────
+
+    def _build_sub_agent_a_prompt(self) -> str:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
+        market = self._fetch_market_snapshot()
+        return (
+            f"任务: 分析{sim_date} A股宏观政策环境。输出≤500字摘要。\n"
+            f"\n## 今日大盘\n{market}\n"
+            f"## 要求\n"
+            f"1. 解读当前核心政策方向(货币政策/财政政策/产业政策)\n"
+            f"2. 判断市场整体风险偏好(risk-on/risk-off)\n"
+            f"3. 识别1-2个可能影响次日走势的关键事件\n"
+            f"4. 直接输出摘要, 不反问, 不加代码块标记"
+        )
 
+    def _build_sub_agent_b_prompt(self) -> str:
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        market = self._fetch_market_snapshot()
+        return (
+            f"任务: 分析{sim_date} A股板块轮动。输出≤500字摘要。\n"
+            f"\n## 今日大盘\n{market}\n"
+            f"## 要求\n"
+            f"1. 识别当前强势板块(3个)和弱势板块(2个)\n"
+            f"2. 判断风格切换方向(大盘/小盘, 成长/价值)\n"
+            f"3. 推荐3个次日值得关注的板块+理由\n"
+            f"4. 直接输出摘要, 不反问, 不加代码块标记"
+        )
+
+    def _build_sub_agent_c_prompt(self) -> str:
+        s = self.state.load()
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        recent = self.ledger.read_recent(10)
         lines = [
-            f"当前仿真日期: {sim_date}。盘后分析 Stage 1: 定方向。",
-            "",
-            "## 账户状态",
-            f"总资产: {s['total_value']:,.0f}  现金: {s['cash']:,.0f}  持仓市值: {s['total_value'] - s['cash']:,.0f}",
-            f"初始资金: {s['initial_capital']:,.0f}  总收益: {s['total_value'] - s['initial_capital']:,.0f}",
+            f"任务: 复盘{sim_date}前交易决策。输出≤500字摘要。",
+            "## 当前账户",
+            f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f}",
         ]
         if s["holdings"]:
-            lines.append("\n## 当前持仓 (集合A)")
+            lines.append("## 持仓")
             for code, h in s["holdings"].items():
                 pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
-                lines.append(f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} 现价{h['current_price']:.2f} 盈亏{pnl:.1f}%")
+                lines.append(
+                    f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
+                    f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}%"
+                )
+        else:
+            lines.append("## 持仓: 空仓")
         if recent:
-            lines.append("\n## 最近决策 (ledger)")
+            lines.append("\n## 近5条决策")
             for e in recent[-5:]:
                 lines.append(f"  [{e['seq']}] {e.get('time','')} {e.get('decision','')} {e.get('reasoning','')[:80]}")
         lines.extend([
             "",
-            "## Stage 1 任务: 判断明日大盘方向",
-            "",
-            f"1. 使用 Tavily 搜索以下关键词(带上日期 {sim_date}):",
-            "   - 证监会 公告 政策",
-            "   - 政治局会议 经济",
-            "   - 央行 货币政策",
-            "   - 行业政策 (根据近期热点追加关键词)",
-            "2. 调用 python tools/quote.py market 获取今日大盘数据",
-            "3. 综合判断: 政策面 + 资金面(北向) + 技术面(上证 MA 排列)",
-            "",
-            "输出格式 (每行一条 DECISION):",
-            "DECISION|bias|bullish/neutral/bearish|confidence=N|reasoning=综合判断",
-            "DECISION|position_cap|N|reasoning=仓位上限依据 (bullish:80/neutral:50/bearish:20)",
-            "DECISION|prefer_sectors|板块A,板块B|reasoning=政策利好板块",
-            "DECISION|avoid_sectors|板块C|reasoning=政策利空板块",
+            "## 要求",
+            "1. 回顾近期决策:哪些做对了/哪些做错了/为什么",
+            "2. 评估当前持仓:是否需要调整/减仓/加仓",
+            "3. 提炼1-2条经验教训注入次日决策",
+            "4. 直接输出摘要, 不反问, 不加代码块标记",
         ])
         return "\n".join(lines)
 
-    def run_stage1(self) -> dict | None:
-        """Run Stage 1: Claude Code determines market direction."""
-        prompt = self.build_stage1_prompt()
+    def _run_sub_agents(self) -> dict[str, str]:
+        """Run 3 sub-agents in parallel. Returns {'A': summary, 'B': summary, 'C': summary}."""
+        prompts = {
+            "A": self._build_sub_agent_a_prompt(),
+            "B": self._build_sub_agent_b_prompt(),
+            "C": self._build_sub_agent_c_prompt(),
+        }
+        results = {}
+
+        def _run_one(label, prompt):
+            try:
+                from claude import ask_claude
+                response = ask_claude(prompt, timeout=180)
+                return label, (response or "").strip()[:600]
+            except Exception as exc:
+                print(f"[SubAgent {label}] failed: {exc}")
+                return label, f"(数据不可用: {exc})"
+
+        print("[OvernightPipeline] Phase 0: Running 3 sub-agents in parallel...")
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(_run_one, label, p): label for label, p in prompts.items()}
+            for f in as_completed(futures):
+                label, summary = f.result()
+                results[label] = summary
+                print(f"  Sub-agent {label}: {len(summary)} chars")
+
+        dbg_path = os.path.join(self.output_dir, "_sub_agent_summaries.txt")
+        with open(dbg_path, "w", encoding="utf-8") as f:
+            for label, summary in results.items():
+                f.write(f"=== Sub-agent {label} ===\n{summary}\n\n")
+        return results
+
+    # ── Phase 1: Merged Decision Stage ────────────────────────────
+
+    def _fetch_candidates_screen(self) -> str:
+        """Fetch screen results for merged prompt injection."""
+        lines = []
+        try:
+            from screen import run_screen
+            result = run_screen("default")
+            stocks = result.get("results", [])[:20] if isinstance(result, dict) else []
+            if stocks:
+                lines.append("## 技术筛选候选 (screen.py default 前20)")
+                for s in stocks:
+                    code = s.get("代码", "")
+                    lines.append(
+                        f"  {code} {s.get('名称','')}: "
+                        f"现价{s.get('最新价','N/A')} 涨跌{s.get('涨跌幅','N/A'):+.2f}% "
+                        f"换手{s.get('换手率','N/A')}%"
+                    )
+        except Exception:
+            lines.append("## 技术筛选候选 (不可用)")
+        return "\n".join(lines)
+
+    def build_merged_prompt(self, summaries: dict[str, str]) -> str:
+        """Build single merged prompt: direction + selection + adjustments."""
+        s = self.state.load()
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        recent = self.ledger.read_recent(10)
+
+        lines = [
+            f"任务: 为{sim_date}次日制定完整交易计划。不要反问，直接输出DECISION行。",
+            "",
+            "## 宏观政策研究 (子Agent A)",
+            summaries.get("A", "(不可用)"),
+            "",
+            "## 板块轮动分析 (子Agent B)",
+            summaries.get("B", "(不可用)"),
+            "",
+            "## 决策复盘+持仓评估 (子Agent C)",
+            summaries.get("C", "(不可用)"),
+            "",
+            "## 今日收盘数据",
+            self._fetch_market_snapshot(),
+            "## 账户",
+            f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f} 持仓市值:{self.state.total_value - s['cash']:,.0f}",
+            f"初始资金:{s['initial_capital']:,.0f} 总收益:{self.state.total_value - s['initial_capital']:,.0f}",
+        ]
+        if s["holdings"]:
+            lines.append("\n## 持仓")
+            for code, h in s["holdings"].items():
+                pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
+                lines.append(
+                    f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
+                    f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}% "
+                    f"止损{h.get('stop_loss','无')} 止盈{h.get('take_profit','无')}"
+                )
+        else:
+            lines.append("\n## 持仓: 空仓")
+        if recent:
+            lines.append("\n## 近期决策")
+            for e in recent[-5:]:
+                lines.append(f"  [{e['seq']}] {e.get('time','')} {e.get('decision','')} {e.get('reasoning','')[:80]}")
+        lines.append("")
+        lines.append(self._fetch_candidates_screen())
+        lines.extend([
+            "",
+            "## 要求",
+            "基于以上所有信息(3份研究摘要+行情+账户+候选)，制定次日完整交易计划：",
+            "",
+            "严格按以下格式输出，每行以 DECISION| 开头：",
+            "",
+            "# 大盘方向",
+            "DECISION|bias|bullish/neutral/bearish|confidence=50|reasoning=简短判断",
+            "DECISION|position_cap|80|reasoning=仓位依据",
+            "DECISION|prefer_sectors|板块1,板块2|reasoning=板块理由",
+            "DECISION|avoid_sectors|板块1|reasoning=回避理由",
+            "",
+            "# 持仓调整 (如有, 每只一行)",
+            "DECISION|adjust|CODE|action=raise_stop/close/hold|new_stop_loss=X|reasoning=理由",
+            "",
+            "# 买入候选 (核心B: 政策+技术,单票≤20%,止损-8%。卫星C: 技术信号,单票≤7.5%,止损-5%)",
+            "DECISION|candidate|CODE|source=B/C|priority=1/2/3|entry_max=X|stop_loss=X|take_profit=X|position_pct=X|reasoning=理由",
+            "",
+            "注意: 使用 | 分隔符。不要加代码块标记。不要加额外解释。",
+        ])
+        return "\n".join(lines)
+
+    def run_merged_stage(self, summaries: dict[str, str]) -> dict:
+        """Phase 1: Single Claude Code call for direction + candidates + adjustments."""
+        prompt = self.build_merged_prompt(summaries)
         try:
             from claude import ask_claude
-            response = ask_claude(prompt, session_id=f"stage1_{self.clock.now().strftime('%Y%m%d')}", timeout=300)
+            response = ask_claude(prompt, timeout=300)
             if response:
-                self._parse_stage1(response)
-                return {"stage": "stage1", "market_bias": self.plan.get_market_bias()}
+                dbg_path = os.path.join(self.output_dir, "_debug_merged_response.txt")
+                with open(dbg_path, "w", encoding="utf-8") as f:
+                    f.write(f"=== PROMPT ===\n{prompt}\n\n=== RESPONSE ===\n{response}")
+                return self._parse_merged_response(response)
         except Exception as exc:
-            print(f"[OvernightPipeline] stage1 failed: {exc}")
-        return None
+            print(f"[OvernightPipeline] merged stage failed: {exc}")
+        return {"stage": "merged", "bias": "neutral", "candidates": 0, "adjustments": 0}
 
-    def _parse_stage1(self, response: str) -> None:
-        """Parse Stage 1 response: bias, position_cap, sectors."""
+    def _parse_merged_response(self, response: str) -> dict:
+        """Parse merged response: bias + candidates + adjustments in one pass."""
         bias = "neutral"
         confidence = 50
-        reasoning = ""
+        bias_reasoning = ""
         position_cap = None
         preferred = None
         avoid = None
-        for line in response.split("\n"):
+        adjustments = []
+        candidates = []
+
+        text = response.replace("```", "").replace("`", "")
+        for line in text.split("\n"):
             line = line.strip()
-            if not line.startswith("DECISION|"):
+            if not line or line.startswith("#") or line.startswith("*"):
                 continue
+            if "|" not in line or "DECISION" not in line:
+                continue
+
             parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            action = parts[1]
+            action = parts[1] if len(parts) > 1 else ""
+
             if action == "bias":
-                bias = parts[2] if parts[2] in ("bullish", "neutral", "bearish") else "neutral"
+                bias = parts[2] if len(parts) > 2 and parts[2] in ("bullish", "neutral", "bearish") else "neutral"
                 for kv in parts[3:]:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k == "confidence":
-                            try:
-                                confidence = int(v)
-                            except ValueError:
-                                pass
-                        elif k == "reasoning":
-                            reasoning = v
+                            try: confidence = int(v)
+                            except ValueError: pass
+                        elif k == "reasoning": bias_reasoning = v
+
             elif action == "position_cap":
-                try:
-                    position_cap = float(parts[2])
-                except ValueError:
-                    pass
-            elif action == "prefer_sectors":
+                try: position_cap = float(parts[2])
+                except ValueError: pass
+
+            elif action == "prefer_sectors" and len(parts) > 2:
                 preferred = [s.strip() for s in parts[2].split(",") if s.strip()]
-            elif action == "avoid_sectors":
+
+            elif action == "avoid_sectors" and len(parts) > 2:
                 avoid = [s.strip() for s in parts[2].split(",") if s.strip()]
-        if position_cap is None:
-            position_cap = {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
-        self.plan.set_market_bias(bias, confidence, reasoning, position_cap, preferred, avoid)
-        self.ledger.append({
-            "decision": "overnight_bias", "value": bias,
-            "confidence": confidence, "reasoning": reasoning,
-            "position_cap": position_cap,
-        })
 
-    # -- Stage 2: Stock Selection -------------------------------
-
-    def build_stage2_prompt(self) -> str:
-        """Prompt Claude Code to select stocks from B/C/A sets."""
-        p = self.plan.load()
-        s = self.state.load()
-        sim_date = self.clock.now().strftime("%Y-%m-%d")
-
-        lines = [
-            f"当前仿真日期: {sim_date}。盘后分析 Stage 2: 选标的。",
-            "",
-            "## Stage 1 结论",
-            f"大盘方向: {p['market_bias']} (置信度 {p.get('bias_confidence',50)})",
-            f"理由: {p.get('bias_reasoning','')}",
-            f"仓位上限: {p.get('position_cap_pct',80)}%",
-            f"偏好板块: {', '.join(p.get('preferred_sectors',[])) or '无'}",
-            f"回避板块: {', '.join(p.get('avoid_sectors',[])) or '无'}",
-        ]
-        if s["holdings"]:
-            lines.append("\n## 现有持仓 (集合A) - 需要给出调整指令")
-            for code, h in s["holdings"].items():
-                pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
-                sl = h.get("stop_loss", "无")
-                tp = h.get("take_profit", "无")
-                lines.append(
-                    f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
-                    f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}% 止损{sl} 止盈{tp}"
-                )
-        lines.extend([
-            "",
-            "## Stage 2 任务: 选股并生成交易计划",
-            "",
-            "1. 对每个持仓(集合A)，给出调整指令: raise_stop(上调止损) / reduce(减仓) / close(清仓) / hold(持有)",
-            "2. 调用 `python tools/screen.py -s default` 获取技术筛选结果(集合C)",
-            "3. 根据 Stage 1 偏好板块，搜索政策受益标的(集合B)",
-            "4. B 交集 技术面验证 -> 核心仓位候选; C 交集 板块匹配 -> 卫星仓位候选",
-            "",
-            "持仓调整输出:",
-            "DECISION|adjust|CODE|action=raise_stop/reduce/close/hold|new_stop_loss=X|reasoning=R",
-            "",
-            "候选买入输出 (核心仓位 source=B, 卫星仓位 source=C):",
-            "DECISION|candidate|CODE|source=B/C|priority=1/2/3|entry_max=X|stop_loss=X|take_profit=X|position_pct=X|reasoning=R",
-            "",
-            "仓位约束: 核心单票<=20%总资金 卫星单票<=7.5% 核心止损-6% 卫星止损-5% 总仓位<=position_cap_pct",
-        ])
-        return "\n".join(lines)
-
-    def run_stage2(self) -> dict | None:
-        """Run Stage 2: Claude Code selects stocks."""
-        prompt = self.build_stage2_prompt()
-        try:
-            from claude import ask_claude
-            response = ask_claude(prompt, session_id=f"stage2_{self.clock.now().strftime('%Y%m%d')}", timeout=300)
-            if response:
-                return self._parse_stage2(response)
-        except Exception as exc:
-            print(f"[OvernightPipeline] stage2 failed: {exc}")
-        return None
-
-    def _parse_stage2(self, response: str) -> dict:
-        """Parse Stage 2 response: adjustments + candidates."""
-        adjustments = []
-        candidates = []
-        for line in response.split("\n"):
-            line = line.strip()
-            if not line.startswith("DECISION|"):
-                continue
-            parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            action = parts[1]
-            if action == "adjust":
+            elif action == "adjust" and len(parts) > 2:
                 adj = {"code": parts[2]}
                 for kv in parts[3:]:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k == "new_stop_loss":
-                            try:
-                                adj[k] = float(v)
-                            except ValueError:
-                                adj[k] = v
-                        else:
-                            adj[k] = v
+                            try: adj[k] = float(v)
+                            except ValueError: adj[k] = v
+                        else: adj[k] = v
                 adjustments.append(adj)
-            elif action == "candidate":
+
+            elif action == "candidate" and len(parts) > 2:
                 cand = {"code": parts[2], "valid_until": self.clock.now().strftime("%Y-%m-%d")}
                 for kv in parts[3:]:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
-                            try:
-                                cand[k] = float(v)
-                            except ValueError:
-                                cand[k] = v
+                            try: cand[k] = float(v)
+                            except ValueError: cand[k] = v
                         elif k == "priority":
-                            try:
-                                cand[k] = int(v)
-                            except ValueError:
-                                cand[k] = v
-                        else:
-                            cand[k] = v
-                required = ("entry_max", "stop_loss", "take_profit")
-                if all(k in cand for k in required):
+                            try: cand[k] = int(v)
+                            except ValueError: cand[k] = v
+                        else: cand[k] = v
+                if all(k in cand for k in ("entry_max", "stop_loss", "take_profit")):
                     candidates.append(cand)
+
+        if bias == "neutral" and confidence == 50:
+            tu = text.upper()
+            if "BULLISH" in tu: bias = "bullish"
+            elif "BEARISH" in tu: bias = "bearish"
+        if position_cap is None:
+            position_cap = {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
+
+        self.plan.set_market_bias(bias, confidence, bias_reasoning, position_cap, preferred, avoid)
+        self.ledger.append({
+            "decision": "overnight_bias", "value": bias,
+            "confidence": confidence, "reasoning": bias_reasoning,
+            "position_cap": position_cap,
+        })
         self.plan.set_adjustments(adjustments)
         self.plan.set_candidates(candidates)
-        return {"stage": "stage2", "adjustments": len(adjustments), "candidates": len(candidates)}
 
-    # -- Stage 3: Risk Verification (Python only) ----------------
+        return {
+            "stage": "merged",
+            "bias": bias,
+            "confidence": confidence,
+            "candidates": len(candidates),
+            "adjustments": len(adjustments),
+        }
 
-    def run_stage3(self) -> dict:
-        """Run Stage 3: Python risk.py + signal.py validation on Stage 2 output."""
+    # ── Phase 2: Python Risk Validation ───────────────────────────
+
+    def run_risk_validation(self) -> dict:
+        """Python risk.py + signal.py hard validation on merged stage output."""
         candidates = self.plan._data.get("buy_candidates", [])
         rejected = []
         passed = []
@@ -1111,18 +1219,10 @@ class OvernightPipeline:
             entry = c.get("entry_max", 0)
             stop = c.get("stop_loss", 0)
             if stop >= entry:
-                rejected.append({
-                    "code": code,
-                    "reason": f"stop {stop} >= entry {entry}",
-                    "rule": "signal_hard_check",
-                })
+                rejected.append({"code": code, "reason": f"stop {stop} >= entry {entry}", "rule": "signal_hard_check"})
                 continue
             if entry > 0 and (entry - stop) / entry < 0.03:
-                rejected.append({
-                    "code": code,
-                    "reason": "risk/reward ratio too low",
-                    "rule": "signal_hard_check",
-                })
+                rejected.append({"code": code, "reason": "risk/reward ratio too low", "rule": "signal_hard_check"})
                 continue
             passed.append(c)
         self.plan._data["buy_candidates"] = passed
@@ -1131,20 +1231,27 @@ class OvernightPipeline:
             "passed_count": len(passed),
             "rejected_count": len(rejected),
         }
-        self.plan.save("risk_stage3")
-        return {"stage": "stage3", "passed": len(passed), "rejected": len(rejected)}
+        self.plan.save("risk_validation")
+        return {"stage": "risk", "passed": len(passed), "rejected": len(rejected)}
 
-    # -- Full Pipeline ------------------------------------------
+    # ── Full Pipeline ─────────────────────────────────────────────
 
     def run_full(self) -> dict:
-        """Run all three overnight stages. Returns summary dict."""
+        """Phase 0 (parallel sub-agents) → Phase 1 (merged Claude) → Phase 2 (Python risk)."""
         result = {"stages": {}}
-        result["stages"]["stage1"] = self.run_stage1()
-        result["stages"]["stage2"] = self.run_stage2()
-        result["stages"]["stage3"] = self.run_stage3()
+
+        try:
+            summaries = self._run_sub_agents()
+        except Exception as exc:
+            print(f"[OvernightPipeline] sub-agents failed: {exc}")
+            summaries = {"A": "", "B": "", "C": ""}
+
+        result["stages"]["merged"] = self.run_merged_stage(summaries)
+        result["stages"]["risk"] = self.run_risk_validation()
+
         return result
 
-    # -- Emergency Intraday Call ---------------------------------
+    # ── Emergency Intraday Call ───────────────────────────────────
 
     def launch_emergency(self, trigger_reason: str, market_data: str = "") -> str | None:
         """Launch Claude Code for emergency intraday analysis.
@@ -1161,7 +1268,7 @@ class OvernightPipeline:
 {market_data}
 
 ## 当前持仓
-现金: {s['cash']:,.0f}  总资产: {s['total_value']:,.0f}
+现金: {s['cash']:,.0f}  总资产: {self.state.total_value:,.0f}
 """
         if s["holdings"]:
             for code, h in s["holdings"].items():
@@ -1235,48 +1342,94 @@ class FastLane:
         self._monitored = set(self.universe)
         self._prev_market_price = 0.0    # for emergency detection
         self._adjustments_executed = False
+        self._signal_history: dict[str, set] = {}  # code -> {rule names fired today}
+        self._last_reset_day = None
+        self._circuit_breaker_triggered = False
+        self._circuit_breaker_reason = ""
+
+    def _check_circuit_breaker(self) -> tuple[bool, str]:
+        """Global circuit breaker: halt new positions at -20% drawdown."""
+        if self.state.initial_capital <= 0:
+            return False, ""
+        drawdown = (self.state.total_value - self.state.initial_capital) / self.state.initial_capital * 100
+        if drawdown <= -20:
+            return True, f"熔断: 账户回撤{drawdown:.1f}% (限额-20%)"
+        return False, ""
 
     def tick(self) -> dict:
-        """One evaluation cycle. Returns {'events': [], 'emergency': bool, 'trigger_reason': str}."""
+        """One evaluation cycle. Parallel quotes + scans, action routing, dedup.
+
+        Returns {'events': [], 'emergency': bool, 'trigger_reason': str}.
+        """
         events = []
         now = self.clock.now()
         emergency = False
         trigger_reason = ""
 
+        # ── Circuit breaker check ─────────────────────────────
+        if not self._circuit_breaker_triggered:
+            triggered, reason = self._check_circuit_breaker()
+            if triggered:
+                self._circuit_breaker_triggered = True
+                self._circuit_breaker_reason = reason
+                events.append({
+                    "event": "circuit_breaker_triggered",
+                    "reason": reason,
+                    "nav": self.state.total_value,
+                })
+                print(f"[CIRCUIT BREAKER] {reason}")
+
         # Update monitored codes
         self._monitored.update(self.state.holdings.keys())
-        # Also monitor buy candidates
         for c in self.plan.get_buy_candidates():
-            self._monitored.add(c.get("code", ""))
-        codes = list(self._monitored)
-
+            code = c.get("code", "")
+            if code:
+                self._monitored.add(code)
+        codes = [c for c in self._monitored if c]
         if not codes:
             return {"events": events, "emergency": False, "trigger_reason": ""}
 
-        # Fetch quotes
+        # ── Parallel quote fetch ──────────────────────────────
         quotes = {}
         if self.data_feed and self.mode == "backtest":
             quotes = self.data_feed.current_day_data(
                 pd.Timestamp(now.strftime("%Y-%m-%d"))
             )
         else:
-            try:
-                from _fallback import get_quote
-                for code in codes:
+            def _fetch_one(code):
+                try:
+                    from _fallback import get_quote
                     q, _ = get_quote(code)
-                    if not q.get("error"):
+                    return code, q if not q.get("error") else {}
+                except Exception:
+                    return code, {}
+            with ThreadPoolExecutor(max_workers=min(len(codes), 10)) as ex:
+                futures = {ex.submit(_fetch_one, c): c for c in codes}
+                for f in as_completed(futures):
+                    code, q = f.result()
+                    if q:
                         quotes[code] = q
-            except Exception:
-                pass
 
         # Update prices in state
         for code, q in quotes.items():
             self.state.update_quote(code, q.get("price", 0))
 
-        # 1. Stop-loss / take-profit triggers (auto-execute)
+        # 1. Stop-loss / take-profit triggers (always allowed, even during circuit breaker)
         triggers = self.execution.check_stop_triggers(quotes)
         for t in triggers:
             events.append(t)
+
+        # ── If circuit breaker active, skip all new buys ──────
+        if self._circuit_breaker_triggered:
+            # Still do emergency detection and NAV snapshot
+            emergency, trigger_reason = self._check_emergency(quotes)
+            if self.mode == "backtest":
+                self.state.set_data_time(now.strftime("%Y-%m-%d %H:%M:%S"))
+            else:
+                self.state.set_data_time(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            self.state.snapshot_nav()
+            self.state.save()
+            return {"events": events, "emergency": emergency, "trigger_reason": trigger_reason}
 
         # 2. Buy candidate check (plan.json candidates, price <= entry_max)
         candidates = self.plan.get_buy_candidates()
@@ -1295,7 +1448,7 @@ class FastLane:
 
                 entry_max = c.get("entry_max", 0)
                 if price > entry_max:
-                    continue  # Don't chase
+                    continue
 
                 source = c.get("source", "C")
                 max_single_pct = 20.0 if source == "B" else 7.5
@@ -1303,9 +1456,8 @@ class FastLane:
                 target_value = self.state.total_value * (target_pct / 100.0)
 
                 if target_value > remaining_capacity:
-                    continue  # Would exceed position cap
+                    continue
 
-                # Execute via ExecutionEngine
                 shares = round_lot(int(target_value / price))
                 if shares < 100:
                     continue
@@ -1319,49 +1471,109 @@ class FastLane:
                     take_profit=take_profit,
                     reasoning=c.get("reasoning", ""),
                 )
-                events.append({
-                    "event": "candidate_buy",
-                    "code": code,
-                    "price": price,
-                    "shares": shares,
-                    "source": source,
-                    "result": result,
-                })
-                remaining_capacity -= target_value
+                if result.get("status") == "executed":
+                    events.append({
+                        "event": "candidate_buy",
+                        "code": code,
+                        "price": price,
+                        "shares": shares,
+                        "source": source,
+                        "result": result,
+                    })
+                    remaining_capacity -= target_value
 
-        # 3. Rule signal scan (satellite positions only, from signal_rules.py)
+        # 3. Rule signal scan (satellite positions, action-based routing)
         try:
             from signal_rules import scan_code
-            for code in codes:
-                hist_df = None
-                if self.data_feed and self.mode == "backtest":
-                    hist_df = self.data_feed.get_history_up_to(
-                        code, pd.Timestamp(now.strftime("%Y-%m-%d")))
-                res = scan_code(code, df=hist_df)
+
+            def _scan_one(code):
+                try:
+                    hist_df = None
+                    if self.data_feed and self.mode == "backtest":
+                        hist_df = self.data_feed.get_history_up_to(
+                            code, pd.Timestamp(now.strftime("%Y-%m-%d")))
+                    return code, scan_code(code, df=hist_df)
+                except Exception:
+                    return code, {"signals": []}
+
+            with ThreadPoolExecutor(max_workers=min(len(codes), 10)) as ex:
+                scan_futures = {ex.submit(_scan_one, c): c for c in codes}
+                scan_results = {}
+                for f in as_completed(scan_futures):
+                    code, res = f.result()
+                    scan_results[code] = res
+
+            for code, res in scan_results.items():
+                holdings = self.state.holdings.get(code, {})
+                already_holding = holdings.get("shares", 0) > 0
+
                 for sig in res.get("signals", []):
-                    if sig.get("confidence", 0) >= 65:  # Higher threshold for auto-exec
-                        q = quotes.get(code, {})
-                        price = q.get("price", 0)
-                        if price <= 0:
-                            continue
-                        # Satellite: small position only
+                    if sig.get("confidence", 0) < 65:
+                        continue
+
+                    rule_name = sig.get("rule", "")
+                    action = sig.get("action", "alert")  # default alert
+                    q = quotes.get(code, {})
+                    price = q.get("price", 0)
+                    if not price or price <= 0:
+                        continue
+
+                    # Dedup: same (code, rule) only once per day
+                    fired = self._signal_history.setdefault(code, set())
+                    if rule_name in fired:
+                        continue
+                    if len(fired) >= 1:
+                        continue  # max 1 rule trade per code per day
+                    fired.add(rule_name)
+
+                    if action == "buy":
+                        if already_holding:
+                            continue  # don't double-buy via rule signals
                         sat_value = self.state.total_value * 0.075
                         shares = round_lot(int(sat_value / price))
-                        if shares >= 100:
-                            sl = sig.get("suggested_stop", price * 0.95)
-                            tp = price * 1.10
-                            result = self.execution.execute_buy(
-                                code, shares, price,
-                                strategy=sig.get("rule", "rule_signal"),
-                                stop_loss=sl, take_profit=tp,
-                                reasoning=f"Rule: {sig.get('rule','')}",
-                            )
+                        if shares < 100:
+                            continue
+                        sl = sig.get("suggested_stop", price * 0.95)
+                        tp = price * 1.10
+                        result = self.execution.execute_buy(
+                            code, shares, price,
+                            strategy=rule_name,
+                            stop_loss=sl, take_profit=tp,
+                            reasoning=f"Rule: {rule_name}",
+                        )
+                        if result.get("status") == "executed":
                             events.append({
-                                "event": "rule_signal_executed",
+                                "event": "rule_signal_buy",
                                 "code": code,
                                 "signal": sig,
                                 "result": result,
                             })
+
+                    elif action == "sell":
+                        if not already_holding:
+                            continue
+                        h_shares = holdings.get("available", 0)
+                        if h_shares <= 0:
+                            continue
+                        result = self.execution.execute_sell(
+                            code, h_shares, price,
+                            strategy=rule_name,
+                            reasoning=f"Rule: {rule_name}",
+                        )
+                        if result.get("status") == "executed":
+                            events.append({
+                                "event": "rule_signal_sell",
+                                "code": code,
+                                "signal": sig,
+                                "result": result,
+                            })
+
+                    else:  # alert
+                        events.append({
+                            "event": "rule_signal_alert",
+                            "code": code,
+                            "signal": sig,
+                        })
         except Exception:
             pass
 
@@ -1453,6 +1665,10 @@ class FastLane:
         """Reset daily state for new trading day."""
         self._adjustments_executed = False
         self._prev_market_price = 0.0
+        today = self.clock.now().strftime("%Y-%m-%d")
+        if self._last_reset_day != today:
+            self._signal_history.clear()
+            self._last_reset_day = today
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1578,7 +1794,7 @@ class PaperEngine:
                         finally:
                             self.lock.release()
 
-            time.sleep(5)
+            time.sleep(1)
 
     def run_backtest(self) -> None:
         """Run in backtest mode: historical replay with overnight Claude Code per trading day."""
@@ -1645,7 +1861,7 @@ class PaperEngine:
             "run_id": self.run_id,
             "dry_run": self.dry_run,
             "initial_capital": s["initial_capital"],
-            "total_value": s["total_value"],
+            "total_value": self.state.total_value,
             "cash": s["cash"],
             "holdings_count": len(s["holdings"]),
             "trade_count": s.get("trade_count", 0),

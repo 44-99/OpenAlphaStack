@@ -34,6 +34,7 @@ def check_ma_cross(df: pd.DataFrame) -> dict | None:
         if ma5[i] > ma10[i] and ma5[j] <= ma10[j]:
             return {
                 "rule": "ma_golden_cross",
+                "action": "buy",
                 "confidence": 75,
                 "days_ago": days_ago,
                 "ma5": round(float(ma5[i]), 2),
@@ -43,6 +44,7 @@ def check_ma_cross(df: pd.DataFrame) -> dict | None:
         if ma5[i] < ma10[i] and ma5[j] >= ma10[j]:
             return {
                 "rule": "ma_death_cross",
+                "action": "sell",
                 "confidence": 75,
                 "days_ago": days_ago,
                 "ma5": round(float(ma5[i]), 2),
@@ -77,6 +79,7 @@ def check_volume_breakout(df: pd.DataFrame, quote: dict = None) -> dict | None:
 
     return {
         "rule": "volume_breakout",
+        "action": "buy",
         "confidence": 70,
         "price": round(price, 2),
         "vol_ratio": round(vol_ratio, 2),
@@ -101,13 +104,13 @@ def check_deviation_alert(df: pd.DataFrame, is_dragon_head: bool = False) -> dic
         direction = "above" if deviation > 0 else "below"
         return {
             "rule": "deviation_alert",
+            "action": "alert",
             "confidence": 85,
             "price": round(price, 2),
             "ma5": round(ma5_val, 2),
             "deviation_pct": round(deviation, 2),
             "direction": direction,
             "limit": limit,
-            "action": "观望" if deviation > 0 else "警惕超跌",
         }
     return None
 
@@ -131,6 +134,7 @@ def check_ma_alignment(df: pd.DataFrame) -> dict | None:
     if curr_bullish and not prev_bullish:
         return {
             "rule": "alignment_turn_bullish",
+            "action": "buy",
             "confidence": 70,
             "price": round(float(closes.iloc[-1]), 2),
             "ma5": round(float(ma5[-1]), 2),
@@ -140,6 +144,7 @@ def check_ma_alignment(df: pd.DataFrame) -> dict | None:
     if curr_bearish and not prev_bearish:
         return {
             "rule": "alignment_turn_bearish",
+            "action": "sell",
             "confidence": 70,
             "price": round(float(closes.iloc[-1]), 2),
             "ma5": round(float(ma5[-1]), 2),
@@ -160,6 +165,7 @@ def check_gap_alert(df: pd.DataFrame) -> dict | None:
     if abs(gap_pct) >= 3:
         return {
             "rule": "gap_up" if gap_pct > 0 else "gap_down",
+            "action": "alert",
             "confidence": 80,
             "gap_pct": round(gap_pct, 2),
             "open": round(today_open, 2),
@@ -180,6 +186,7 @@ def check_volume_spike(df: pd.DataFrame) -> dict | None:
     if ratio >= 3:
         return {
             "rule": "volume_spike",
+            "action": "alert",
             "confidence": 65,
             "vol_ratio": round(ratio, 2),
             "latest_volume": int(latest_vol),
