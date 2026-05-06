@@ -12,19 +12,21 @@ Architecture:
   Event queue:              batch signals for Claude Code processing
 
 Usage:
-  python tools/paper_engine.py --mode paper --capital 100000
-  python tools/paper_engine.py --mode backtest --start 2023-01-01 --end 2024-12-31
+  python tools/paper_engine.py --mode paper --capital 100000 --universe auto
+  python tools/paper_engine.py --mode backtest --start 2023-01-01 --end 2024-12-31 --universe auto
   python tools/paper_engine.py --mode backtest --resume day_042
+  python tools/paper_engine.py --mode backtest --dry-run  (Python only, no Claude Code)
 """
 import argparse
 import json
 import os
 import sys
+import threading
 import time
 import uuid
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta
+from datetime import time as dtime
 
 import pandas as pd
 
@@ -32,6 +34,23 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_DIR)  # allow import of claude.py from project root
 OUTPUT_BASE = os.path.join(PROJECT_DIR, "data", "output")
 os.makedirs(OUTPUT_BASE, exist_ok=True)
+
+try:
+    from tools.notifier import (
+        notify_alert,
+        notify_backtest_complete,
+        notify_backtest_progress,
+        notify_engine_start,
+        notify_engine_stop,
+        notify_overnight_complete,
+        notify_overnight_timeout,
+        notify_sub_agent_summaries,
+        notify_trade,
+        notify_trading_day_end,
+    )
+    _notify = True
+except Exception:
+    _notify = False
 
 # ── A-share trading constants ──────────────────────────────────
 STAMP_DUTY = 0.001         # 0.1% (sell only)
@@ -42,12 +61,82 @@ PRICE_LIMIT_PCT = 0.10     # 10% daily limit (ChiNext/STAR use 20%)
 MIN_COMMISSION = 5.0       # minimum commission per trade
 
 # Trading session times
+PRE_MARKET_START = dtime(8, 0)  # before 8am = overnight/closed
 AUCTION_START = dtime(9, 15)
 AUCTION_END = dtime(9, 25)
 MORNING_START = dtime(9, 30)
 MORNING_END = dtime(11, 30)
 AFTERNOON_START = dtime(13, 0)
 AFTERNOON_END = dtime(15, 0)
+
+
+def generate_universe(min_daily_volume: int = 5_000_000, exclude_st: bool = True,
+                      cache_path: str = None) -> list[str]:
+    """Generate a filtered A-share main board universe.
+
+    Filters: main board only (00xxxx/60xxxx), no ST/*ST, minimum daily volume.
+    Caches the result to avoid repeated akshare calls.
+    Returns list of 6-digit codes.
+    """
+    if cache_path is None:
+        cache_path = os.path.join(PROJECT_DIR, "data", "universe_cache.json")
+    # Return cached if fresh (< 7 days)
+    if os.path.exists(cache_path):
+        try:
+            mtime = os.path.getmtime(cache_path)
+            if time.time() - mtime < 7 * 86400:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+    try:
+        import akshare as ak
+        df = ak.stock_info_a_code_name()
+        codes = []
+        for _, row in df.iterrows():
+            code = str(row["code"]).zfill(6)
+            name = str(row.get("name", ""))
+            if not code.startswith(("00", "60")):
+                continue
+            if exclude_st and ("ST" in name or "*ST" in name):
+                continue
+            codes.append(code)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(codes, f)
+        print(f"[Universe] Generated {len(codes)} main board stocks (cached)")
+        return codes
+    except Exception as e:
+        print(f"[Universe] akshare failed: {e}, using fallback")
+        return _fallback_universe()
+
+
+def _fallback_universe() -> list[str]:
+    """Fallback universe: major liquid stocks across sectors."""
+    return [
+        # 金融
+        "000001", "002142", "600000", "600015", "600016", "600036", "601009",
+        "601166", "601288", "601318", "601328", "601398", "601939", "601988",
+        # 消费
+        "000568", "000858", "002304", "600519", "600809", "600887", "603288",
+        # 医药
+        "000538", "002001", "300015", "300347", "300529", "300760", "600276",
+        "603259",
+        # 科技
+        "000063", "000725", "002049", "002230", "002371", "002415", "300059",
+        "300124", "600703", "603501",
+        # 新能源
+        "002074", "002129", "300014", "300274", "300450", "300750", "600438",
+        "601012", "601615",
+        # 周期
+        "000630", "002155", "600585", "600900", "601088", "601600", "601668",
+        "601857", "601899",
+        # 军工
+        "000547", "000768", "002013", "600150", "600391", "600760", "600893",
+        # 中特估
+        "001979", "600028", "600050", "600941", "601088", "601390", "601668",
+        "601728", "601766", "601800", "601857",
+    ]
 
 
 def calc_fees(price: float, shares: int, side: str) -> float:
@@ -660,6 +749,8 @@ class TradingClock:
         wd = self.now().weekday()
         if wd >= 5:
             return "weekend"
+        if t < PRE_MARKET_START:
+            return "closed"
         if t < AUCTION_START:
             return "pre_market"
         if t <= AUCTION_END:
@@ -692,7 +783,7 @@ class ExecutionEngine:
     def execute_buy(self, code: str, shares: int, price: float,
                     strategy: str = "", stop_loss: float = 0,
                     take_profit: float = 0,
-                    reasoning: str = "") -> dict:
+                    reasoning: str = "", signal_detail: str = "") -> dict:
         """Validate and execute a buy order."""
         shares = round_lot(shares)
         if shares < LOT_SIZE:
@@ -727,10 +818,14 @@ class ExecutionEngine:
             "status": "executed",
             "trade_id": trade["trade_id"],
         })
+        if _notify:
+            dt = self.state._data.get("data_time", "")
+            notify_trade("buy", code, "", price, shares, reason=reasoning,
+                        data_time=dt, signal_detail=signal_detail)
         return trade
 
     def execute_sell(self, code: str, shares: int, price: float,
-                     reason: str = "") -> dict:
+                     reason: str = "", signal_detail: str = "") -> dict:
         """Validate and execute a sell order."""
         trade = self.state.remove_holding(code, shares, price)
         if trade is None:
@@ -750,6 +845,11 @@ class ExecutionEngine:
             "pnl": round(pnl, 2),
             "pnl_pct": trade.get("pnl_pct", 0),
         })
+        if _notify:
+            action = "stop_loss" if "止损" in reason else "sell"
+            dt = self.state._data.get("data_time", "")
+            notify_trade(action, code, "", price, shares, pnl=pnl, reason=reason,
+                        data_time=dt, signal_detail=signal_detail)
         return trade
 
     def check_stop_triggers(self, quotes: dict[str, dict]) -> list[dict]:
@@ -805,21 +905,30 @@ class ExecutionEngine:
 # ═══════════════════════════════════════════════════════════════
 
 class BacktestDataFeed:
-    """Replays historical K-line data as if live."""
+    """Replays historical K-line data as if live. Lazy-loads data on demand."""
 
     def __init__(self, start_date: str, end_date: str,
                  universe: list[str]):
-        from _fallback import get_hist
         self.universe = universe
         self.start = pd.Timestamp(start_date)
         self.end = pd.Timestamp(end_date)
         self._cache: dict[str, pd.DataFrame] = {}
-        for code in universe:
-            df, _ = get_hist(code, days=1500)
-            if not df.empty:
-                df["date"] = pd.to_datetime(df["date"])
-                df = df.sort_values("date").reset_index(drop=True)
-                self._cache[code] = df[df["date"] <= self.end]
+        self._loaded: set[str] = set()
+        self._load_lock = threading.Lock()
+
+        # Pre-load first 50 stocks to have initial data; rest loaded on demand
+        _preload_n = min(50, len(universe))
+        print(f"[DataFeed] Loading {len(universe)} stocks (pre-fetching {_preload_n}, rest lazy)...")
+        self._batch_load(universe[:_preload_n], show_progress=False)
+        # Start background loading for the rest
+        if len(universe) > _preload_n:
+            remaining = universe[_preload_n:]
+            self._bg_loaded = 0
+            self._bg_total = len(remaining)
+            def _bg_load():
+                self._batch_load(remaining, show_progress=True)
+            t = threading.Thread(target=_bg_load, daemon=True)
+            t.start()
 
         # Fetch Shanghai Composite index for emergency detection
         self._index_cache: pd.DataFrame | None = None
@@ -838,10 +947,62 @@ class BacktestDataFeed:
         except Exception:
             self._index_cache = None
 
+    def _load_one(self, code: str) -> pd.DataFrame:
+        """Load historical data for a single code, with caching."""
+        if code in self._cache:
+            return self._cache[code]
+        from _fallback import get_hist
+        try:
+            df, _ = get_hist(code, days=1500)
+            if not df.empty:
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.sort_values("date").reset_index(drop=True)
+                df = df[df["date"] <= self.end]
+                self._cache[code] = df
+                return df
+        except Exception:
+            pass
+        self._cache[code] = pd.DataFrame()
+        return pd.DataFrame()
+
+    def _batch_load(self, codes: list[str], show_progress: bool = True) -> None:
+        """Load a batch of codes, with optional progress bar."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        n = len(codes)
+        done = 0
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = {ex.submit(self._load_one, c): c for c in codes}
+            for f in as_completed(futures):
+                done += 1
+                with self._load_lock:
+                    self._loaded.add(futures[f])
+                if show_progress and done % 50 == 0:
+                    print(f"  [DataFeed] {done}/{n} stocks loaded...")
+        if show_progress:
+            print(f"  [DataFeed] All {n} stocks loaded.")
+
+    def _ensure_loaded(self, code: str) -> None:
+        """Ensure a stock's data is loaded (blocking)."""
+        if code in self._cache:
+            return
+        self._load_one(code)
+        with self._load_lock:
+            self._loaded.add(code)
+
+    def _is_loaded(self, code: str) -> bool:
+        return code in self._cache
+
     def current_day_data(self, date: pd.Timestamp) -> dict[str, dict]:
-        """Get all universe stocks' data for a specific date as quote dicts."""
+        """Get loaded stocks' data for a specific date as quote dicts.
+
+        Only returns data for stocks already loaded into cache.
+        Use _ensure_loaded() first for stocks that must be included.
+        """
         quotes = {}
-        for code, df in self._cache.items():
+        for code in list(self._cache.keys()):
+            df = self._cache[code]
+            if df.empty:
+                continue
             row = df[df["date"] == date]
             if row.empty:
                 row = df[df["date"] <= date].tail(1)
@@ -863,7 +1024,7 @@ class BacktestDataFeed:
                 ) if prev_close else 0,
             }
         # Include market index data for emergency detection
-        INDEX_CODE = "000001"
+        index_code = "000001"
         if self._index_cache is not None:
             idx_row = self._index_cache[self._index_cache["date"] == date]
             if idx_row.empty:
@@ -872,8 +1033,8 @@ class BacktestDataFeed:
                 idx_row = idx_row.iloc[-1]
                 prev_idx = self._index_cache[self._index_cache["date"] < date]
                 idx_prev_close = float(prev_idx.iloc[-1]["close"]) if not prev_idx.empty else float(idx_row["open"])
-                quotes[INDEX_CODE] = {
-                    "code": INDEX_CODE,
+                quotes[index_code] = {
+                    "code": index_code,
                     "price": float(idx_row["close"]),
                     "open": float(idx_row["open"]),
                     "high": float(idx_row["high"]),
@@ -889,19 +1050,25 @@ class BacktestDataFeed:
 
     def get_history_up_to(self, code: str, date: pd.Timestamp,
                           days: int = 120) -> pd.DataFrame:
-        """Return historical DataFrame for `code` up to `date` (inclusive)."""
+        """Return historical DataFrame for `code` up to `date` (inclusive). Lazy-loads."""
+        self._ensure_loaded(code)
         df = self._cache.get(code)
-        if df is None:
+        if df is None or df.empty:
             return pd.DataFrame()
         mask = df["date"] <= date
         result = df[mask].tail(days)
         return result.reset_index(drop=True)
 
     def trading_days(self) -> list[pd.Timestamp]:
-        """All unique trading days across all cache data."""
+        """All unique trading days from the index cache or a sample stock."""
         all_dates = set()
+        # Use index cache if available (most reliable)
+        if self._index_cache is not None:
+            all_dates.update(self._index_cache["date"].tolist())
+        # Also merge from loaded stocks
         for df in self._cache.values():
-            all_dates.update(df["date"].tolist())
+            if not df.empty:
+                all_dates.update(df["date"].tolist())
         return sorted([d for d in all_dates
                        if self.start <= d <= self.end])
 
@@ -929,6 +1096,7 @@ class OvernightPipeline:
         self.output_dir = output_dir
         self.mode = mode
         self.execution = execution
+        self.run_id = os.path.basename(output_dir)
 
     # ── Phase 0: Sub-Agent Research ───────────────────────────────
 
@@ -938,7 +1106,7 @@ class OvernightPipeline:
         """Fetch market index + north-bound flow data for prompt injection."""
         lines = []
         try:
-            from quote import get_market_overview
+            from tools.quote import get_market_overview
             overview = get_market_overview()
             if overview and not overview.get("error"):
                 for idx in overview.get("indices", []):
@@ -951,7 +1119,7 @@ class OvernightPipeline:
             lines.append("  (行情数据暂不可用)")
         lines.append("")
         try:
-            from flow import get_north_flow
+            from tools.flow import get_north_flow
             nf = get_north_flow()
             if nf and not nf.get("error"):
                 lines.append(f"  北向资金: 净流入{nf.get('net_inflow','N/A')}亿")
@@ -965,59 +1133,43 @@ class OvernightPipeline:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         market = self._fetch_market_snapshot()
         return (
-            f"任务: 分析{sim_date} A股宏观政策环境。输出≤500字摘要。\n"
-            f"\n## 今日大盘\n{market}\n"
-            f"## 要求\n"
-            f"1. 解读当前核心政策方向(货币政策/财政政策/产业政策)\n"
-            f"2. 判断市场整体风险偏好(risk-on/risk-off)\n"
-            f"3. 识别1-2个可能影响次日走势的关键事件\n"
-            f"4. 直接输出摘要, 不反问, 不加代码块标记"
+            f"基于提供的行情数据和你的知识，{sim_date} A股宏观政策分析。≤300字摘要，直接输出，不要调用任何工具。\n"
+            f"大盘:\n{market}\n"
+            f"要求: 1.政策方向 2.风险偏好(risk-on/off) 3.1个关键事件\n"
+            f"数据不足时基于最近市场趋势和常识合理推断，标注[推断]。"
         )
 
     def _build_sub_agent_b_prompt(self) -> str:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         market = self._fetch_market_snapshot()
         return (
-            f"任务: 分析{sim_date} A股板块轮动。输出≤500字摘要。\n"
-            f"\n## 今日大盘\n{market}\n"
-            f"## 要求\n"
-            f"1. 识别当前强势板块(3个)和弱势板块(2个)\n"
-            f"2. 判断风格切换方向(大盘/小盘, 成长/价值)\n"
-            f"3. 推荐3个次日值得关注的板块+理由\n"
-            f"4. 直接输出摘要, 不反问, 不加代码块标记"
+            f"基于提供的行情数据和你的知识，{sim_date} A股板块轮动。≤300字摘要，直接输出，不要调用任何工具。\n"
+            f"大盘:\n{market}\n"
+            f"要求: 1.强势板块3个+弱势2个 2.风格切换(大/小盘,成长/价值) 3.次日关注板块3个+理由\n"
+            f"数据不足时基于最近市场趋势和常识合理推断，标注[推断]。"
         )
 
     def _build_sub_agent_c_prompt(self) -> str:
         s = self.state.load()
         sim_date = self.clock.now().strftime("%Y-%m-%d")
-        recent = self.ledger.read_recent(10)
+        recent = self.ledger.read_recent(5)
         lines = [
-            f"任务: 复盘{sim_date}前交易决策。输出≤500字摘要。",
-            "## 当前账户",
+            f"基于提供的数据和你的知识，{sim_date} 复盘。≤300字摘要，直接输出，不要调用任何工具。",
             f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f}",
+            "数据不足时基于常识合理推断，标注[推断]。",
         ]
         if s["holdings"]:
-            lines.append("## 持仓")
+            lines.append("持仓:")
             for code, h in s["holdings"].items():
                 pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
-                lines.append(
-                    f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
-                    f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}%"
-                )
+                lines.append(f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} 现价{h['current_price']:.2f} {pnl:+.1f}%")
         else:
-            lines.append("## 持仓: 空仓")
+            lines.append("空仓")
         if recent:
-            lines.append("\n## 近5条决策")
+            lines.append("近5决策:")
             for e in recent[-5:]:
-                lines.append(f"  [{e['seq']}] {e.get('time','')} {e.get('decision','')} {e.get('reasoning','')[:80]}")
-        lines.extend([
-            "",
-            "## 要求",
-            "1. 回顾近期决策:哪些做对了/哪些做错了/为什么",
-            "2. 评估当前持仓:是否需要调整/减仓/加仓",
-            "3. 提炼1-2条经验教训注入次日决策",
-            "4. 直接输出摘要, 不反问, 不加代码块标记",
-        ])
+                lines.append(f"  [{e['seq']}] {e.get('decision','')} {e.get('reasoning','')[:60]}")
+        lines.append("要求: 1.决策回顾 2.持仓评估 3.经验教训1条")
         return "\n".join(lines)
 
     def _run_sub_agents(self) -> dict[str, str]:
@@ -1030,26 +1182,51 @@ class OvernightPipeline:
         results = {}
 
         def _run_one(label, prompt):
-            try:
-                from claude import ask_claude
-                response = ask_claude(prompt, timeout=180)
-                return label, (response or "").strip()[:600]
-            except Exception as exc:
-                print(f"[SubAgent {label}] failed: {exc}")
-                return label, f"(数据不可用: {exc})"
+            from claude import ask_claude
+            for attempt in range(2):
+                try:
+                    response = ask_claude(prompt, timeout=300)
+                    text = (response or "").strip()
+                    if text and "超时" not in text and "出错" not in text:
+                        return label, text[:300]
+                    if attempt == 0:
+                        print(f"  Sub-agent {label} attempt {attempt+1}: timeout/error, retrying...")
+                        time.sleep(5)
+                    else:
+                        return label, text[:300] if text else f"(失败: {text[:80]})"
+                except Exception as exc:
+                    if attempt == 0:
+                        print(f"  Sub-agent {label} attempt {attempt+1}: {exc}, retrying...")
+                        time.sleep(5)
+                    else:
+                        print(f"[SubAgent {label}] failed: {exc}")
+                        return label, f"(数据不可用: {exc})"
+            return label, "(超时)"
 
         print("[OvernightPipeline] Phase 0: Running 3 sub-agents in parallel...")
         with ThreadPoolExecutor(max_workers=3) as ex:
             futures = {ex.submit(_run_one, label, p): label for label, p in prompts.items()}
-            for f in as_completed(futures):
+            from concurrent.futures import wait as fut_wait
+            done, not_done = fut_wait(futures, timeout=360)
+            for f in done:
                 label, summary = f.result()
                 results[label] = summary
                 print(f"  Sub-agent {label}: {len(summary)} chars")
+            for f in not_done:
+                label = futures[f]
+                results[label] = "(超时)"
+                f.cancel()
+                print(f"  Sub-agent {label}: timed out")
 
         dbg_path = os.path.join(self.output_dir, "_sub_agent_summaries.txt")
         with open(dbg_path, "w", encoding="utf-8") as f:
             for label, summary in results.items():
                 f.write(f"=== Sub-agent {label} ===\n{summary}\n\n")
+        if _notify:
+            try:
+                notify_sub_agent_summaries(self.run_id, results)
+            except Exception:
+                pass
         return results
 
     # ── Phase 1: Merged Decision Stage ────────────────────────────
@@ -1058,11 +1235,11 @@ class OvernightPipeline:
         """Fetch screen results for merged prompt injection."""
         lines = []
         try:
-            from screen import run_screen
+            from tools.screen import run_screen
             result = run_screen("default")
-            stocks = result.get("results", [])[:20] if isinstance(result, dict) else []
+            stocks = result.get("results", [])[:10] if isinstance(result, dict) else []
             if stocks:
-                lines.append("## 技术筛选候选 (screen.py default 前20)")
+                lines.append("## 技术筛选候选 (screen.py default 前10)")
                 for s in stocks:
                     code = s.get("代码", "")
                     lines.append(
@@ -1074,174 +1251,217 @@ class OvernightPipeline:
             lines.append("## 技术筛选候选 (不可用)")
         return "\n".join(lines)
 
-    def build_merged_prompt(self, summaries: dict[str, str]) -> str:
-        """Build single merged prompt: direction + selection + adjustments."""
+    def run_merged_stage(self, summaries: dict[str, str]) -> dict:
+        """Phase 1: Two Claude Code calls — direction first, then candidates. With retry."""
+        from claude import ask_claude
+
+        # Step 1: Direction + Sectors
+        dir_prompt = self._build_direction_prompt(summaries)
+        direction = {"bias": "neutral", "confidence": 50, "bias_reasoning": "",
+                     "position_cap": None, "preferred": None, "avoid": None}
+        for attempt in range(2):
+            try:
+                resp = ask_claude(dir_prompt, timeout=300)
+                if resp and "超时" not in resp and "出错" not in resp:
+                    direction = self._parse_direction_response(resp)
+                    break
+                if attempt == 0:
+                    print("[OvernightPipeline] direction stage retry...")
+                    time.sleep(5)
+            except Exception as exc:
+                if attempt == 0:
+                    print(f"[OvernightPipeline] direction retry: {exc}")
+                    time.sleep(5)
+                else:
+                    print(f"[OvernightPipeline] direction stage failed: {exc}")
+
+        # Step 2: Candidates
+        candidates_prompt = self._build_candidates_prompt(summaries, direction)
+        candidates = []
+        for attempt in range(2):
+            try:
+                resp = ask_claude(candidates_prompt, timeout=300)
+                if resp:
+                    dbg_path = os.path.join(self.output_dir, "_debug_candidates_response.txt")
+                    with open(dbg_path, "w", encoding="utf-8") as f:
+                        f.write(f"=== PROMPT ===\n{candidates_prompt}\n\n=== RESPONSE ===\n{resp}")
+                    if "超时" in resp or "出错" in resp:
+                        if attempt == 0:
+                            print("[OvernightPipeline] candidates stage retry...")
+                            time.sleep(5)
+                            continue
+                    candidates = self._parse_candidate_lines(resp)
+                    if not candidates and resp and any(
+                        kw in resp for kw in ("超时", "稍后再试", "出错", "未找到")
+                    ):
+                        if _notify:
+                            notify_overnight_timeout(self.run_id, f"选股返回异常: {resp[:80]}")
+                    break
+            except Exception as exc:
+                if attempt == 0:
+                    print(f"[OvernightPipeline] candidates retry: {exc}")
+                    time.sleep(5)
+                else:
+                    print(f"[OvernightPipeline] candidates stage failed: {exc}")
+                    if _notify:
+                        notify_overnight_timeout(self.run_id, f"选股阶段: {exc}")
+
+        # Step 3: Adjustments (only if holdings exist)
+        adjustments = []
+        if self.state.holdings:
+            adj_prompt = self._build_adjustments_prompt(direction)
+            try:
+                resp = ask_claude(adj_prompt, timeout=300)
+                if resp:
+                    adjustments = self._parse_adjustment_lines(resp)
+            except Exception as exc:
+                print(f"[OvernightPipeline] adjustments stage failed: {exc}")
+
+        return self._apply_merged(direction, candidates, adjustments)
+
+    def _build_direction_prompt(self, summaries: dict[str, str]) -> str:
         s = self.state.load()
         sim_date = self.clock.now().strftime("%Y-%m-%d")
-        recent = self.ledger.read_recent(10)
-
-        lines = [
-            f"任务: 为{sim_date}次日制定完整交易计划。不要反问，直接输出DECISION行。",
-            "",
-            "## 宏观政策研究 (子Agent A)",
-            summaries.get("A", "(不可用)"),
-            "",
-            "## 板块轮动分析 (子Agent B)",
-            summaries.get("B", "(不可用)"),
-            "",
-            "## 决策复盘+持仓评估 (子Agent C)",
-            summaries.get("C", "(不可用)"),
-            "",
-            "## 今日收盘数据",
+        parts = [
+            f"{sim_date}次日A股方向。只输出DECISION行(4行以内)，不要调用任何工具。",
+            f"宏观: {summaries.get('A','')[:150]}",
+            f"板块: {summaries.get('B','')[:150]}",
+            f"复盘: {summaries.get('C','')[:150]}",
             self._fetch_market_snapshot(),
-            "## 账户",
-            f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f} 持仓市值:{self.state.total_value - s['cash']:,.0f}",
-            f"初始资金:{s['initial_capital']:,.0f} 总收益:{self.state.total_value - s['initial_capital']:,.0f}",
+            f"账户: 总{self.state.total_value:,.0f} 现金{s['cash']:,.0f}",
+            "输出格式:",
+            "DECISION|bias|bullish/neutral/bearish|confidence=N|reasoning=判断",
+            "DECISION|position_cap|N|reasoning=仓位理由",
+            "DECISION|prefer_sectors|板块1,板块2|reasoning=理由",
+            "DECISION|avoid_sectors|板块1|reasoning=理由",
         ]
-        if s["holdings"]:
-            lines.append("\n## 持仓")
-            for code, h in s["holdings"].items():
-                pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
-                lines.append(
-                    f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
-                    f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}% "
-                    f"止损{h.get('stop_loss','无')} 止盈{h.get('take_profit','无')}"
-                )
-        else:
-            lines.append("\n## 持仓: 空仓")
-        if recent:
-            lines.append("\n## 近期决策")
-            for e in recent[-5:]:
-                lines.append(f"  [{e['seq']}] {e.get('time','')} {e.get('decision','')} {e.get('reasoning','')[:80]}")
-        lines.append("")
-        lines.append(self._fetch_candidates_screen())
+        return "\n".join(parts)
+
+    def _build_candidates_prompt(self, summaries: dict[str, str], direction: dict) -> str:
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        bias = direction.get("bias", "neutral")
+        preferred = ",".join(direction.get("preferred") or []) or "无"
+        cap = direction.get("position_cap", 80)
+        parts = [
+            f"{sim_date}次日选股。{bias}偏好{preferred}仓位{cap}%。只输出DECISION行(≤5只)，不要调用任何工具。",
+            f"板块: {summaries.get('B','')[:120]}",
+            self._fetch_candidates_screen(),
+            "格式: DECISION|candidate|CODE|source=B/C|priority=1/2/3|entry_max=X|stop_loss=X|take_profit=X|position_pct=X|reasoning=理由",
+            "B类上限20%止损-8%, C类上限7.5%止损-5%。不输出其他内容。",
+        ]
+        return "\n".join(parts)
+
+    def _build_adjustments_prompt(self, direction: dict) -> str:
+        s = self.state.load()
+        lines = ["根据持仓输出调仓DECISION行。只输出DECISION行。", "## 持仓"]
+        for code, h in s["holdings"].items():
+            pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
+            lines.append(
+                f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} "
+                f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}% "
+                f"止损{h.get('stop_loss','无')}"
+            )
         lines.extend([
-            "",
-            "## 要求",
-            "基于以上所有信息(3份研究摘要+行情+账户+候选)，制定次日完整交易计划：",
-            "",
-            "严格按以下格式输出，每行以 DECISION| 开头：",
-            "",
-            "# 大盘方向",
-            "DECISION|bias|bullish/neutral/bearish|confidence=50|reasoning=简短判断",
-            "DECISION|position_cap|80|reasoning=仓位依据",
-            "DECISION|prefer_sectors|板块1,板块2|reasoning=板块理由",
-            "DECISION|avoid_sectors|板块1|reasoning=回避理由",
-            "",
-            "# 持仓调整 (如有, 每只一行)",
-            "DECISION|adjust|CODE|action=raise_stop/close/hold|new_stop_loss=X|reasoning=理由",
-            "",
-            "# 买入候选 (核心B: 政策+技术,单票≤20%,止损-8%。卫星C: 技术信号,单票≤7.5%,止损-5%)",
-            "DECISION|candidate|CODE|source=B/C|priority=1/2/3|entry_max=X|stop_loss=X|take_profit=X|position_pct=X|reasoning=理由",
-            "",
-            "注意: 使用 | 分隔符。不要加代码块标记。不要加额外解释。",
+            "输出: DECISION|adjust|CODE|action=raise_stop/close/hold|new_stop_loss=X|reasoning=理由",
+            "纯DECISION行。",
         ])
         return "\n".join(lines)
 
-    def run_merged_stage(self, summaries: dict[str, str]) -> dict:
-        """Phase 1: Single Claude Code call for direction + candidates + adjustments."""
-        prompt = self.build_merged_prompt(summaries)
-        try:
-            from claude import ask_claude
-            response = ask_claude(prompt, timeout=300)
-            if response:
-                dbg_path = os.path.join(self.output_dir, "_debug_merged_response.txt")
-                with open(dbg_path, "w", encoding="utf-8") as f:
-                    f.write(f"=== PROMPT ===\n{prompt}\n\n=== RESPONSE ===\n{response}")
-                return self._parse_merged_response(response)
-        except Exception as exc:
-            print(f"[OvernightPipeline] merged stage failed: {exc}")
-        return {"stage": "merged", "bias": "neutral", "candidates": 0, "adjustments": 0}
-
-    def _parse_merged_response(self, response: str) -> dict:
-        """Parse merged response: bias + candidates + adjustments in one pass."""
-        bias = "neutral"
-        confidence = 50
-        bias_reasoning = ""
-        position_cap = None
-        preferred = None
-        avoid = None
-        adjustments = []
-        candidates = []
-
-        text = response.replace("```", "").replace("`", "")
-        for line in text.split("\n"):
+    def _parse_direction_response(self, response: str) -> dict:
+        result = {"bias": "neutral", "confidence": 50, "bias_reasoning": "",
+                  "position_cap": None, "preferred": None, "avoid": None}
+        for line in response.replace("```", "").split("\n"):
             line = line.strip()
-            if not line or line.startswith("#") or line.startswith("*"):
-                continue
             if "|" not in line or "DECISION" not in line:
                 continue
-
             parts = line.split("|")
             action = parts[1] if len(parts) > 1 else ""
-
             if action == "bias":
-                bias = parts[2] if len(parts) > 2 and parts[2] in ("bullish", "neutral", "bearish") else "neutral"
+                result["bias"] = parts[2] if len(parts) > 2 and parts[2] in ("bullish", "neutral", "bearish") else "neutral"
                 for kv in parts[3:]:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k == "confidence":
                             try:
-                                confidence = int(v)
+                                result["confidence"] = int(v)
                             except ValueError:
                                 pass
                         elif k == "reasoning":
-                            bias_reasoning = v
-
+                            result["bias_reasoning"] = v
             elif action == "position_cap":
                 try:
-                    position_cap = float(parts[2])
+                    result["position_cap"] = float(parts[2])
                 except ValueError:
                     pass
-
             elif action == "prefer_sectors" and len(parts) > 2:
-                preferred = [s.strip() for s in parts[2].split(",") if s.strip()]
-
+                result["preferred"] = [s.strip() for s in parts[2].split(",") if s.strip()]
             elif action == "avoid_sectors" and len(parts) > 2:
-                avoid = [s.strip() for s in parts[2].split(",") if s.strip()]
+                result["avoid"] = [s.strip() for s in parts[2].split(",") if s.strip()]
+        return result
 
-            elif action == "adjust" and len(parts) > 2:
-                adj = {"code": parts[2]}
-                for kv in parts[3:]:
-                    if "=" in kv:
-                        k, v = kv.split("=", 1)
-                        if k == "new_stop_loss":
-                            try:
-                                adj[k] = float(v)
-                            except ValueError:
-                                adj[k] = v
-                        else:
-                            adj[k] = v
+    def _parse_candidate_lines(self, response: str) -> list[dict]:
+        candidates = []
+        for line in response.replace("```", "").split("\n"):
+            line = line.strip()
+            if "|" not in line or "DECISION" not in line or "candidate" not in line:
+                continue
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            c = {"code": parts[2]}
+            for kv in parts[3:]:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    if k in ("priority",):
+                        try:
+                            c[k] = int(v)
+                        except ValueError:
+                            c[k] = v
+                    elif k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
+                        try:
+                            c[k] = float(v)
+                        except ValueError:
+                            pass
+                    else:
+                        c[k] = v
+            if "code" in c:
+                candidates.append(c)
+        return candidates
+
+    def _parse_adjustment_lines(self, response: str) -> list[dict]:
+        adjustments = []
+        for line in response.replace("```", "").split("\n"):
+            line = line.strip()
+            if "|" not in line or "DECISION" not in line or "adjust" not in line:
+                continue
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            adj = {"code": parts[2]}
+            for kv in parts[3:]:
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    if k == "new_stop_loss":
+                        try:
+                            adj[k] = float(v)
+                        except ValueError:
+                            pass
+                    else:
+                        adj[k] = v
+            if "code" in adj:
                 adjustments.append(adj)
+        return adjustments
 
-            elif action == "candidate" and len(parts) > 2:
-                cand = {"code": parts[2], "valid_until": self.clock.now().strftime("%Y-%m-%d")}
-                for kv in parts[3:]:
-                    if "=" in kv:
-                        k, v = kv.split("=", 1)
-                        if k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
-                            try:
-                                cand[k] = float(v)
-                            except ValueError:
-                                cand[k] = v
-                        elif k == "priority":
-                            try:
-                                cand[k] = int(v)
-                            except ValueError:
-                                cand[k] = v
-                        else:
-                            cand[k] = v
-                if all(k in cand for k in ("entry_max", "stop_loss", "take_profit")):
-                    candidates.append(cand)
-
-        if bias == "neutral" and confidence == 50:
-            tu = text.upper()
-            if "BULLISH" in tu:
-                bias = "bullish"
-            elif "BEARISH" in tu:
-                bias = "bearish"
-        if position_cap is None:
-            position_cap = {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
+    def _apply_merged(self, direction: dict, candidates: list[dict],
+                      adjustments: list[dict]) -> dict:
+        """Apply parsed direction, candidates, and adjustments to plan."""
+        bias = direction.get("bias", "neutral")
+        confidence = direction.get("confidence", 50)
+        bias_reasoning = direction.get("bias_reasoning", "")
+        position_cap = direction.get("position_cap") or \
+            {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
+        preferred = direction.get("preferred")
+        avoid = direction.get("avoid")
 
         self.plan.set_market_bias(bias, confidence, bias_reasoning, position_cap, preferred, avoid)
         self.ledger.append({
@@ -1264,9 +1484,11 @@ class OvernightPipeline:
 
     def run_risk_validation(self) -> dict:
         """Python risk.py + signal.py hard validation on merged stage output."""
-        from risk import (
-            calc_volatility_metrics, calc_volatility_adjusted_limit,
-            calc_position_size, max_drawdown_check,
+        from tools.risk import (
+            calc_position_size,
+            calc_volatility_adjusted_limit,
+            calc_volatility_metrics,
+            max_drawdown_check,
         )
 
         candidates = self.plan._data.get("buy_candidates", [])
@@ -1375,6 +1597,8 @@ class OvernightPipeline:
 
         Called when market drops >3% or single stock drops >5%.
         """
+        if _notify:
+            notify_alert("critical", "盘中紧急触发", trigger_reason)
         s = self.state.load()
         prompt = f"""盘中紧急触发。
 
@@ -1397,7 +1621,7 @@ class OvernightPipeline:
             response = ask_claude(
                 prompt,
                 session_id=f"emergency_{self.clock.now().strftime('%Y%m%d_%H%M%S')}",
-                timeout=180,
+                timeout=300,
             )
             if response:
                 self._apply_emergency_decisions(response)
@@ -1489,6 +1713,35 @@ class FastLane:
     Zero LLM calls in normal operation. Only detects emergency conditions for OvernightPipeline to handle.
     """
 
+    # ── Signal detail builder ────────────────────────────────────
+
+    @staticmethod
+    def _build_signal_detail(sig: dict) -> str:
+        """Build a human-readable signal detail string from a rule signal dict."""
+        rule = sig.get("rule", "")
+        parts = []
+        if rule in ("ma_golden_cross", "ma_death_cross"):
+            parts.append(f"MA5={sig.get('ma5','?')} MA10={sig.get('ma10','?')}")
+        elif rule == "volume_breakout":
+            parts.append(f"量比={sig.get('vol_ratio','?')} 涨幅={sig.get('price_change_pct','?')}%")
+        elif rule == "deviation_alert":
+            parts.append(f"乖离={sig.get('deviation_pct','?')}% MA5={sig.get('ma5','?')}")
+        elif rule in ("alignment_turn_bullish", "alignment_turn_bearish"):
+            parts.append(
+                f"MA5={sig.get('ma5','?')} MA10={sig.get('ma10','?')} MA20={sig.get('ma20','?')}"
+            )
+        elif rule in ("gap_up", "gap_down"):
+            parts.append(f"缺口={sig.get('gap_pct','?')}% 昨收={sig.get('prev_close','?')}")
+        elif rule == "volume_spike":
+            parts.append(f"量比={sig.get('vol_ratio','?')} 均量={sig.get('avg_volume_5d','?')}")
+        if sig.get("suggested_stop"):
+            parts.append(f"建议止损={sig['suggested_stop']}")
+        if sig.get("confidence"):
+            parts.append(f"置信度={sig['confidence']}")
+        return " | ".join(parts)
+
+    # ── Init ─────────────────────────────────────────────────────
+
     def __init__(self, state: EngineState, plan: PlanManager,
                  execution: ExecutionEngine, clock: TradingClock, mode: str,
                  universe: list[str], data_feed: BacktestDataFeed = None):
@@ -1499,10 +1752,12 @@ class FastLane:
         self.mode = mode
         self.universe = universe or []
         self.data_feed = data_feed
-        self._monitored = set(self.universe)
-        self._prev_market_price = 0.0    # for emergency detection
+        # Monitored = holdings + buy candidates only.
+        # The full universe is Claude Code's selection pool (via screen.py), not scanned every tick.
+        self._monitored = set()
+        self._prev_market_price = 0.0
         self._adjustments_executed = False
-        self._signal_history: dict[str, set] = {}  # code -> {rule names fired today}
+        self._signal_history: dict[str, set] = {}
         self._last_reset_day = None
         self._circuit_breaker_triggered = False
         self._circuit_breaker_reason = ""
@@ -1539,17 +1794,19 @@ class FastLane:
                 })
                 print(f"[CIRCUIT BREAKER] {reason}")
 
-        # Update monitored codes
-        self._monitored.update(self.state.holdings.keys())
+        # ── Monitored codes: holdings + buy candidates from plan ──
+        # Universe is Claude Code's selection pool, not scanned mechanically.
+        codes = set(self.state.holdings.keys())
         for c in self.plan.get_buy_candidates():
             code = c.get("code", "")
             if code:
-                self._monitored.add(code)
-        codes = [c for c in self._monitored if c]
+                codes.add(code)
+
+        codes = [c for c in codes if c]
         if not codes:
             return {"events": events, "emergency": False, "trigger_reason": ""}
 
-        # ── Parallel quote fetch ──────────────────────────────
+        # ── Quote fetch ───────────────────────────────────────
         quotes = {}
         if self.data_feed and self.mode == "backtest":
             quotes = self.data_feed.current_day_data(
@@ -1648,12 +1905,14 @@ class FastLane:
 
                 stop_loss = c.get("stop_loss", price * 0.94)
                 take_profit = c.get("take_profit", price * 1.15)
+                cand_detail = f"来源={source} | 优先级={c.get('priority','?')} | 止损={stop_loss} 止盈={take_profit}"
                 result = self.execution.execute_buy(
                     code, shares, price,
                     strategy=c.get("strategy", ""),
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reasoning=c.get("reasoning", ""),
+                    signal_detail=cand_detail,
                 )
                 if result.get("status") == "executed":
                     events.append({
@@ -1666,7 +1925,7 @@ class FastLane:
                     })
                     remaining_capacity -= target_value
 
-        # 3. Rule signal scan (satellite positions, action-based routing)
+        # 3. Rule signal scan (holdings + candidates only)
         try:
             from signal_rules import scan_code
 
@@ -1686,80 +1945,87 @@ class FastLane:
                 for f in as_completed(scan_futures):
                     code, res = f.result()
                     scan_results[code] = res
-
-            for code, res in scan_results.items():
-                holdings = self.state.holdings.get(code, {})
-                already_holding = holdings.get("shares", 0) > 0
-
-                for sig in res.get("signals", []):
-                    if sig.get("confidence", 0) < 65:
-                        continue
-
-                    rule_name = sig.get("rule", "")
-                    action = sig.get("action", "alert")  # default alert
-                    q = quotes.get(code, {})
-                    price = q.get("price", 0)
-                    if not price or price <= 0:
-                        continue
-
-                    # Dedup: same (code, rule) only once per day
-                    fired = self._signal_history.setdefault(code, set())
-                    if rule_name in fired:
-                        continue
-                    if len(fired) >= 1:
-                        continue  # max 1 rule trade per code per day
-                    fired.add(rule_name)
-
-                    if action == "buy":
-                        if already_holding:
-                            continue  # don't double-buy via rule signals
-                        sat_value = self.state.total_value * 0.075
-                        shares = round_lot(int(sat_value / price))
-                        if shares < 100:
-                            continue
-                        sl = sig.get("suggested_stop", price * 0.95)
-                        tp = price * 1.10
-                        result = self.execution.execute_buy(
-                            code, shares, price,
-                            strategy=rule_name,
-                            stop_loss=sl, take_profit=tp,
-                            reasoning=f"Rule: {rule_name}",
-                        )
-                        if result.get("status") == "executed":
-                            events.append({
-                                "event": "rule_signal_buy",
-                                "code": code,
-                                "signal": sig,
-                                "result": result,
-                            })
-
-                    elif action == "sell":
-                        if not already_holding:
-                            continue
-                        h_shares = holdings.get("available", 0)
-                        if h_shares <= 0:
-                            continue
-                        result = self.execution.execute_sell(
-                            code, h_shares, price,
-                            strategy=rule_name,
-                            reasoning=f"Rule: {rule_name}",
-                        )
-                        if result.get("status") == "executed":
-                            events.append({
-                                "event": "rule_signal_sell",
-                                "code": code,
-                                "signal": sig,
-                                "result": result,
-                            })
-
-                    else:  # alert
-                        events.append({
-                            "event": "rule_signal_alert",
-                            "code": code,
-                            "signal": sig,
-                        })
         except Exception:
-            pass
+            scan_results = {}
+
+        if scan_results:
+            for code, res in scan_results.items():
+                try:
+                    holdings = self.state.holdings.get(code, {})
+                    already_holding = holdings.get("shares", 0) > 0
+
+                    for sig in res.get("signals", []):
+                        if sig.get("confidence", 0) < 65:
+                            continue
+
+                        rule_name = sig.get("rule", "")
+                        action = sig.get("action", "alert")
+                        q = quotes.get(code, {})
+                        price = q.get("price", 0)
+                        if not price or price <= 0:
+                            continue
+
+                        # Dedup: same (code, rule) only once per day
+                        fired = self._signal_history.setdefault(code, set())
+                        if rule_name in fired:
+                            continue
+                        if len(fired) >= 1:
+                            continue
+                        fired.add(rule_name)
+
+                        if action == "buy":
+                            if already_holding:
+                                continue
+                            sat_value = self.state.total_value * 0.075
+                            shares = round_lot(int(sat_value / price))
+                            if shares < 100:
+                                continue
+                            sl = sig.get("suggested_stop", price * 0.95)
+                            tp = price * 1.10
+                            detail = self._build_signal_detail(sig)
+                            result = self.execution.execute_buy(
+                                code, shares, price,
+                                strategy=rule_name,
+                                stop_loss=sl, take_profit=tp,
+                                reasoning=f"Rule: {rule_name}",
+                                signal_detail=detail,
+                            )
+                            if result.get("status") == "executed":
+                                events.append({
+                                    "event": "rule_signal_buy",
+                                    "code": code,
+                                    "signal": sig,
+                                    "result": result,
+                                })
+
+                        elif action == "sell":
+                            if not already_holding:
+                                continue
+                            h_shares = holdings.get("available", 0)
+                            if h_shares <= 0:
+                                continue
+                            detail = self._build_signal_detail(sig)
+                            result = self.execution.execute_sell(
+                                code, h_shares, price,
+                                reason=f"Rule: {rule_name}",
+                                signal_detail=detail,
+                            )
+                            if result.get("status") == "executed":
+                                events.append({
+                                    "event": "rule_signal_sell",
+                                    "code": code,
+                                    "signal": sig,
+                                    "result": result,
+                                })
+
+                        else:  # alert
+                            events.append({
+                                "event": "rule_signal_alert",
+                                "code": code,
+                                "signal": sig,
+                            })
+                except Exception:
+                    pass
 
         # 4. Emergency detection
         emergency, trigger_reason = self._check_emergency(quotes)
@@ -1888,9 +2154,10 @@ class PaperEngine:
                  universe: list[str] = None,
                  backtest_start: str = None, backtest_end: str = None,
                  resume_run_id: str = None,
-                 dry_run: bool = False):
+                 dry_run: bool = False, claude_every: int = 7):
         self.mode = mode
         self.dry_run = dry_run
+        self.claude_every = claude_every
         self.universe = universe or []
         self._stop_event = threading.Event()
 
@@ -1948,9 +2215,12 @@ class PaperEngine:
         return result
 
     def run_paper(self) -> None:
-        """Run in paper mode: overnights run pipeline, daytime runs FastLane only."""
-        print(f"[Engine] Paper mode v2. Run ID: {self.run_id}")
+        """Run in paper/live mode: overnights run pipeline, daytime runs FastLane only."""
+        print(f"[Engine] Mode: {self.mode.upper()} | Run ID: {self.run_id}")
         print(f"[Engine] Output: {self.output_dir}")
+
+        if _notify:
+            notify_engine_start(self.mode, self.state.initial_capital)
 
         overnight_done = False
         tick_count = 0
@@ -1961,10 +2231,33 @@ class PaperEngine:
             # After market close (post_market or closed), run overnight pipeline once
             if phase in ("post_market", "closed") and not overnight_done:
                 print("[Engine] Market closed. Running overnight pipeline...")
-                self.run_overnight()
+                overnight_result = self.run_overnight()
                 overnight_done = True
                 self.state.release_t1_locks()
-                print(f"[Engine] Day ended. NAV: {self.state.total_value:,.0f}")
+                nav = self.state.total_value
+                print(f"[Engine] Day ended. NAV: {nav:,.0f}")
+
+                if _notify and overnight_result:
+                    risk = overnight_result.get("stages", {}).get("risk", {})
+                    merged = overnight_result.get("stages", {}).get("merged", {})
+                    notify_overnight_complete(self.run_id, {
+                        "bias": merged.get("bias", "neutral"),
+                        "candidates": merged.get("candidates", 0),
+                        "passed": risk.get("passed", 0),
+                        "rejected": risk.get("rejected", 0),
+                        "nav": nav,
+                    })
+                    # Daily summary
+                    positions = self.state.holdings
+                    day_pnl = sum(
+                        (h.get("current_price", h.get("avg_cost", 0)) - h.get("avg_cost", 0)) * h.get("shares", 0)
+                        for h in positions.values()
+                    )
+                    notify_trading_day_end(
+                        self.run_id, nav, day_pnl,
+                        (day_pnl / self.state.initial_capital * 100) if self.state.initial_capital > 0 else 0,
+                        positions, self.state._data.get("trade_count", 0),
+                    )
 
             # During trading hours, run FastLane
             if self.clock.is_trading():
@@ -1988,6 +2281,8 @@ class PaperEngine:
                 # Emergency check
                 if result["emergency"] and not self.dry_run:
                     print(f"[EMERGENCY] {result['trigger_reason']}")
+                    if _notify:
+                        notify_alert("critical", "紧急触发", result["trigger_reason"])
                     if self.lock.acquire(timeout=10):
                         try:
                             self.pipeline.launch_emergency(
@@ -1999,24 +2294,38 @@ class PaperEngine:
 
             time.sleep(1)
 
-    def run_backtest(self) -> None:
-        """Run in backtest mode: historical replay with overnight Claude Code per trading day."""
+    def run_backtest(self, claude_every: int = 7) -> None:
+        """Run in backtest mode: historical replay with periodic Claude Code analysis.
+
+        claude_every: run overnight pipeline every N trading days (default 7, weekly).
+                     Day 1 always gets Claude Code. Set to 1 for every day.
+        """
         if not self.data_feed:
             print("[Engine] Error: backtest mode requires --start, --end, --universe")
             return
 
         trading_days = self.data_feed.trading_days()
-        print(f"[Engine] Backtest mode v2. {len(trading_days)} trading days.")
+        total_days = len(trading_days)
+        print(f"[Engine] Backtest v3. {total_days} trading days, Claude every {claude_every} day(s).")
+        print(f"[Engine] Universe: {len(self.universe)} stocks")
         print(f"[Engine] Output: {self.output_dir}")
 
-        for day in trading_days:
+        if _notify:
+            notify_engine_start(
+                self.mode, self.state.initial_capital,
+                start_date=trading_days[0].strftime("%Y-%m-%d") if total_days > 0 else "",
+                end_date=trading_days[-1].strftime("%Y-%m-%d") if total_days > 0 else "",
+            )
+
+        last_claude_day = None
+        t_start = time.time()
+
+        for i, day in enumerate(trading_days):
             if self._stop_event.is_set():
                 break
 
             day_str = day.strftime("%Y-%m-%d")
             self.clock.sim_time = day.replace(hour=9, minute=30)
-
-            # Update state data_time
             self.state.set_data_time(day_str + " 09:30:00")
 
             # Execute holding adjustments for this day
@@ -2028,28 +2337,70 @@ class PaperEngine:
             # Fast lane tick for this trading day
             result = self.fast_lane.tick()
             events = result["events"]
-
             if events:
                 print(f"  [{day_str}] Events: {len(events)}")
-
-            # Emergency in backtest: log but don't call Claude Code
             if result["emergency"]:
                 print(f"  [{day_str}] EMERGENCY: {result['trigger_reason']}")
 
             # End of day: release T+1 locks
             self.state.release_t1_locks()
 
-            # Run overnight pipeline for this day (Claude Code with date awareness)
-            if not self.dry_run:
-                # Set clock to after market for the overnight prompt
+            # Run overnight pipeline periodically (day 1 + every N days)
+            should_claude = (
+                not self.dry_run
+                and (i == 0 or (i + 1) % claude_every == 0)
+            )
+            if should_claude:
                 self.clock.sim_time = day.replace(hour=15, minute=30)
                 self.run_overnight()
+                last_claude_day = day_str
+                print(f"  [{day_str}] Claude Code pipeline executed")
 
-            print(f"[Backtest] {day_str} | NAV: {self.state.total_value:,.0f} | "
-                  f"Trades: {self.state._data['trade_count']} | "
-                  f"Cash: {self.state.cash:,.0f}")
+            # ETA
+            elapsed = time.time() - t_start
+            pct_done = (i + 1) / total_days * 100
+            if i > 0:
+                eta_total = elapsed / (i + 1) * total_days
+                eta_remaining = max(0, eta_total - elapsed)
+                eta_str = f"{eta_remaining/60:.0f}min"
+            else:
+                eta_str = "..."
 
-        print(f"[Backtest] Complete. Final NAV: {self.state.total_value:,.0f}")
+            print(f"[Backtest] {day_str} ({pct_done:.0f}%) | NAV: {self.state.total_value:,.0f} | "
+                  f"Trades: {self.state._data['trade_count']} | Cash: {self.state.cash:,.0f} | "
+                  f"ETA: {eta_str}")
+
+            # Periodic progress notification
+            if _notify and (i + 1) % 20 == 0:
+                d = self.state._data
+                t = d.get("trade_count", 0)
+                w = d.get("win_count", 0)
+                wr = w / t * 100 if t > 0 else 0
+                notify_backtest_progress(i + 1, total_days, self.state.total_value, wr, t)
+
+        # Backtest complete
+        elapsed_total = time.time() - t_start
+        print(f"[Backtest] Complete in {elapsed_total/60:.0f}min. "
+              f"Last Claude Code: {last_claude_day or 'never'}. Final NAV: {self.state.total_value:,.0f}")
+
+        if _notify:
+            data = self.state._data
+            nav = self.state.total_value
+            total_return = (nav - self.state.initial_capital) / self.state.initial_capital * 100
+            trades = data.get("trade_count", 0)
+            wins = data.get("win_count", 0)
+            wr = wins / trades * 100 if trades > 0 else 0
+            navs = [n["nav"] for n in data.get("nav_curve", [])]
+            max_dd = 0.0
+            if navs:
+                peak = navs[0]
+                for v in navs:
+                    if v > peak:
+                        peak = v
+                    dd = (peak - v) / peak * 100 if peak > 0 else 0
+                    if dd > max_dd:
+                        max_dd = dd
+            notify_backtest_complete(nav, total_return, wr, 0, max_dd, trades)
 
     def stop(self) -> None:
         """Signal the engine to stop gracefully."""
@@ -2092,19 +2443,28 @@ def main():
     parser.add_argument("--start", help="Backtest start date (YYYY-MM-DD)")
     parser.add_argument("--end", help="Backtest end date (YYYY-MM-DD)")
     parser.add_argument("--universe", "-u", default="",
-                        help="Stock codes (comma-separated)")
+                        help="Stock codes (comma-separated) or 'auto' for main board")
     parser.add_argument("--watchlist", "-w", default="",
                         help="Initial watchlist codes")
     parser.add_argument("--resume", help="Resume from run_id")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run without Claude Code (fast lane only)")
+    parser.add_argument("--claude-every", type=int, default=7,
+                        help="Run Claude Code every N trading days in backtest (default: 7, 1=every day)")
 
     args = parser.parse_args()
 
-    universe = []
-    if args.universe:
+    # Universe resolution
+    if args.universe.lower() == "auto":
+        universe = generate_universe()
+        print(f"[Main] Auto universe: {len(universe)} stocks")
+    elif args.universe:
         universe = [c.strip().zfill(6)
                     for c in args.universe.split(",") if c.strip()]
+    else:
+        universe = _fallback_universe()
+        print(f"[Main] Fallback universe: {len(universe)} stocks")
+
     if args.watchlist:
         for c in args.watchlist.split(","):
             c = c.strip().zfill(6)
@@ -2119,16 +2479,22 @@ def main():
         backtest_end=args.end,
         resume_run_id=args.resume,
         dry_run=args.dry_run,
+        claude_every=args.claude_every,
     )
 
     try:
         if args.mode == "backtest":
-            engine.run_backtest()
+            engine.run_backtest(claude_every=args.claude_every)
         else:
             engine.run_paper()
     except KeyboardInterrupt:
         print("\n[Engine] Shutting down...")
         engine.stop()
+        if _notify:
+            notify_engine_stop(args.mode, "用户中断")
+    else:
+        if _notify:
+            notify_engine_stop(args.mode, "正常退出")
 
 
 if __name__ == "__main__":

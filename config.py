@@ -24,3 +24,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # Crash alert — comma-separated Feishu chat IDs that receive crash notifications
 _alert_raw = os.getenv("ALERT_CHAT_IDS", "")
 ALERT_CHAT_IDS = [cid.strip() for cid in _alert_raw.split(",") if cid.strip()]
+
+# Engine notifications — comma-separated Feishu chat IDs for engine events
+# (start/stop/trades/alerts/daily summary). Falls back to ALERT_CHAT_IDS if unset.
+_engine_raw = os.getenv("ENGINE_CHAT_IDS", "")
+ENGINE_CHAT_IDS = [cid.strip() for cid in _engine_raw.split(",") if cid.strip()] or ALERT_CHAT_IDS

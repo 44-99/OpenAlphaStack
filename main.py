@@ -334,7 +334,7 @@ _WELCOME_MSG = (
     "可用指令：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
     "  /unsub 或 退订 — 取消订阅\n"
-    "  /status — 查看订阅状态\n"
+    "  /status — 查看引擎运行状态\n"
     "  /task <描述> — 创建自定义分析任务\n"
     "  /task delete <id> — 删除任务\n"
     "  /tasks — 查看当前任务\n"
@@ -350,7 +350,7 @@ _GROUP_WELCOME_MSG = (
     "可用指令（@我后发送）：\n"
     "  /sub 或 订阅 — 订阅每日定时推送\n"
     "  /unsub 或 退订 — 取消订阅\n"
-    "  /status — 查看订阅状态\n"
+    "  /status — 查看引擎运行状态\n"
     "  /task <描述> — 创建自定义分析任务\n"
     "  /task delete <id> — 删除任务\n"
     "  /tasks — 查看当前任务\n"
@@ -365,7 +365,9 @@ _EXACT_COMMANDS = {
     "/help", "帮助", "help", "指令", "命令",
     "/sub", "订阅", "subscribe", "sub", "开启推送",
     "/unsub", "取消订阅", "unsubscribe", "unsub", "退订", "关闭推送",
-    "/status", "订阅状态", "status", "推送状态",
+    "/status", "status", "状态", "引擎状态",
+    "/positions", "positions", "持仓", "仓位",
+    "/stop", "stop", "停止引擎", "停止",
     "/groups", "groups",
     "/tasks", "tasks",
 }
@@ -500,8 +502,29 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
             return "已取消订阅。"
         return "当前未订阅。"
 
-    if cmd_lower in ("/status", "订阅状态", "status", "推送状态"):
-        return "当前已订阅定时推送。" if _is_subscribed(chat_id) else "当前未订阅。"
+    if cmd_lower in ("/status", "status", "状态"):
+        try:
+            from tools.engine_status import format_status_text
+            return format_status_text()
+        except Exception as e:
+            return f"无法获取引擎状态: {e}"
+
+    if cmd_lower in ("/positions", "positions", "持仓", "仓位"):
+        try:
+            from tools.engine_status import format_positions_text
+            return format_positions_text()
+        except Exception as e:
+            return f"无法获取持仓: {e}"
+
+    if cmd_lower in ("/stop", "stop", "停止引擎", "停止"):
+        # Only stop if in DM or explicitly confirm
+        if chat_type != "p2p":
+            return "请在私聊中使用 /stop 命令停止引擎。"
+        try:
+            from tools.engine_status import stop_engine
+            return stop_engine()
+        except Exception as e:
+            return f"停止引擎失败: {e}"
 
     if cmd_lower in ("/groups", "groups"):
         groups = memory._list_group_sessions()
