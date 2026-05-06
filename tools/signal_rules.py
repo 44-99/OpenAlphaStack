@@ -40,6 +40,7 @@ def check_ma_cross(df: pd.DataFrame) -> dict | None:
                 "ma5": round(float(ma5[i]), 2),
                 "ma10": round(float(ma10[i]), 2),
                 "price": round(float(closes.iloc[i]), 2),
+                "suggested_stop": round(float(closes.iloc[i]) * 0.97, 2),
             }
         if ma5[i] < ma10[i] and ma5[j] >= ma10[j]:
             return {
@@ -140,6 +141,7 @@ def check_ma_alignment(df: pd.DataFrame) -> dict | None:
             "ma5": round(float(ma5[-1]), 2),
             "ma10": round(float(ma10[-1]), 2),
             "ma20": round(float(ma20[-1]), 2),
+            "suggested_stop": round(float(closes.iloc[-1]) * 0.96, 2),
         }
     if curr_bearish and not prev_bearish:
         return {

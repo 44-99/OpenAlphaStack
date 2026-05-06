@@ -110,7 +110,7 @@ def main():
     )
 
     try:
-        engine.run()
+        engine.run_backtest()
     except KeyboardInterrupt:
         print("\n[BacktestRunner] Interrupted.")
         engine.stop()

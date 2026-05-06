@@ -277,7 +277,7 @@ class PlanManager:
             "position_cap_pct": 80.0,
             "preferred_sectors": [],
             "avoid_sectors": [],
-            "emergency_triggers": {"market_drop_pct": 3.0, "single_stock_drop_pct": 5.0},
+            "emergency_triggers": {"market_drop_pct": 3.0, "single_stock_drop_pct": 5.0, "account_drawdown_pct": 10.0},
             "buy_candidates": [],
             "holding_adjustments": [],
             "risk_report": {"rejected_candidates": [], "correlation_matrix": {}},
@@ -821,6 +821,23 @@ class BacktestDataFeed:
                 df = df.sort_values("date").reset_index(drop=True)
                 self._cache[code] = df[df["date"] <= self.end]
 
+        # Fetch Shanghai Composite index for emergency detection
+        self._index_cache: pd.DataFrame | None = None
+        try:
+            import akshare as ak
+            idx_df = ak.stock_zh_index_daily(symbol="sh000001")
+            if not idx_df.empty:
+                idx_df = idx_df.rename(columns={
+                    "日期": "date", "开盘": "open", "收盘": "close",
+                    "最高": "high", "最低": "low", "成交量": "volume",
+                })
+                idx_df["date"] = pd.to_datetime(idx_df["date"])
+                idx_df = idx_df.sort_values("date").reset_index(drop=True)
+                idx_df = idx_df[idx_df["date"] <= self.end]
+                self._index_cache = idx_df
+        except Exception:
+            self._index_cache = None
+
     def current_day_data(self, date: pd.Timestamp) -> dict[str, dict]:
         """Get all universe stocks' data for a specific date as quote dicts."""
         quotes = {}
@@ -845,6 +862,29 @@ class BacktestDataFeed:
                     (float(row["close"]) - prev_close) / prev_close * 100, 2
                 ) if prev_close else 0,
             }
+        # Include market index data for emergency detection
+        INDEX_CODE = "000001"
+        if self._index_cache is not None:
+            idx_row = self._index_cache[self._index_cache["date"] == date]
+            if idx_row.empty:
+                idx_row = self._index_cache[self._index_cache["date"] <= date].tail(1)
+            if not idx_row.empty:
+                idx_row = idx_row.iloc[-1]
+                prev_idx = self._index_cache[self._index_cache["date"] < date]
+                idx_prev_close = float(prev_idx.iloc[-1]["close"]) if not prev_idx.empty else float(idx_row["open"])
+                quotes[INDEX_CODE] = {
+                    "code": INDEX_CODE,
+                    "price": float(idx_row["close"]),
+                    "open": float(idx_row["open"]),
+                    "high": float(idx_row["high"]),
+                    "low": float(idx_row["low"]),
+                    "prev_close": idx_prev_close,
+                    "volume": int(idx_row.get("volume", 0)),
+                    "change_pct": round(
+                        (float(idx_row["close"]) - idx_prev_close) / idx_prev_close * 100, 2
+                    ) if idx_prev_close else 0,
+                }
+
         return quotes
 
     def get_history_up_to(self, code: str, date: pd.Timestamp,
@@ -881,13 +921,14 @@ class OvernightPipeline:
 
     def __init__(self, state: EngineState, plan: PlanManager,
                  ledger: Ledger, clock: TradingClock, output_dir: str,
-                 mode: str = "paper"):
+                 mode: str = "paper", execution: "ExecutionEngine" = None):
         self.state = state
         self.plan = plan
         self.ledger = ledger
         self.clock = clock
         self.output_dir = output_dir
         self.mode = mode
+        self.execution = execution
 
     # ── Phase 0: Sub-Agent Research ───────────────────────────────
 
@@ -1223,6 +1264,11 @@ class OvernightPipeline:
 
     def run_risk_validation(self) -> dict:
         """Python risk.py + signal.py hard validation on merged stage output."""
+        from risk import (
+            calc_volatility_metrics, calc_volatility_adjusted_limit,
+            calc_position_size, max_drawdown_check,
+        )
+
         candidates = self.plan._data.get("buy_candidates", [])
         rejected = []
         passed = []
@@ -1230,6 +1276,8 @@ class OvernightPipeline:
             code = c.get("code", "")
             if not code:
                 continue
+
+            # ── Hard checks (must pass) ──
             entry = c.get("entry_max", 0)
             stop = c.get("stop_loss", 0)
             if stop >= entry:
@@ -1238,7 +1286,62 @@ class OvernightPipeline:
             if entry > 0 and (entry - stop) / entry < 0.03:
                 rejected.append({"code": code, "reason": "risk/reward ratio too low", "rule": "signal_hard_check"})
                 continue
-            passed.append(c)
+
+            # ── risk.py quantitative checks (non-fatal on error) ──
+            try:
+                from _fallback import get_hist
+                df, _ = get_hist(code, days=120)
+                if df.empty:
+                    rejected.append({"code": code, "reason": "no historical data", "rule": "risk_data"})
+                    continue
+
+                closes = [float(x) for x in df["close"].tolist()]
+                price = closes[-1]
+
+                # Volatility check
+                vol = calc_volatility_metrics(closes)
+                annualized_vol = vol["annualized_volatility"]
+                limit_pct = calc_volatility_adjusted_limit(annualized_vol)
+
+                # Position sizing — ensure candidate position doesn't exceed vol-adjusted limit
+                sizing = calc_position_size(price, self.state.initial_capital, limit_pct)
+                sizing_limit_pct = sizing["position_limit_pct"]
+                candidate_pct = c.get("position_pct", 20)
+                if candidate_pct > sizing_limit_pct:
+                    rejected.append({
+                        "code": code,
+                        "reason": (
+                            f"仓位{candidate_pct}%超出波动率调整上限{sizing_limit_pct}% "
+                            f"(年化波动率{annualized_vol:.1%})"
+                        ),
+                        "rule": "risk_volatility",
+                    })
+                    continue
+
+                # Drawdown check
+                dd = max_drawdown_check(closes)
+                if dd.get("warn"):
+                    rejected.append({
+                        "code": code,
+                        "reason": (
+                            f"个票回撤警告: 当前回撤{dd['current_drawdown_pct']}%，"
+                            f"历史最大回撤{dd['max_historical_drawdown_pct']}%"
+                        ),
+                        "rule": "risk_drawdown",
+                    })
+                    continue
+
+                # Inject risk-adjusted sizing
+                c["position_limit_pct"] = sizing_limit_pct
+                c["max_shares"] = sizing["max_shares"]
+                c["volatility"] = vol
+                passed.append(c)
+
+            except Exception as exc:
+                # Non-fatal: let candidate pass through on error
+                print(f"[Risk] soft error for {code}: {exc}")
+                passed.append(c)
+
         self.plan._data["buy_candidates"] = passed
         self.plan._data["risk_report"] = {
             "rejected_candidates": rejected,
@@ -1328,11 +1431,54 @@ class OvernightPipeline:
                         except ValueError:
                             pass
             elif action == "emergency_action":
+                action_type = parts[2] if len(parts) > 2 else ""
+                code_arg = parts[3] if len(parts) > 3 else ""
+                reasoning = ""
+                for kv in parts[4:]:
+                    if kv.startswith("reasoning="):
+                        reasoning = kv.split("=", 1)[1]
+                        break
+
+                executed = False
+                if action_type == "close_all" and self.execution:
+                    for h_code, h in list(self.state.holdings.items()):
+                        shares = h.get("shares", 0)
+                        price = h.get("current_price", 0)
+                        if shares >= 100 and price > 0:
+                            self.execution.execute_sell(
+                                h_code, shares, price,
+                                reason=f"emergency_close_all: {reasoning}",
+                            )
+                            executed = True
+                elif action_type == "reduce" and code_arg and self.execution:
+                    h = self.state.holdings.get(code_arg, {})
+                    shares = h.get("shares", 0)
+                    price = h.get("current_price", 0)
+                    if shares >= 100 and price > 0:
+                        reduce_qty = (shares // 200) * 100
+                        if reduce_qty >= 100:
+                            self.execution.execute_sell(
+                                code_arg, reduce_qty, price,
+                                reason=f"emergency_reduce: {reasoning}",
+                            )
+                            executed = True
+                elif action_type == "close" and code_arg and self.execution:
+                    h = self.state.holdings.get(code_arg, {})
+                    shares = h.get("shares", 0)
+                    price = h.get("current_price", 0)
+                    if shares >= 100 and price > 0:
+                        self.execution.execute_sell(
+                            code_arg, shares, price,
+                            reason=f"emergency_close: {reasoning}",
+                        )
+                        executed = True
+
                 self.ledger.append({
                     "decision": "emergency_action",
-                    "action": parts[2] if len(parts) > 2 else "",
-                    "code": parts[3] if len(parts) > 3 else "",
-                    "reasoning": parts[5] if len(parts) > 5 else "",
+                    "action": action_type,
+                    "code": code_arg,
+                    "reasoning": reasoning,
+                    "executed": executed,
                 })
 
 # ═══════════════════════════════════════════════════════════════
@@ -1424,9 +1570,33 @@ class FastLane:
                     if q:
                         quotes[code] = q
 
+        # Fetch market index for emergency detection (live/paper mode)
+        if not (self.data_feed and self.mode == "backtest"):
+            try:
+                from quote import get_market_overview
+                overview = get_market_overview()
+                if overview and not overview.get("error"):
+                    for idx in overview.get("indices", []):
+                        if "上证" in idx.get("name", ""):
+                            quotes["000001"] = {
+                                "price": idx.get("price", 0),
+                                "change_pct": idx.get("change_pct", 0),
+                            }
+                            break
+            except Exception:
+                pass
+
         # Update prices in state
         for code, q in quotes.items():
+            if q.get("code") == "000001":
+                continue  # skip index in state update
             self.state.update_quote(code, q.get("price", 0))
+
+        # Track market price for emergency comparison
+        market_q = quotes.get("000001", {})
+        current_market_price = market_q.get("price", 0)
+        if current_market_price > 0 and self._prev_market_price <= 0:
+            self._prev_market_price = current_market_price
 
         # 1. Stop-loss / take-profit triggers (always allowed, even during circuit breaker)
         triggers = self.execution.check_stop_triggers(quotes)
@@ -1602,6 +1772,11 @@ class FastLane:
 
         self.state.snapshot_nav()
         self.state.save()
+
+        # Update previous market price for next tick's emergency comparison
+        if current_market_price > 0:
+            self._prev_market_price = current_market_price
+
         return {"events": events, "emergency": emergency, "trigger_reason": trigger_reason}
 
     def execute_holding_adjustments(self) -> list[dict]:
@@ -1645,23 +1820,37 @@ class FastLane:
         return results
 
     def _check_emergency(self, quotes: dict) -> tuple:
-        """Check for emergency conditions: market drop >3% or single stock drop >5%.
+        """Check for emergency conditions: market -3%, account -10%, or single stock -5%.
 
         Returns (is_emergency: bool, reason: str).
         """
         triggers = self.plan.get_emergency_triggers()
         stock_limit = triggers.get("single_stock_drop_pct", 5.0)
+        market_drop_pct = triggers.get("market_drop_pct", 3.0)
+        account_drawdown_pct = triggers.get("account_drawdown_pct", 10.0)
 
-        # Check market index (use Shanghai composite from market quote)
-        market_price = 0.0
-        for code, q in quotes.items():
-            if code in ("000001", "sh", "market"):
-                market_price = q.get("price", 0)
-                break
-        # If no explicit market quote, check first available
-        if market_price <= 0 and quotes:
-            # Use the first quote as a rough proxy
-            pass
+        # Check market index drop vs previous close
+        market_q = quotes.get("000001", {})
+        current_market_price = market_q.get("price", 0)
+        if current_market_price > 0 and self._prev_market_price > 0:
+            drop_pct = (self._prev_market_price - current_market_price) / self._prev_market_price * 100
+            if drop_pct >= market_drop_pct:
+                return True, (
+                    f"大盘下跌{drop_pct:.1f}% "
+                    f"(从{self._prev_market_price:.2f}至{current_market_price:.2f}，"
+                    f"触发阈值{market_drop_pct}%)"
+                )
+
+        # Check total account drawdown
+        if self.state.initial_capital > 0:
+            drawdown = (self.state.total_value - self.state.initial_capital) / self.state.initial_capital * 100
+            if drawdown <= -account_drawdown_pct:
+                return True, (
+                    f"账户回撤{abs(drawdown):.1f}% "
+                    f"(总资产{self.state.total_value:,.0f}，"
+                    f"初始资金{self.state.initial_capital:,.0f}，"
+                    f"触发阈值{account_drawdown_pct}%)"
+                )
 
         # Check individual holdings for >stock_limit drop
         for code, h in self.state.holdings.items():
@@ -1670,7 +1859,7 @@ class FastLane:
             if cost > 0 and current > 0:
                 drop_pct = (cost - current) / cost * 100
                 if drop_pct >= stock_limit:
-                    return True, f"{code} drop {drop_pct:.1f}% from cost {cost:.2f} to {current:.2f}"
+                    return True, f"{code} 个票下跌{drop_pct:.1f}% (成本{cost:.2f} 现价{current:.2f})"
 
         return False, ""
 
@@ -1745,6 +1934,7 @@ class PaperEngine:
         self.pipeline = OvernightPipeline(
             self.state, self.plan, self.ledger,
             self.clock, self.output_dir, mode,
+            execution=self.execution,
         )
 
     def run_overnight(self) -> dict | None:
