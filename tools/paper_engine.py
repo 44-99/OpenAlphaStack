@@ -824,7 +824,6 @@ class BacktestDataFeed:
     def current_day_data(self, date: pd.Timestamp) -> dict[str, dict]:
         """Get all universe stocks' data for a specific date as quote dicts."""
         quotes = {}
-        date_str = date.strftime("%Y-%m-%d")
         for code, df in self._cache.items():
             row = df[df["date"] == date]
             if row.empty:
@@ -1141,13 +1140,18 @@ class OvernightPipeline:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k == "confidence":
-                            try: confidence = int(v)
-                            except ValueError: pass
-                        elif k == "reasoning": bias_reasoning = v
+                            try:
+                                confidence = int(v)
+                            except ValueError:
+                                pass
+                        elif k == "reasoning":
+                            bias_reasoning = v
 
             elif action == "position_cap":
-                try: position_cap = float(parts[2])
-                except ValueError: pass
+                try:
+                    position_cap = float(parts[2])
+                except ValueError:
+                    pass
 
             elif action == "prefer_sectors" and len(parts) > 2:
                 preferred = [s.strip() for s in parts[2].split(",") if s.strip()]
@@ -1161,9 +1165,12 @@ class OvernightPipeline:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k == "new_stop_loss":
-                            try: adj[k] = float(v)
-                            except ValueError: adj[k] = v
-                        else: adj[k] = v
+                            try:
+                                adj[k] = float(v)
+                            except ValueError:
+                                adj[k] = v
+                        else:
+                            adj[k] = v
                 adjustments.append(adj)
 
             elif action == "candidate" and len(parts) > 2:
@@ -1172,19 +1179,26 @@ class OvernightPipeline:
                     if "=" in kv:
                         k, v = kv.split("=", 1)
                         if k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
-                            try: cand[k] = float(v)
-                            except ValueError: cand[k] = v
+                            try:
+                                cand[k] = float(v)
+                            except ValueError:
+                                cand[k] = v
                         elif k == "priority":
-                            try: cand[k] = int(v)
-                            except ValueError: cand[k] = v
-                        else: cand[k] = v
+                            try:
+                                cand[k] = int(v)
+                            except ValueError:
+                                cand[k] = v
+                        else:
+                            cand[k] = v
                 if all(k in cand for k in ("entry_max", "stop_loss", "take_profit")):
                     candidates.append(cand)
 
         if bias == "neutral" and confidence == 50:
             tu = text.upper()
-            if "BULLISH" in tu: bias = "bullish"
-            elif "BEARISH" in tu: bias = "bearish"
+            if "BULLISH" in tu:
+                bias = "bullish"
+            elif "BEARISH" in tu:
+                bias = "bearish"
         if position_cap is None:
             position_cap = {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
 
@@ -1636,7 +1650,6 @@ class FastLane:
         Returns (is_emergency: bool, reason: str).
         """
         triggers = self.plan.get_emergency_triggers()
-        market_limit = triggers.get("market_drop_pct", 3.0)
         stock_limit = triggers.get("single_stock_drop_pct", 5.0)
 
         # Check market index (use Shanghai composite from market quote)
