@@ -1,7 +1,5 @@
 # AlphaClaude
 
-![AlphaClaude](docs/poster.png)
-
 **数据层**：腾讯→新浪→akshare 三级 fallback，20 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控/引擎/报表。
 **策略层**：3 条场景化技能管线 + 7 条交易铁律前置约束，description-based 智能激活。
 **引擎层**：统一 Agent 引擎（回测/模拟盘/实盘三模式共享同一代码路径），盘后批量分析 + 次日机械执行。
@@ -146,52 +144,17 @@ python main.py
 
 ```
 AlphaClaude/
-├── main.py          — 消息编排、会话管理、指令处理、技能加载、FastAPI
-├── memory.py        — 用户/群聊记忆系统、transcript 整合
-├── claude.py        — Claude Code CLI 封装
-├── scheduler.py     — APScheduler 定时任务 + 动态任务 CRUD
-├── config.py        — 环境变量加载
-├── stock.py         — 机器人内部数据层（定时报告 & 上下文注入），akshare 批量扫描
-├── feishu/          — 飞书 SDK 集成
-│   ├── auth.py      — 租户访问令牌
-│   ├── bot.py       — send_text / send_post / reply_message / parse_event
-│   ├── group.py     — 群聊成员检查
-│   ├── user.py      — 用户标签查询
-│   └── ws.py        — lark-oapi WebSocket 监听
-├── tools/           — CLI 工具，Claude Code 通过 Bash 调用 (JSON 进/出，无状态)
-│   ├── quote.py     — 实时行情 & 大盘概况
-│   ├── technical.py — 技术指标 (MA/MACD/RSI/KDJ/布林带)
-│   ├── fundamental.py — PE/PB/ROE/营收增速/行业对比
-│   ├── flow.py      — 资金流向、北向资金、主力动向
-│   ├── news.py      — 公告、研报、情绪分析
-│   ├── screen.py    — 多因子筛选（策略内联为 Python 常量）
-│   ├── backtest.py  — 历史形态回测（单股单策略）
-│   ├── trend.py     — MA排列/交叉/乖离/趋势状态
-│   ├── signal_detector.py — 5 种入场信号检测
-│   ├── pivot.py     — 枢轴点/箱体/缠论中枢
-│   ├── fibonacci.py — 斐波那契回撤/扩展位
-│   ├── sentiment.py — 换手热度/量能/ATR/均线粘合/情绪评分
-│   ├── portfolio.py — 自选股增删查改、持仓盈亏概览
-│   ├── risk.py      — 确定性风险计算（波动率/仓位/回撤/相关性）
-│   ├── signal.py    — 交易信号硬校验 + 审计日志写入
-│   ├── signal_rules.py — 规则信号引擎（6 条纯 Python 规则，零 LLM）
-│   ├── paper_engine.py — 统一 Agent 引擎（backtest/paper/live 三模式）│
-│   ├── llm_client.py  — API+Tool Use 客户端(4 个结构化tool schema)
-│   ├── backtest_runner.py — 回测 CLI 入口（支持 screen 策略名）
-│   └── daily_report.py — 日交易报表（P&L/胜率/回撤，可选飞书推送）
-├── .github/
-│   └── workflows/   — CI/CD 管线
-│       ├── ci.yml   — push 触发，零 LLM（schema 校验/基线对比/lint）
-│       ├── agent-backtest.yml — 手动触发，完整 Agent 回测
-│       └── deploy.yml — 手动触发，Docker build+push+SSH 部署
-├── skills/          — 场景化策略技能（渐进式展开）
-│   ├── trading-principles.md    — 前置技能：7 条交易铁律，始终加载
-│   ├── stock-analyzer/SKILL.md  — 个股分析管线 + references/
-│   ├── market-analyzer/SKILL.md — 市场分析管线 + references/
-│   └── stock-screener/SKILL.md  — 选股管线 + references/
-├── data/            — 运行时数据
-│   └── output/      — Agent 引擎输出 (ledger/state/plan，三种模式统一)
-├── CLAUDE.md        — Claude Code 系统提示词（工具目录 + 交易纪律）
+├── main.py              — 消息编排、会话管理、FastAPI 入口
+├── claude.py            — Claude Code CLI 封装
+├── memory.py            — 双层记忆系统（transcript + 项目 memory）
+├── scheduler.py         — 定时任务调度 + 动态 CRUD
+├── config.py / stock.py — 环境配置与内部数据层
+├── feishu/              — 飞书 SDK（WebSocket 长连接 / 消息 / 鉴权）
+├── tools/               — 20 个 CLI 工具（行情/技术/基本面/资金/形态/风控/引擎）
+├── skills/              — 3 条场景化策略技能（渐进式展开 + references 深度知识）
+├── .github/workflows/   — CI/CD（快速 CI + Agent 回测 + Docker 部署）
+├── data/output/         — 引擎运行时输出（ledger / state / plan，三模式统一）
+├── CLAUDE.md            — Claude Code 系统提示词
 └── requirements.txt
 ```
 
@@ -201,7 +164,7 @@ AlphaClaude/
 
 ## 路线图
 
-四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。当前进度：Phase 1 完成，Phase 2 核心完成（2.1-2.7 已交付，待 2.8 Web 面板 + 实盘准入验证）。
+四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。当前进度：Phase 1 完成，Phase 2 全部完成（2.1-2.10 已交付），进入 Phase 3 实盘准入准备。
 
 ## 许可证
 

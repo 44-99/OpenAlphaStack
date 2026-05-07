@@ -491,6 +491,23 @@ class PlanManager:
         self._data["risk_report"] = report
         self.save("risk_stage3")
 
+    def set_variant(self, variant: dict) -> None:
+        self._data["strategy_variant"] = {
+            "name": variant.get("name", "默认"),
+            "source_b_max_pct": variant.get("source_b_max_pct", 20.0),
+            "source_b_stop_pct": variant.get("source_b_stop_pct", -8),
+            "source_c_max_pct": variant.get("source_c_max_pct", 7.5),
+            "source_c_stop_pct": variant.get("source_c_stop_pct", -5),
+            "max_single_position_pct": variant.get("max_single_position_pct", 25.0),
+            "signal_min_confidence": variant.get("signal_min_confidence", 65),
+            "signal_position_pct": variant.get("signal_position_pct", 0.075),
+            "max_total_position_pct": variant.get("max_total_position_pct", 80.0),
+        }
+        self.save("variant")
+
+    def get_variant(self) -> dict:
+        return self._data.get("strategy_variant", {})
+
 
 # ═══════════════════════════════════════════════════════════════
 #  Ledger — ledger.jsonl append-only decision journal
@@ -1097,6 +1114,28 @@ class OvernightPipeline:
         self.mode = mode
         self.execution = execution
         self.run_id = os.path.basename(output_dir)
+        self._last_shadow_diagnostics = ""
+        try:
+            from tools.strategy_variants import get_active_variant
+            self.variant = get_active_variant()
+        except Exception:
+            self.variant = {
+                "name": "默认", "position_cap_by_bias": {"bullish": 80, "neutral": 50, "bearish": 20},
+                "source_b_max_pct": 20.0, "source_b_stop_pct": -8,
+                "source_c_max_pct": 7.5, "source_c_stop_pct": -5,
+                "max_single_position_pct": 25.0, "signal_min_confidence": 65,
+                "signal_position_pct": 0.075, "max_total_position_pct": 80.0,
+            }
+
+    def _bc_rules_text(self) -> str:
+        """B/C source rules text from active variant for LLM prompts."""
+        v = self.variant
+        return (
+            f"B类上限{v.get('source_b_max_pct',20):.0f}%"
+            f"止损{v.get('source_b_stop_pct',-8)}%, "
+            f"C类上限{v.get('source_c_max_pct',7.5):.0f}%"
+            f"止损{v.get('source_c_stop_pct',-5)}%。"
+        )
 
     # ── Phase 0: Sub-Agent Research ───────────────────────────────
 
@@ -1158,19 +1197,44 @@ class OvernightPipeline:
             f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f}",
             "数据不足时基于常识合理推断，标注[推断]。",
         ]
-        if s["holdings"]:
-            lines.append("持仓:")
-            for code, h in s["holdings"].items():
-                pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
-                lines.append(f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} 现价{h['current_price']:.2f} {pnl:+.1f}%")
+
+        # Try Shadow Account diagnostics when enough trades exist
+        shadow_text = self._try_shadow_diagnostics()
+
+        if shadow_text:
+            lines.append(f"\n[影子账户行为诊断]\n{shadow_text}")
+            lines.append("要求: 1.验证诊断是否准确 2.确认/否定每个模式 3.提出1条可操作的prompt改进建议")
+            self._last_shadow_diagnostics = shadow_text
         else:
-            lines.append("空仓")
-        if recent:
-            lines.append("近5决策:")
-            for e in recent[-5:]:
-                lines.append(f"  [{e['seq']}] {e.get('decision','')} {e.get('reasoning','')[:60]}")
-        lines.append("要求: 1.决策回顾 2.持仓评估 3.经验教训1条")
+            self._last_shadow_diagnostics = ""
+            if s["holdings"]:
+                lines.append("持仓:")
+                for code, h in s["holdings"].items():
+                    pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
+                    lines.append(f"  {code}: {h['shares']}股 成本{h['avg_cost']:.2f} 现价{h['current_price']:.2f} {pnl:+.1f}%")
+            else:
+                lines.append("空仓")
+            if recent:
+                lines.append("近5决策:")
+                for e in recent[-5:]:
+                    lines.append(f"  [{e['seq']}] {e.get('decision','')} {e.get('reasoning','')[:60]}")
+            lines.append("要求: 1.决策回顾 2.持仓评估 3.经验教训1条")
         return "\n".join(lines)
+
+    def _try_shadow_diagnostics(self) -> str:
+        """Compute shadow diagnostics from ledger. Returns '' if insufficient data."""
+        try:
+            all_entries = self.ledger.read_all()
+            trade_entries = [e for e in all_entries
+                           if e.get("decision") in ("open_position", "close_position")]
+            if len(trade_entries) < 8:
+                return ""
+            from tools.shadow_account import pair_trades, compute_diagnostics, format_for_prompt
+            paired, open_pos = pair_trades(all_entries)
+            diagnostics = compute_diagnostics(paired, open_pos, all_entries)
+            return format_for_prompt(diagnostics)
+        except Exception:
+            return ""
 
     def _run_sub_agents(self) -> dict[str, str]:
         """Run 3 sub-agents in parallel. Returns {'A': summary, 'B': summary, 'C': summary}."""
@@ -1251,6 +1315,171 @@ class OvernightPipeline:
             lines.append("## 技术筛选候选 (不可用)")
         return "\n".join(lines)
 
+    def _build_shadow_feedback(self) -> str:
+        """Read accumulated shadow patterns, return anti-pattern rules for prompt injection."""
+        import json as _json
+        patterns_path = os.path.join(
+            self.output_dir, "shadow_account", "patterns.json")
+        if not os.path.exists(patterns_path):
+            return ""
+        try:
+            with open(patterns_path, "r", encoding="utf-8") as _f:
+                data = _json.load(_f)
+        except (OSError, ValueError):
+            return ""
+
+        active = [p for p in data.get("patterns", []) if p.get("status") == "active"]
+        if not active:
+            return ""
+
+        lines = ["## [影子账户] 历史重复错误模式 — 务必规避"]
+        for i, p in enumerate(active[:5], 1):
+            name = p.get("name", "")
+            count = p.get("occurrence_count", 0)
+            evidence = p.get("evidence", "")
+            fix = p.get("suggested_fix", "")
+            lines.append(f"{i}. [{name}] 共{count}次 {evidence}")
+            if fix:
+                lines.append(f"   规避措施: {fix}")
+        return "\n".join(lines)
+
+    def _call_text_safe(self, prompt: str, label: str) -> str:
+        """Call call_text with error handling. Returns '' on failure."""
+        from tools.llm_client import call_text
+        try:
+            result = call_text(prompt, max_tokens=2048)
+            return (result or "").strip()
+        except Exception as exc:
+            print(f"[OvernightPipeline] {label} text call failed: {exc}")
+            return ""
+
+    def _parse_candidates(self, tool_inputs: list[dict]) -> list[dict]:
+        """Parse TOOL_ADD_CANDIDATE results into candidate dicts."""
+        candidates = []
+        for d in (tool_inputs or []):
+            if "code" not in d:
+                continue
+            c = {"code": str(d["code"])}
+            for k in ("source", "reasoning"):
+                if k in d:
+                    c[k] = str(d[k])
+            for k in ("priority",):
+                if k in d:
+                    try:
+                        c[k] = int(d[k])
+                    except (ValueError, TypeError):
+                        pass
+            for k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
+                if k in d:
+                    try:
+                        c[k] = float(d[k])
+                    except (ValueError, TypeError):
+                        pass
+            candidates.append(c)
+        return candidates
+
+    def _build_bull_prompt(self, summaries: dict[str, str], direction: dict) -> str:
+        """Build prompt for Bull agent: find reasons to buy each candidate."""
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        bias = direction.get("bias", "neutral")
+        cap = direction.get("position_cap", 80)
+        parts = [
+            f"{sim_date} 你是乐观的A股分析师(Bull)。为以下候选池中每只股票找出做多理由。",
+            f"市场偏向:{bias} 仓位上限:{cap}%",
+            f"板块分析: {summaries.get('B','')[:200]}",
+            self._fetch_candidates_screen(),
+        ]
+        feedback = self._build_shadow_feedback()
+        if feedback:
+            parts.insert(0, feedback)
+        parts.append(
+            "要求: 1.逐只分析技术面/资金面/消息面做多理由 "
+            "2.给出每只的合理买入价位和止盈目标 "
+            "3.不遗漏任何候选，不筛选——你只负责找理由买入"
+        )
+        return "\n".join(parts)
+
+    def _build_bear_prompt(self, summaries: dict[str, str], direction: dict,
+                           bull_analysis: str) -> str:
+        """Build prompt for Bear agent: find risks NOT to buy each candidate."""
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        bias = direction.get("bias", "neutral")
+        cap = direction.get("position_cap", 80)
+        parts = [
+            f"{sim_date} 你是审慎的风险分析师(Bear)。阅读Bull的做多分析后，逐只找出不应买入的理由。",
+            f"市场偏向:{bias} 仓位上限:{cap}%",
+            f"板块分析: {summaries.get('B','')[:200]}",
+            "## Bull 做多分析",
+            bull_analysis[:2000],
+            "## 候选池",
+            self._fetch_candidates_screen(),
+        ]
+        feedback = self._build_shadow_feedback()
+        if feedback:
+            parts.insert(0, feedback)
+        parts.append(
+            "要求: 1.逐只找出Bull遗漏的风险点(估值/技术/资金/政策) "
+            "2.对每只给出风险等级(高/中/低) "
+            "3.标注哪几只应直接否决——你负责挑毛病"
+        )
+        return "\n".join(parts)
+
+    def _build_risk_prompt(self, summaries: dict[str, str], direction: dict,
+                           bull_analysis: str, bear_analysis: str) -> str:
+        """Build prompt for Risk agent: final arbiter after debate."""
+        sim_date = self.clock.now().strftime("%Y-%m-%d")
+        bias = direction.get("bias", "neutral")
+        preferred = ",".join(direction.get("preferred") or []) or "无"
+        cap = direction.get("position_cap", 80)
+        parts = [
+            f"{sim_date}次日选股。你是最终决策者(Risk)。阅读Bull和Bear的辩论后，"
+            f"调用 add_candidate 工具提交最终候选。",
+            f"市场偏向:{bias} 偏好板块:{preferred} 仓位上限:{cap}%",
+            "## Bull 做多分析",
+            bull_analysis[:2000],
+            "## Bear 风险分析",
+            bear_analysis[:2000],
+            self._fetch_candidates_screen(),
+            self._bc_rules_text(),
+        ]
+        feedback = self._build_shadow_feedback()
+        if feedback:
+            parts.insert(0, feedback)
+        parts.append(
+            "裁决原则: 1.Bear标注'直接否决'的候选不纳入 "
+            "2.Bull理由充分且Bear风险可控的优先 "
+            "3.每只入选候选调用一次 add_candidate"
+        )
+        return "\n".join(parts)
+
+    def _run_bull_bear_debate(self, summaries: dict[str, str],
+                              direction: dict) -> tuple[list[dict], str]:
+        """Run Bull/Bear/Risk three-stage debate for candidate selection.
+        Returns (candidates, debate_trace). Falls back to empty on any failure.
+        """
+        from tools.llm_client import call_with_tool, TOOL_ADD_CANDIDATE
+
+        bull_prompt = self._build_bull_prompt(summaries, direction)
+        bull_text = self._call_text_safe(bull_prompt, "Bull")
+        if not bull_text:
+            return [], ""
+
+        bear_prompt = self._build_bear_prompt(summaries, direction, bull_text)
+        bear_text = self._call_text_safe(bear_prompt, "Bear")
+        if not bear_text:
+            return [], ""
+
+        risk_prompt = self._build_risk_prompt(summaries, direction, bull_text, bear_text)
+        try:
+            tool_inputs = call_with_tool(risk_prompt, [TOOL_ADD_CANDIDATE])
+        except Exception as exc:
+            print(f"[OvernightPipeline] Risk debate call failed: {exc}")
+            return [], ""
+
+        candidates = self._parse_candidates(tool_inputs or [])
+        trace = f"=== BULL ===\n{bull_text}\n\n=== BEAR ===\n{bear_text}"
+        return candidates, trace
+
     def run_merged_stage(self, summaries: dict[str, str]) -> dict:
         """Phase 1-3: Direct API calls with Tool Use for guaranteed structured output."""
         from tools.llm_client import (
@@ -1279,42 +1508,35 @@ class OvernightPipeline:
         except Exception as exc:
             print(f"[OvernightPipeline] direction stage failed: {exc}")
 
-        # Step 2: Candidates
-        candidates_prompt = self._build_candidates_prompt(summaries, direction)
+        # Step 2: Candidates (Bull/Bear debate with single-call fallback)
         candidates = []
+        debate_trace = ""
         try:
-            tool_inputs = call_with_tool(candidates_prompt, [TOOL_ADD_CANDIDATE])
-            for d in tool_inputs:
-                if "code" not in d:
-                    continue
-                c = {"code": str(d["code"])}
-                for k in ("source", "reasoning"):
-                    if k in d:
-                        c[k] = str(d[k])
-                for k in ("priority",):
-                    if k in d:
-                        try:
-                            c[k] = int(d[k])
-                        except (ValueError, TypeError):
-                            pass
-                for k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
-                    if k in d:
-                        try:
-                            c[k] = float(d[k])
-                        except (ValueError, TypeError):
-                            pass
-                candidates.append(c)
-            # Debug log
-            dbg_path = os.path.join(self.output_dir, "_debug_candidates_response.txt")
-            with open(dbg_path, "w", encoding="utf-8") as f:
-                f.write(f"=== PROMPT ===\n{candidates_prompt}\n\n=== TOOL INPUTS ===\n{json.dumps(tool_inputs, ensure_ascii=False, indent=2)}")
-            if not candidates:
-                if _notify:
-                    notify_overnight_timeout(self.run_id, f"选股返回空: {len(tool_inputs)}个tool call但无有效candidate")
+            candidates, debate_trace = self._run_bull_bear_debate(summaries, direction)
         except Exception as exc:
-            print(f"[OvernightPipeline] candidates stage failed: {exc}")
-            if _notify:
-                notify_overnight_timeout(self.run_id, f"选股阶段: {exc}")
+            print(f"[OvernightPipeline] Bull/Bear debate failed: {exc}")
+
+        if not candidates:
+            # Fallback to single-call
+            candidates_prompt = self._build_candidates_prompt(summaries, direction)
+            try:
+                tool_inputs = call_with_tool(candidates_prompt, [TOOL_ADD_CANDIDATE])
+                candidates = self._parse_candidates(tool_inputs or [])
+                if not candidates:
+                    if _notify:
+                        notify_overnight_timeout(self.run_id,
+                            f"选股返回空: {len(tool_inputs or [])}个tool call但无有效candidate")
+            except Exception as exc:
+                print(f"[OvernightPipeline] candidates fallback failed: {exc}")
+                if _notify:
+                    notify_overnight_timeout(self.run_id, f"选股阶段: {exc}")
+
+        # Debug log
+        dbg_path = os.path.join(self.output_dir, "_debug_candidates_response.txt")
+        with open(dbg_path, "w", encoding="utf-8") as f:
+            if debate_trace:
+                f.write(f"=== DEBATE TRACE ===\n{debate_trace}\n\n")
+            f.write(f"=== FINAL CANDIDATES ===\n{json.dumps(candidates, ensure_ascii=False, indent=2)}\n")
 
         # Step 3: Adjustments (only if holdings exist)
         adjustments = []
@@ -1353,6 +1575,9 @@ class OvernightPipeline:
             self._fetch_market_snapshot(),
             f"账户: 总{self.state.total_value:,.0f} 现金{s['cash']:,.0f}",
         ]
+        feedback = self._build_shadow_feedback()
+        if feedback:
+            parts.insert(0, feedback)
         return "\n".join(parts)
 
     def _build_candidates_prompt(self, summaries: dict[str, str], direction: dict) -> str:
@@ -1364,8 +1589,11 @@ class OvernightPipeline:
             f"{sim_date}次日选股。{bias}偏好{preferred}仓位{cap}%。请为每只候选调用一次 add_candidate 工具。",
             f"板块: {summaries.get('B','')[:200]}",
             self._fetch_candidates_screen(),
-            "B类上限20%止损-8%, C类上限7.5%止损-5%。",
+            self._bc_rules_text(),
         ]
+        feedback = self._build_shadow_feedback()
+        if feedback:
+            parts.insert(0, feedback)
         return "\n".join(parts)
 
     def _build_adjustments_prompt(self, direction: dict) -> str:
@@ -1388,18 +1616,26 @@ class OvernightPipeline:
         confidence = direction.get("confidence", 50)
         bias_reasoning = direction.get("bias_reasoning", "")
         position_cap = direction.get("position_cap") or \
-            {"bullish": 80, "neutral": 50, "bearish": 20}.get(bias, 50)
+            self.variant.get("position_cap_by_bias", {}).get(bias, 50)
         preferred = direction.get("preferred")
         avoid = direction.get("avoid")
 
         self.plan.set_market_bias(bias, confidence, bias_reasoning, position_cap, preferred, avoid)
+        self.plan.set_variant(self.variant)
         self.ledger.append({
             "decision": "overnight_bias", "value": bias,
             "confidence": confidence, "reasoning": bias_reasoning,
             "position_cap": position_cap,
+            "variant": self.variant.get("name", "默认"),
         })
         self.plan.set_adjustments(adjustments)
         self.plan.set_candidates(candidates)
+
+        # Apply variant rules to plan
+        rules = self.plan.load().get("rules", {})
+        rules["max_single_position_pct"] = self.variant.get("max_single_position_pct", 25.0)
+        rules["max_total_position_pct"] = self.variant.get("max_total_position_pct", 80.0)
+        self.plan.save("variant_rules")
 
         return {
             "stage": "merged",
@@ -1514,10 +1750,27 @@ class OvernightPipeline:
             print(f"[OvernightPipeline] sub-agents failed: {exc}")
             summaries = {"A": "", "B": "", "C": ""}
 
+        # Persist shadow diagnostics if computed
+        self._save_shadow_if_dirty(summaries.get("C", ""))
+
         result["stages"]["merged"] = self.run_merged_stage(summaries)
         result["stages"]["risk"] = self.run_risk_validation()
 
         return result
+
+    def _save_shadow_if_dirty(self, sub_c_output: str) -> None:
+        """Save shadow diagnostics if data was computed during prompt building."""
+        if not self._last_shadow_diagnostics:
+            return
+        try:
+            from tools.shadow_account import load_ledger, pair_trades, compute_diagnostics, save_diagnostics
+            entries = load_ledger(self.run_id)
+            if entries:
+                paired, open_pos = pair_trades(entries)
+                diagnostics = compute_diagnostics(paired, open_pos, entries)
+                save_diagnostics(self.run_id, diagnostics, sub_c_output)
+        except Exception:
+            pass
 
     # ── Emergency Intraday Call ───────────────────────────────────
 
@@ -1807,7 +2060,13 @@ class FastLane:
                     continue
 
                 source = c.get("source", "C")
-                max_single_pct = 20.0 if source == "B" else 7.5
+                variant = self.plan.get_variant()
+                if source == "B":
+                    max_single_pct = variant.get("source_b_max_pct", 20.0)
+                    default_stop_mul = 1 + variant.get("source_b_stop_pct", -8) / 100
+                else:
+                    max_single_pct = variant.get("source_c_max_pct", 7.5)
+                    default_stop_mul = 1 + variant.get("source_c_stop_pct", -5) / 100
                 target_pct = min(c.get("position_pct", max_single_pct), max_single_pct)
                 target_value = self.state.total_value * (target_pct / 100.0)
 
@@ -1818,7 +2077,7 @@ class FastLane:
                 if shares < 100:
                     continue
 
-                stop_loss = c.get("stop_loss", price * 0.94)
+                stop_loss = c.get("stop_loss", round(price * default_stop_mul, 2))
                 take_profit = c.get("take_profit", price * 1.15)
                 cand_detail = f"来源={source} | 优先级={c.get('priority','?')} | 止损={stop_loss} 止盈={take_profit}"
                 result = self.execution.execute_buy(
@@ -1869,8 +2128,12 @@ class FastLane:
                     holdings = self.state.holdings.get(code, {})
                     already_holding = holdings.get("shares", 0) > 0
 
+                    variant = self.plan.get_variant()
+                    min_conf = variant.get("signal_min_confidence", 65)
+                    sig_pos_pct = variant.get("signal_position_pct", 0.075)
+
                     for sig in res.get("signals", []):
-                        if sig.get("confidence", 0) < 65:
+                        if sig.get("confidence", 0) < min_conf:
                             continue
 
                         rule_name = sig.get("rule", "")
@@ -1891,7 +2154,7 @@ class FastLane:
                         if action == "buy":
                             if already_holding:
                                 continue
-                            sat_value = self.state.total_value * 0.075
+                            sat_value = self.state.total_value * sig_pos_pct
                             shares = round_lot(int(sat_value / price))
                             if shares < 100:
                                 continue
