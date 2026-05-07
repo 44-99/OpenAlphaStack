@@ -2,14 +2,14 @@
 
 ![AlphaClaude](docs/poster.png)
 
-**数据层**：腾讯→新浪→akshare 三级 fallback，19 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控/引擎/报表。
+**数据层**：腾讯→新浪→akshare 三级 fallback，20 个 CLI 工具覆盖行情/技术/基本面/资金/形态/信号/风控/引擎/报表。
 **策略层**：3 条场景化技能管线 + 7 条交易铁律前置约束，description-based 智能激活。
 **引擎层**：统一 Agent 引擎（回测/模拟盘/实盘三模式共享同一代码路径），盘后批量分析 + 次日机械执行。
 **运维层**：Docker 部署、结构化日志、双层记忆系统、双模式 CI（快速 CI + Agent 回测 CI）。
 
 ## 功能特性
 
-- **盘后批量 + 盘中执行** — Claude Code 盘后三阶段分析（定方向→选标的→风控），产出 plan.json。盘中 Python 引擎机械执行，零 LLM 调用
+- **盘后批量 + 盘中执行** — 次日盘前 8:00 运行管线：Phase 0 子智能体（Claude Code 查数据做研究）→ Phase 1-3 主阶段（API + Tool Use 输出结构化决策 JSON）→ 产出 plan.json。盘中 Python 机械执行，零 LLM
 - **核心+卫星仓位 (50/30/20)** — 核心仓政策驱动持有 1-4 周，卫星仓技术信号快进快出 1-5 天，20% 现金应对极端机会
 - **策略闭环** — Agent 回测（含 Claude Code 判断层）→ 模拟盘验证 → 策略迭代 → 实盘准入，三模式共享完全相同的代码路径
 - **多因子选股** — 腾讯行情主源（88字段）、新浪/akshare fallback，短线/中线/热钱 3 策略
@@ -20,19 +20,19 @@
 ## 架构
 
 ```
-┌─ 盘后 (15:00 → 次日 9:00) ────────────────────────────────┐
-│  Claude Code 三阶段盘后分析（每天 1 次）                    │
-│  Stage 1 定方向 → Stage 2 选标的 → Stage 3 风控            │
-│  产出: plan.json (market_bias + buy_candidates +           │
-│        holding_adjustments + emergency_triggers)           │
-└──────────────────────────┬────────────────────────────────┘
+┌─ 盘后→次日盘前 (15:00 → 8:00) ───────────────────────────┐
+│  Phase 0: 3 个 Claude Code 子智能体并行（完整工具访问）     │
+│  A=宏观政策 B=板块轮动 C=交易复盘 → 各输出 500 字摘要      │
+│                                                            │
+│  Phase 1-3: API + Tool Use（API 层面强制结构化 JSON）      │
+│  定方向 → 选标的 → 调仓 + risk.py 风控 → plan.json         │
+└──────────────────────────┬─────────────────────────────────┘
                            │ plan.json
                            ▼
 ┌─ 盘中 (9:15 → 15:00) ────────────────────────────────────┐
 │  Python 引擎机械执行（零 LLM 调用）                        │
-│  9:25  执行持仓调整 · 每 5s 止盈止损检查                  │
-│  · 候选买入(限价) · 规则信号(卫星仓位)                    │
-│  · 紧急检测: 大盘跌>3% 或持仓跌>5% → 唤醒 Claude Code     │
+│  9:25  持仓调整 · 每 5s 止盈止损 · 候选买入(限价)         │
+│  规则信号(卫星) · 紧急: 大盘>3%跌 → API+Tool Use 响应     │
 └──────────────────────────────────────────────────────────┘
 
 模式: backtest / paper / live  (完全相同代码路径)
@@ -48,7 +48,7 @@ memory ──→ claude, config
 
 ## 设计理念
 
-以 Claude Code CLI 为策略大脑，Python 引擎为执行躯干。`tools/` 下的 19 个 CLI 脚本提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback），`skills/` 提供交易策略框架。飞书作为通信渠道。回测、模拟盘、实盘三模式共享完全相同的代码路径——在回测里证明有效的策略，在实盘里同样有效。详见 [docs/architecture.md](docs/architecture.md) 和 [docs/roadmap.md](docs/roadmap.md)。
+以 Claude Code CLI 为策略大脑，Python 引擎为执行躯干。`tools/` 下的 20 个 CLI 脚本提供 A 股数据（腾讯 → 新浪 → akshare 三级 fallback），`skills/` 提供交易策略框架。飞书作为通信渠道。管线采用混合架构：**子智能体走 Claude Code（完整工具/记忆/技能上下文）**，**结构化决策走 API + Tool Use（JSON Schema 强制，零解析）**。回测、模拟盘、实盘三模式共享完全相同的代码路径——在回测里证明有效的策略，在实盘里同样有效。详见 [docs/architecture.md](docs/architecture.md) 和 [docs/roadmap.md](docs/roadmap.md)。
 
 ## 快速开始
 
@@ -84,6 +84,11 @@ FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # Claude CLI
 CLAUDE_CMD=C:\Users\YourName\AppData\Roaming\npm\claude.cmd
 CLAUDE_TIMEOUT=300
+
+# LLM API（管线结构化输出用，Tool Use 保证 JSON）
+ANTHROPIC_AUTH_TOKEN=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_MODEL=deepseek-v4-pro
 ```
 
 ### 运行
@@ -170,7 +175,8 @@ AlphaClaude/
 │   ├── risk.py      — 确定性风险计算（波动率/仓位/回撤/相关性）
 │   ├── signal.py    — 交易信号硬校验 + 审计日志写入
 │   ├── signal_rules.py — 规则信号引擎（6 条纯 Python 规则，零 LLM）
-│   ├── paper_engine.py — 统一 Agent 引擎（backtest/paper/live 三模式）
+│   ├── paper_engine.py — 统一 Agent 引擎（backtest/paper/live 三模式）│
+│   ├── llm_client.py  — API+Tool Use 客户端(4 个结构化tool schema)
 │   ├── backtest_runner.py — 回测 CLI 入口（支持 screen 策略名）
 │   └── daily_report.py — 日交易报表（P&L/胜率/回撤，可选飞书推送）
 ├── .github/
@@ -195,7 +201,7 @@ AlphaClaude/
 
 ## 路线图
 
-四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。当前进度：Phase 1 完成，Phase 2 进行中（2.1-2.6 已完成，待实盘准入验证）。
+四阶段路线图详见 [docs/roadmap.md](docs/roadmap.md)。当前进度：Phase 1 完成，Phase 2 核心完成（2.1-2.7 已交付，待 2.8 Web 面板 + 实盘准入验证）。
 
 ## 许可证
 
