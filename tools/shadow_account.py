@@ -443,6 +443,129 @@ def merge_patterns(run_id: str, new_patterns: list[dict],
     return path
 
 
+# ═══════════════════════════════════════════════════════════════
+# Phase B: deferred reflection loop (TradingAgents-inspired)
+# Phase A (above) computes diagnostics. Phase B resolves past
+# decisions against market outcomes and generates LLM reflections
+# that get injected into the next pipeline run.
+# ═══════════════════════════════════════════════════════════════
+
+
+def build_reflection_prompt(diagnostics: dict) -> str:
+    """Build a prompt for the LLM to reflect on past trading patterns.
+
+    Returns a short prompt that asks the quick-thinking model to generate
+    2-4 sentence reflections on what went wrong and how to improve.
+    """
+    if not diagnostics.get("paired_trades_count"):
+        return ""
+
+    s = diagnostics["summary"]
+    patterns = diagnostics.get("recurring_patterns", [])
+
+    prompt = (
+        f"你是交易复盘分析师。以下是上一轮模拟交易的结果摘要：\n\n"
+        f"已完成{s['win_rate']}%胜率共{diagnostics['paired_trades_count']}笔交易，"
+        f"累计盈亏{s['total_pnl']:,.0f}元。"
+        f"赢家均持{s['avg_winner_hold_days']}天/均利{s['avg_winner_pnl_pct']}%，"
+        f"输家均持{s['avg_loser_hold_days']}天/均亏{abs(s['avg_loser_pnl_pct'])}%。\n"
+    )
+
+    if patterns:
+        prompt += "\n检测到以下重复错误模式：\n"
+        for p in patterns:
+            prompt += f"- {p['pattern']}: {p.get('evidence', '')}\n"
+            if p.get("suggested_fix"):
+                prompt += f"  建议修复: {p['suggested_fix']}\n"
+
+    prompt += (
+        "\n请生成2-4句话的复盘反思，重点回答："
+        "1) 本轮最致命的错误是什么？"
+        "2) 下次应该如何避免？"
+        "输出纯文本反思，不超过150字。"
+    )
+    return prompt
+
+
+def resolve_with_llm(diagnostics: dict) -> str:
+    """Generate LLM reflection on past trading patterns using quick model.
+
+    Returns reflection text or empty string on failure.
+    """
+    prompt = build_reflection_prompt(diagnostics)
+    if not prompt:
+        return ""
+
+    try:
+        from tools.llm_client import call_text
+        from config import QUICK_THINK_MODEL
+        reflection = call_text(prompt, model=QUICK_THINK_MODEL, max_tokens=512)
+        return reflection.strip()
+    except Exception:
+        return ""
+
+
+def format_reflections_for_prompt(reflection_text: str) -> str:
+    """Format Phase B reflections for injection into Sub-Agent C prompt.
+
+    Returns empty string if no reflection available.
+    """
+    if not reflection_text or not reflection_text.strip():
+        return ""
+    return (
+        "【上轮交易复盘反思】\n"
+        f"{reflection_text.strip()}\n"
+        "请在本轮决策中考虑以上反思，避免重复犯同样错误。\n"
+    )
+
+
+def load_latest_diagnostics(run_id: str) -> dict | None:
+    """Load the most recent shadow diagnostics JSON for a run."""
+    out_dir = os.path.join(PROJECT_DIR, "data", "output", run_id, "shadow_account")
+    if not os.path.isdir(out_dir):
+        return None
+    files = sorted(
+        [f for f in os.listdir(out_dir) if f.startswith("shadow_") and f.endswith(".json")],
+        reverse=True,
+    )
+    if not files:
+        return None
+    path = os.path.join(out_dir, files[0])
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def run_phase_b(run_id: str) -> str:
+    """Phase B: load latest diagnostics, generate LLM reflection, return prompt text.
+
+    Called by OvernightPipeline before building Sub-Agent C prompt.
+    Returns reflection text ready for prompt injection, or '' if insufficient data.
+    """
+    diag = load_latest_diagnostics(run_id)
+    if not diag or diag.get("paired_trades_count", 0) < 4:
+        return ""
+
+    reflection = resolve_with_llm(diag)
+    if not reflection:
+        return ""
+
+    # Save reflection alongside diagnostics
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    out_dir = os.path.join(PROJECT_DIR, "data", "output", run_id, "shadow_account")
+    os.makedirs(out_dir, exist_ok=True)
+    ref_path = os.path.join(out_dir, f"reflection_{date_str}.md")
+    try:
+        with open(ref_path, "w", encoding="utf-8") as f:
+            f.write(f"# Phase B Reflection {date_str}\n\n{reflection}\n")
+    except OSError:
+        pass
+
+    return format_reflections_for_prompt(reflection)
+
+
 def compare_runs(run_a: str, run_b: str) -> dict:
     """Compare patterns.json between two runs. Returns diff report."""
     patterns_a = {p["name"]: p for p in load_accumulated_patterns(run_a)}
@@ -486,7 +609,17 @@ def main():
                         help="Show accumulated patterns only")
     parser.add_argument("--compare", "-c", default="",
                         help="Compare patterns with another run_id")
+    parser.add_argument("--resolve", "-r", action="store_true",
+                        help="Phase B: generate LLM reflection from latest diagnostics")
     args = parser.parse_args()
+
+    if args.resolve:
+        reflection = run_phase_b(args.run_id)
+        if reflection:
+            print(reflection)
+        else:
+            print("(insufficient data for Phase B reflection — need >= 4 paired trades)")
+        return
 
     if args.compare:
         result = compare_runs(args.run_id, args.compare)

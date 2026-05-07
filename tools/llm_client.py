@@ -8,6 +8,8 @@ Sub-agents and Feishu chat still use claude.py → claude -p (full Claude Code c
 Note: anthropic is imported lazily to avoid stdlib signal shadowing by tools/signal.py.
 """
 
+from collections.abc import Callable
+
 from config import ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL
 
 _client = None
@@ -236,3 +238,50 @@ def call_text(
         if block.type == "text":
             parts.append(block.text)
     return "\n".join(parts)
+
+
+def call_with_tool_safe(
+    prompt: str,
+    tools: list[dict],
+    *,
+    model: str | None = None,
+    max_tokens: int = 4096,
+    tries: int = 2,
+    fallback_parser: Callable | None = None,
+) -> list[dict]:
+    """Call LLM with tool definitions, falling back to text parsing on failure.
+
+    TradingAgents-inspired graceful degradation: try structured output (Tool Use)
+    first, then fall back to free-text + parser on any failure. This prevents
+    a single API failure from aborting the entire overnight pipeline.
+
+    Args:
+        prompt: The user prompt.
+        tools: Tool definitions (same as call_with_tool).
+        model: Model override.
+        max_tokens: Token budget.
+        tries: Retry count for the Tool Use attempt.
+        fallback_parser: Optional callable(str) -> list[dict] to parse free text
+            into structured inputs. If None, returns an empty list on failure.
+
+    Returns:
+        List of tool use input dicts (same shape as call_with_tool).
+        Never raises — returns [] on complete failure.
+    """
+    try:
+        result = call_with_tool(prompt, tools, model=model, max_tokens=max_tokens, tries=tries)
+        if result:
+            return result
+        # Model returned text instead of tool calls — retries exhausted
+        if fallback_parser:
+            text = call_text(prompt, model=model, max_tokens=max_tokens)
+            return fallback_parser(text)
+        return []
+    except Exception:
+        if fallback_parser is None:
+            return []
+        try:
+            text = call_text(prompt, model=model, max_tokens=max_tokens)
+            return fallback_parser(text)
+        except Exception:
+            return []

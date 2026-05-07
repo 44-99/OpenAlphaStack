@@ -1198,11 +1198,14 @@ class OvernightPipeline:
             "数据不足时基于常识合理推断，标注[推断]。",
         ]
 
-        # Try Shadow Account diagnostics when enough trades exist
+        # Try Shadow Account diagnostics (Phase A) + Phase B reflection
         shadow_text = self._try_shadow_diagnostics()
+        reflection_text = self._try_phase_b_reflection()
 
         if shadow_text:
             lines.append(f"\n[影子账户行为诊断]\n{shadow_text}")
+            if reflection_text:
+                lines.append(f"\n{reflection_text}")
             lines.append("要求: 1.验证诊断是否准确 2.确认/否定每个模式 3.提出1条可操作的prompt改进建议")
             self._last_shadow_diagnostics = shadow_text
         else:
@@ -1233,6 +1236,24 @@ class OvernightPipeline:
             paired, open_pos = pair_trades(all_entries)
             diagnostics = compute_diagnostics(paired, open_pos, all_entries)
             return format_for_prompt(diagnostics)
+        except Exception:
+            return ""
+
+    def _try_phase_b_reflection(self) -> str:
+        """Phase B: generate LLM reflection from previous shadow diagnostics.
+
+        Loads the most recent shadow diagnostics, asks quick-thinking LLM to
+        generate 2-4 sentence trading lessons, and returns formatted text for
+        injection into Sub-Agent C prompt. Returns '' if no prior data.
+        """
+        try:
+            all_entries = self.ledger.read_all()
+            trade_entries = [e for e in all_entries
+                           if e.get("decision") in ("open_position", "close_position")]
+            if len(trade_entries) < 8:
+                return ""
+            from tools.shadow_account import run_phase_b
+            return run_phase_b(self.run_id)
         except Exception:
             return ""
 
