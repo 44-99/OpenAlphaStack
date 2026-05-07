@@ -29,3 +29,8 @@ ALERT_CHAT_IDS = [cid.strip() for cid in _alert_raw.split(",") if cid.strip()]
 # (start/stop/trades/alerts/daily summary). Falls back to ALERT_CHAT_IDS if unset.
 _engine_raw = os.getenv("ENGINE_CHAT_IDS", "")
 ENGINE_CHAT_IDS = [cid.strip() for cid in _engine_raw.split(",") if cid.strip()] or ALERT_CHAT_IDS
+
+# LLM API — for direct SDK calls with Tool Use (pipeline structured output)
+ANTHROPIC_AUTH_TOKEN = os.getenv("ANTHROPIC_AUTH_TOKEN", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")

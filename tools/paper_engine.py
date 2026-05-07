@@ -1066,7 +1066,7 @@ class BacktestDataFeed:
         if self._index_cache is not None:
             all_dates.update(self._index_cache["date"].tolist())
         # Also merge from loaded stocks
-        for df in self._cache.values():
+        for df in list(self._cache.values()):
             if not df.empty:
                 all_dates.update(df["date"].tolist())
         return sorted([d for d in all_dates
@@ -1133,7 +1133,7 @@ class OvernightPipeline:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         market = self._fetch_market_snapshot()
         return (
-            f"基于提供的行情数据和你的知识，{sim_date} A股宏观政策分析。≤300字摘要，直接输出，不要调用任何工具。\n"
+            f"{sim_date} A股宏观政策分析。≤500字摘要。\n"
             f"大盘:\n{market}\n"
             f"要求: 1.政策方向 2.风险偏好(risk-on/off) 3.1个关键事件\n"
             f"数据不足时基于最近市场趋势和常识合理推断，标注[推断]。"
@@ -1143,7 +1143,7 @@ class OvernightPipeline:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         market = self._fetch_market_snapshot()
         return (
-            f"基于提供的行情数据和你的知识，{sim_date} A股板块轮动。≤300字摘要，直接输出，不要调用任何工具。\n"
+            f"{sim_date} A股板块轮动。≤500字摘要。\n"
             f"大盘:\n{market}\n"
             f"要求: 1.强势板块3个+弱势2个 2.风格切换(大/小盘,成长/价值) 3.次日关注板块3个+理由\n"
             f"数据不足时基于最近市场趋势和常识合理推断，标注[推断]。"
@@ -1154,7 +1154,7 @@ class OvernightPipeline:
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         recent = self.ledger.read_recent(5)
         lines = [
-            f"基于提供的数据和你的知识，{sim_date} 复盘。≤300字摘要，直接输出，不要调用任何工具。",
+            f"{sim_date} 交易复盘。≤500字摘要。",
             f"总资产:{self.state.total_value:,.0f} 现金:{s['cash']:,.0f}",
             "数据不足时基于常识合理推断，标注[推断]。",
         ]
@@ -1188,12 +1188,12 @@ class OvernightPipeline:
                     response = ask_claude(prompt, timeout=300)
                     text = (response or "").strip()
                     if text and "超时" not in text and "出错" not in text:
-                        return label, text[:300]
+                        return label, text[:500]
                     if attempt == 0:
                         print(f"  Sub-agent {label} attempt {attempt+1}: timeout/error, retrying...")
                         time.sleep(5)
                     else:
-                        return label, text[:300] if text else f"(失败: {text[:80]})"
+                        return label, text[:500] if text else f"(失败: {text[:80]})"
                 except Exception as exc:
                     if attempt == 0:
                         print(f"  Sub-agent {label} attempt {attempt+1}: {exc}, retrying...")
@@ -1252,68 +1252,91 @@ class OvernightPipeline:
         return "\n".join(lines)
 
     def run_merged_stage(self, summaries: dict[str, str]) -> dict:
-        """Phase 1: Two Claude Code calls — direction first, then candidates. With retry."""
-        from claude import ask_claude
+        """Phase 1-3: Direct API calls with Tool Use for guaranteed structured output."""
+        from tools.llm_client import (
+            call_with_tool,
+            TOOL_SET_DIRECTION,
+            TOOL_ADD_CANDIDATE,
+            TOOL_ADJUST_HOLDING,
+        )
 
         # Step 1: Direction + Sectors
         dir_prompt = self._build_direction_prompt(summaries)
         direction = {"bias": "neutral", "confidence": 50, "bias_reasoning": "",
                      "position_cap": None, "preferred": None, "avoid": None}
-        for attempt in range(2):
-            try:
-                resp = ask_claude(dir_prompt, timeout=300)
-                if resp and "超时" not in resp and "出错" not in resp:
-                    direction = self._parse_direction_response(resp)
-                    break
-                if attempt == 0:
-                    print("[OvernightPipeline] direction stage retry...")
-                    time.sleep(5)
-            except Exception as exc:
-                if attempt == 0:
-                    print(f"[OvernightPipeline] direction retry: {exc}")
-                    time.sleep(5)
-                else:
-                    print(f"[OvernightPipeline] direction stage failed: {exc}")
+        try:
+            tool_inputs = call_with_tool(dir_prompt, [TOOL_SET_DIRECTION])
+            if tool_inputs:
+                d = tool_inputs[0]
+                direction = {
+                    "bias": d.get("bias", "neutral"),
+                    "confidence": int(d.get("confidence", 50)),
+                    "bias_reasoning": str(d.get("bias_reasoning", "")),
+                    "position_cap": int(d.get("position_cap", 0)) or None,
+                    "preferred": d.get("prefer_sectors") if isinstance(d.get("prefer_sectors"), list) else None,
+                    "avoid": d.get("avoid_sectors") if isinstance(d.get("avoid_sectors"), list) else None,
+                }
+        except Exception as exc:
+            print(f"[OvernightPipeline] direction stage failed: {exc}")
 
         # Step 2: Candidates
         candidates_prompt = self._build_candidates_prompt(summaries, direction)
         candidates = []
-        for attempt in range(2):
-            try:
-                resp = ask_claude(candidates_prompt, timeout=300)
-                if resp:
-                    dbg_path = os.path.join(self.output_dir, "_debug_candidates_response.txt")
-                    with open(dbg_path, "w", encoding="utf-8") as f:
-                        f.write(f"=== PROMPT ===\n{candidates_prompt}\n\n=== RESPONSE ===\n{resp}")
-                    if "超时" in resp or "出错" in resp:
-                        if attempt == 0:
-                            print("[OvernightPipeline] candidates stage retry...")
-                            time.sleep(5)
-                            continue
-                    candidates = self._parse_candidate_lines(resp)
-                    if not candidates and resp and any(
-                        kw in resp for kw in ("超时", "稍后再试", "出错", "未找到")
-                    ):
-                        if _notify:
-                            notify_overnight_timeout(self.run_id, f"选股返回异常: {resp[:80]}")
-                    break
-            except Exception as exc:
-                if attempt == 0:
-                    print(f"[OvernightPipeline] candidates retry: {exc}")
-                    time.sleep(5)
-                else:
-                    print(f"[OvernightPipeline] candidates stage failed: {exc}")
-                    if _notify:
-                        notify_overnight_timeout(self.run_id, f"选股阶段: {exc}")
+        try:
+            tool_inputs = call_with_tool(candidates_prompt, [TOOL_ADD_CANDIDATE])
+            for d in tool_inputs:
+                if "code" not in d:
+                    continue
+                c = {"code": str(d["code"])}
+                for k in ("source", "reasoning"):
+                    if k in d:
+                        c[k] = str(d[k])
+                for k in ("priority",):
+                    if k in d:
+                        try:
+                            c[k] = int(d[k])
+                        except (ValueError, TypeError):
+                            pass
+                for k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
+                    if k in d:
+                        try:
+                            c[k] = float(d[k])
+                        except (ValueError, TypeError):
+                            pass
+                candidates.append(c)
+            # Debug log
+            dbg_path = os.path.join(self.output_dir, "_debug_candidates_response.txt")
+            with open(dbg_path, "w", encoding="utf-8") as f:
+                f.write(f"=== PROMPT ===\n{candidates_prompt}\n\n=== TOOL INPUTS ===\n{json.dumps(tool_inputs, ensure_ascii=False, indent=2)}")
+            if not candidates:
+                if _notify:
+                    notify_overnight_timeout(self.run_id, f"选股返回空: {len(tool_inputs)}个tool call但无有效candidate")
+        except Exception as exc:
+            print(f"[OvernightPipeline] candidates stage failed: {exc}")
+            if _notify:
+                notify_overnight_timeout(self.run_id, f"选股阶段: {exc}")
 
         # Step 3: Adjustments (only if holdings exist)
         adjustments = []
         if self.state.holdings:
             adj_prompt = self._build_adjustments_prompt(direction)
             try:
-                resp = ask_claude(adj_prompt, timeout=300)
-                if resp:
-                    adjustments = self._parse_adjustment_lines(resp)
+                tool_inputs = call_with_tool(adj_prompt, [TOOL_ADJUST_HOLDING])
+                for d in tool_inputs:
+                    if "code" not in d:
+                        continue
+                    adj = {
+                        "code": str(d["code"]),
+                        "action": str(d.get("action", "hold")),
+                    }
+                    if d.get("reasoning"):
+                        adj["reasoning"] = str(d["reasoning"])
+                    if "new_stop_loss" in d:
+                        try:
+                            adj["new_stop_loss"] = float(d["new_stop_loss"])
+                        except (ValueError, TypeError):
+                            pass
+                    adjustments.append(adj)
             except Exception as exc:
                 print(f"[OvernightPipeline] adjustments stage failed: {exc}")
 
@@ -1323,17 +1346,12 @@ class OvernightPipeline:
         s = self.state.load()
         sim_date = self.clock.now().strftime("%Y-%m-%d")
         parts = [
-            f"{sim_date}次日A股方向。只输出DECISION行(4行以内)，不要调用任何工具。",
-            f"宏观: {summaries.get('A','')[:150]}",
-            f"板块: {summaries.get('B','')[:150]}",
-            f"复盘: {summaries.get('C','')[:150]}",
+            f"{sim_date}次日A股方向。请调用 set_direction 工具提交判断。",
+            f"宏观: {summaries.get('A','')[:200]}",
+            f"板块: {summaries.get('B','')[:200]}",
+            f"复盘: {summaries.get('C','')[:200]}",
             self._fetch_market_snapshot(),
             f"账户: 总{self.state.total_value:,.0f} 现金{s['cash']:,.0f}",
-            "输出格式:",
-            "DECISION|bias|bullish/neutral/bearish|confidence=N|reasoning=判断",
-            "DECISION|position_cap|N|reasoning=仓位理由",
-            "DECISION|prefer_sectors|板块1,板块2|reasoning=理由",
-            "DECISION|avoid_sectors|板块1|reasoning=理由",
         ]
         return "\n".join(parts)
 
@@ -1343,17 +1361,16 @@ class OvernightPipeline:
         preferred = ",".join(direction.get("preferred") or []) or "无"
         cap = direction.get("position_cap", 80)
         parts = [
-            f"{sim_date}次日选股。{bias}偏好{preferred}仓位{cap}%。只输出DECISION行(≤5只)，不要调用任何工具。",
-            f"板块: {summaries.get('B','')[:120]}",
+            f"{sim_date}次日选股。{bias}偏好{preferred}仓位{cap}%。请为每只候选调用一次 add_candidate 工具。",
+            f"板块: {summaries.get('B','')[:200]}",
             self._fetch_candidates_screen(),
-            "格式: DECISION|candidate|CODE|source=B/C|priority=1/2/3|entry_max=X|stop_loss=X|take_profit=X|position_pct=X|reasoning=理由",
-            "B类上限20%止损-8%, C类上限7.5%止损-5%。不输出其他内容。",
+            "B类上限20%止损-8%, C类上限7.5%止损-5%。",
         ]
         return "\n".join(parts)
 
     def _build_adjustments_prompt(self, direction: dict) -> str:
         s = self.state.load()
-        lines = ["根据持仓输出调仓DECISION行。只输出DECISION行。", "## 持仓"]
+        lines = ["根据持仓调仓。为每只持仓调用一次 adjust_holding 工具。", "## 持仓"]
         for code, h in s["holdings"].items():
             pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
             lines.append(
@@ -1361,96 +1378,8 @@ class OvernightPipeline:
                 f"现价{h['current_price']:.2f} 盈亏{pnl:.1f}% "
                 f"止损{h.get('stop_loss','无')}"
             )
-        lines.extend([
-            "输出: DECISION|adjust|CODE|action=raise_stop/close/hold|new_stop_loss=X|reasoning=理由",
-            "纯DECISION行。",
-        ])
         return "\n".join(lines)
 
-    def _parse_direction_response(self, response: str) -> dict:
-        result = {"bias": "neutral", "confidence": 50, "bias_reasoning": "",
-                  "position_cap": None, "preferred": None, "avoid": None}
-        for line in response.replace("```", "").split("\n"):
-            line = line.strip()
-            if "|" not in line or "DECISION" not in line:
-                continue
-            parts = line.split("|")
-            action = parts[1] if len(parts) > 1 else ""
-            if action == "bias":
-                result["bias"] = parts[2] if len(parts) > 2 and parts[2] in ("bullish", "neutral", "bearish") else "neutral"
-                for kv in parts[3:]:
-                    if "=" in kv:
-                        k, v = kv.split("=", 1)
-                        if k == "confidence":
-                            try:
-                                result["confidence"] = int(v)
-                            except ValueError:
-                                pass
-                        elif k == "reasoning":
-                            result["bias_reasoning"] = v
-            elif action == "position_cap":
-                try:
-                    result["position_cap"] = float(parts[2])
-                except ValueError:
-                    pass
-            elif action == "prefer_sectors" and len(parts) > 2:
-                result["preferred"] = [s.strip() for s in parts[2].split(",") if s.strip()]
-            elif action == "avoid_sectors" and len(parts) > 2:
-                result["avoid"] = [s.strip() for s in parts[2].split(",") if s.strip()]
-        return result
-
-    def _parse_candidate_lines(self, response: str) -> list[dict]:
-        candidates = []
-        for line in response.replace("```", "").split("\n"):
-            line = line.strip()
-            if "|" not in line or "DECISION" not in line or "candidate" not in line:
-                continue
-            parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            c = {"code": parts[2]}
-            for kv in parts[3:]:
-                if "=" in kv:
-                    k, v = kv.split("=", 1)
-                    if k in ("priority",):
-                        try:
-                            c[k] = int(v)
-                        except ValueError:
-                            c[k] = v
-                    elif k in ("entry_max", "stop_loss", "take_profit", "position_pct"):
-                        try:
-                            c[k] = float(v)
-                        except ValueError:
-                            pass
-                    else:
-                        c[k] = v
-            if "code" in c:
-                candidates.append(c)
-        return candidates
-
-    def _parse_adjustment_lines(self, response: str) -> list[dict]:
-        adjustments = []
-        for line in response.replace("```", "").split("\n"):
-            line = line.strip()
-            if "|" not in line or "DECISION" not in line or "adjust" not in line:
-                continue
-            parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            adj = {"code": parts[2]}
-            for kv in parts[3:]:
-                if "=" in kv:
-                    k, v = kv.split("=", 1)
-                    if k == "new_stop_loss":
-                        try:
-                            adj[k] = float(v)
-                        except ValueError:
-                            pass
-                    else:
-                        adj[k] = v
-            if "code" in adj:
-                adjustments.append(adj)
-        return adjustments
 
     def _apply_merged(self, direction: dict, candidates: list[dict],
                       adjustments: list[dict]) -> dict:
@@ -1593,7 +1522,7 @@ class OvernightPipeline:
     # ── Emergency Intraday Call ───────────────────────────────────
 
     def launch_emergency(self, trigger_reason: str, market_data: str = "") -> str | None:
-        """Launch Claude Code for emergency intraday analysis.
+        """Emergency intraday analysis via API + Tool Use for guaranteed structured output.
 
         Called when market drops >3% or single stock drops >5%.
         """
@@ -1615,95 +1544,81 @@ class OvernightPipeline:
             for code, h in s["holdings"].items():
                 pnl = (h['current_price'] - h['avg_cost']) / h['avg_cost'] * 100 if h['avg_cost'] > 0 else 0
                 prompt += f"  {code}: {h['shares']}股 现价{h['current_price']:.2f} 盈亏{pnl:.1f}%\n"
-        prompt += "\n请快速判断并输出:\nDECISION|emergency_action|hold/reduce/close_all|CODE|reasoning=R\nDECISION|update_stop|CODE|new_stop_loss=X|reasoning=R\n"
+        prompt += '\n请调用 emergency_action 工具提交应急决策。'
         try:
-            from claude import ask_claude
-            response = ask_claude(
-                prompt,
-                session_id=f"emergency_{self.clock.now().strftime('%Y%m%d_%H%M%S')}",
-                timeout=300,
-            )
-            if response:
-                self._apply_emergency_decisions(response)
-            return response
+            from tools.llm_client import call_with_tool, TOOL_EMERGENCY_ACTION
+            tool_inputs = call_with_tool(prompt, [TOOL_EMERGENCY_ACTION], max_tokens=2048)
+            if tool_inputs:
+                self._apply_emergency_decisions(tool_inputs[0])
+            return json.dumps(tool_inputs, ensure_ascii=False) if tool_inputs else "(empty)"
         except Exception as exc:
             print(f"[OvernightPipeline] emergency call failed: {exc}")
         return None
 
-    def _apply_emergency_decisions(self, response: str) -> None:
-        """Parse and apply emergency Claude Code decisions."""
-        for line in response.split("\n"):
-            line = line.strip()
-            if not line.startswith("DECISION|"):
-                continue
-            parts = line.split("|")
-            if len(parts) < 3:
-                continue
-            action = parts[1]
-            if action == "update_stop":
-                code = parts[2]
-                for kv in parts[3:]:
-                    if kv.startswith("new_stop_loss="):
-                        try:
-                            new_sl = float(kv.split("=", 1)[1])
-                            self.plan.update_stop(code, new_sl, updated_by="emergency")
-                            self.ledger.append({
-                                "decision": "emergency_stop_update",
-                                "code": code,
-                                "new_stop_loss": new_sl,
-                            })
-                        except ValueError:
-                            pass
-            elif action == "emergency_action":
-                action_type = parts[2] if len(parts) > 2 else ""
-                code_arg = parts[3] if len(parts) > 3 else ""
-                reasoning = ""
-                for kv in parts[4:]:
-                    if kv.startswith("reasoning="):
-                        reasoning = kv.split("=", 1)[1]
-                        break
+    def _apply_emergency_decisions(self, data: dict) -> None:
+        """Apply emergency API Tool Use response (already structured JSON)."""
+        # Handle stop updates
+        for upd in data.get("stop_updates") or []:
+            if isinstance(upd, dict) and "code" in upd and "new_stop_loss" in upd:
+                try:
+                    code = str(upd["code"])
+                    new_sl = float(upd["new_stop_loss"])
+                    self.plan.update_stop(code, new_sl, updated_by="emergency")
+                    self.ledger.append({
+                        "decision": "emergency_stop_update",
+                        "code": code,
+                        "new_stop_loss": new_sl,
+                    })
+                except (ValueError, TypeError):
+                    pass
 
-                executed = False
-                if action_type == "close_all" and self.execution:
-                    for h_code, h in list(self.state.holdings.items()):
-                        shares = h.get("shares", 0)
-                        price = h.get("current_price", 0)
-                        if shares >= 100 and price > 0:
-                            self.execution.execute_sell(
-                                h_code, shares, price,
-                                reason=f"emergency_close_all: {reasoning}",
-                            )
-                            executed = True
-                elif action_type == "reduce" and code_arg and self.execution:
-                    h = self.state.holdings.get(code_arg, {})
-                    shares = h.get("shares", 0)
-                    price = h.get("current_price", 0)
-                    if shares >= 100 and price > 0:
-                        reduce_qty = (shares // 200) * 100
-                        if reduce_qty >= 100:
-                            self.execution.execute_sell(
-                                code_arg, reduce_qty, price,
-                                reason=f"emergency_reduce: {reasoning}",
-                            )
-                            executed = True
-                elif action_type == "close" and code_arg and self.execution:
-                    h = self.state.holdings.get(code_arg, {})
-                    shares = h.get("shares", 0)
-                    price = h.get("current_price", 0)
-                    if shares >= 100 and price > 0:
-                        self.execution.execute_sell(
-                            code_arg, shares, price,
-                            reason=f"emergency_close: {reasoning}",
-                        )
-                        executed = True
+        # Handle emergency action
+        action_type = data.get("action", "hold")
+        code_arg = str(data.get("code", ""))
+        reasoning = str(data.get("reasoning", ""))
 
-                self.ledger.append({
-                    "decision": "emergency_action",
-                    "action": action_type,
-                    "code": code_arg,
-                    "reasoning": reasoning,
-                    "executed": executed,
-                })
+        # Execution logic
+        executed = False
+        if action_type == "close_all" and self.execution:
+            for h_code, h in list(self.state.holdings.items()):
+                shares = h.get("shares", 0)
+                price = h.get("current_price", 0)
+                if shares >= 100 and price > 0:
+                    self.execution.execute_sell(
+                        h_code, shares, price,
+                        reason=f"emergency_close_all: {reasoning}",
+                    )
+                    executed = True
+        elif action_type == "reduce" and code_arg and self.execution:
+            h = self.state.holdings.get(code_arg, {})
+            shares = h.get("shares", 0)
+            price = h.get("current_price", 0)
+            if shares >= 100 and price > 0:
+                reduce_qty = (shares // 200) * 100
+                if reduce_qty >= 100:
+                    self.execution.execute_sell(
+                        code_arg, reduce_qty, price,
+                        reason=f"emergency_reduce: {reasoning}",
+                    )
+                    executed = True
+        elif action_type == "close" and code_arg and self.execution:
+            h = self.state.holdings.get(code_arg, {})
+            shares = h.get("shares", 0)
+            price = h.get("current_price", 0)
+            if shares >= 100 and price > 0:
+                self.execution.execute_sell(
+                    code_arg, shares, price,
+                    reason=f"emergency_close: {reasoning}",
+                )
+                executed = True
+
+        self.ledger.append({
+            "decision": "emergency_action",
+            "action": action_type,
+            "code": code_arg,
+            "reasoning": reasoning,
+            "executed": executed,
+        })
 
 # ═══════════════════════════════════════════════════════════════
 
@@ -2222,20 +2137,20 @@ class PaperEngine:
         if _notify:
             notify_engine_start(self.mode, self.state.initial_capital)
 
-        overnight_done = False
+        _last_pipeline_date = None  # date() of last overnight pipeline run
+        _post_market_date = None    # date() of last post-market summary
         tick_count = 0
 
         while not self._stop_event.is_set():
             phase = self.clock.session_phase()
+            today = self.clock.now().date()
 
-            # After market close (post_market or closed), run overnight pipeline once
-            if phase in ("post_market", "closed") and not overnight_done:
-                print("[Engine] Market closed. Running overnight pipeline...")
+            # Pre-market (8:00-9:15): run overnight pipeline once per day, before auction
+            if phase == "pre_market" and _last_pipeline_date != today:
+                print("[Engine] Pre-market. Running overnight pipeline...")
                 overnight_result = self.run_overnight()
-                overnight_done = True
-                self.state.release_t1_locks()
-                nav = self.state.total_value
-                print(f"[Engine] Day ended. NAV: {nav:,.0f}")
+                _last_pipeline_date = today
+                print("[Engine] Pipeline complete. Ready for trading day.")
 
                 if _notify and overnight_result:
                     risk = overnight_result.get("stages", {}).get("risk", {})
@@ -2245,9 +2160,17 @@ class PaperEngine:
                         "candidates": merged.get("candidates", 0),
                         "passed": risk.get("passed", 0),
                         "rejected": risk.get("rejected", 0),
-                        "nav": nav,
+                        "nav": self.state.total_value,
                     })
-                    # Daily summary
+
+            # Post-market: daily summary and T+1 lock release (only after a pipeline has run)
+            if phase == "post_market" and _post_market_date != today and _last_pipeline_date is not None:
+                _post_market_date = today
+                self.state.release_t1_locks()
+                nav = self.state.total_value
+                print(f"[Engine] Day ended. NAV: {nav:,.0f}")
+
+                if _notify:
                     positions = self.state.holdings
                     day_pnl = sum(
                         (h.get("current_price", h.get("avg_cost", 0)) - h.get("avg_cost", 0)) * h.get("shares", 0)
@@ -2261,7 +2184,6 @@ class PaperEngine:
 
             # During trading hours, run FastLane
             if self.clock.is_trading():
-                overnight_done = False
                 self.fast_lane.reset_day()
 
                 # Execute holding adjustments at auction/morning open
