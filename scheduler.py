@@ -18,7 +18,7 @@ from memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_sessi
 
 logger = logging.getLogger("scheduler")
 
-TASKS_FILE = os.path.join(STOCK_DATA_DIR, "tasks.json")
+TASKS_FILE = os.path.join(STOCK_DATA_DIR, "state", "tasks.json")
 _scheduler: BackgroundScheduler | None = None
 _subscribers: list[str] = []
 

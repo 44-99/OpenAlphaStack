@@ -79,7 +79,7 @@ def generate_universe(min_daily_volume: int = 5_000_000, exclude_st: bool = True
     Returns list of 6-digit codes.
     """
     if cache_path is None:
-        cache_path = os.path.join(PROJECT_DIR, "data", "universe_cache.json")
+        cache_path = os.path.join(PROJECT_DIR, "data", "cache", "universe_cache.json")
     # Return cached if fresh (< 7 days)
     if os.path.exists(cache_path):
         try:

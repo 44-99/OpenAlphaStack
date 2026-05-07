@@ -10,12 +10,12 @@ venv/
 # Claude Code local data
 .claude/
 
-# Runtime data (conversations, logs, caches)
-data/*.json
-data/*.log
-data/memory/
+# Runtime data
+data/logs/
 data/cache/
 data/output/
+data/memory/
+data/state/
 *.log
 
 .idea/

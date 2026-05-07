@@ -4,7 +4,6 @@ Receives events via Feishu WebSocket long-connection.
 https://github.com/44-99/AlphaClaude
 """
 import json
-import logging
 import os
 import queue
 import re
@@ -39,8 +38,8 @@ import memory
 
 logger = setup_logging(STOCK_DATA_DIR, LOG_LEVEL)
 
-SESSIONS_FILE = os.path.join(STOCK_DATA_DIR, "sessions.json")
-SUBS_FILE = os.path.join(STOCK_DATA_DIR, "subscribers.json")
+SESSIONS_FILE = os.path.join(STOCK_DATA_DIR, "state", "sessions.json")
+SUBS_FILE = os.path.join(STOCK_DATA_DIR, "state", "subscribers.json")
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
 _sessions: dict[str, dict] = {}        # conv_id → {session_id, type, label}
 _subscribers: list[str] = []

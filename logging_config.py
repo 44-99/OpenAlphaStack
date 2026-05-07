@@ -55,7 +55,7 @@ def setup_logging(log_dir: str, level: str = "INFO") -> logging.Logger:
     root.addHandler(console)
 
     # 2. JSON full log — rotating, DEBUG
-    json_log = os.path.join(log_dir, "bot.json.log")
+    json_log = os.path.join(log_dir, "logs", "bot.json.log")
     json_handler = logging.handlers.RotatingFileHandler(
         json_log, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
     )
@@ -64,7 +64,7 @@ def setup_logging(log_dir: str, level: str = "INFO") -> logging.Logger:
     root.addHandler(json_handler)
 
     # 3. JSON error log — rotating, ERROR only
-    err_log = os.path.join(log_dir, "bot.error.log")
+    err_log = os.path.join(log_dir, "logs", "bot.error.log")
     err_handler = logging.handlers.RotatingFileHandler(
         err_log, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )

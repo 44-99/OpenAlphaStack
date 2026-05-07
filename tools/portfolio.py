@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "data", "watchlist.json")
+                         "data", "state", "watchlist.json")
 
 
 def _load() -> dict:
@@ -215,7 +215,7 @@ def main():
     sp_list = sub.add_parser("list", help="List watchlist")
     sp_list.add_argument("--tag", "-t", default="", help="Filter by tag")
 
-    sp_ov = sub.add_parser("overview", help="Portfolio overview with live P&L")
+    sub.add_parser("overview", help="Portfolio overview with live P&L")
 
     args = parser.parse_args()
 
