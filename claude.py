@@ -1,9 +1,12 @@
 """
 Claude Code CLI wrapper — call claude -p for analysis.
 """
+import json as _json
 import subprocess
 import os
 import re
+from collections.abc import Generator
+
 from config import CLAUDE_CMD, CLAUDE_TIMEOUT
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +57,88 @@ def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOU
         return "Claude Code CLI 未找到，请确认已安装。"
     except (OSError, ValueError) as e:
         return f"分析出错: {str(e)}"
+
+
+def ask_claude_stream(
+    prompt: str,
+    session_id: str = None,
+    timeout: int = CLAUDE_TIMEOUT,
+) -> Generator[str, None, None]:
+    """Stream Claude Code output token-by-token using --output-format stream-json.
+
+    Yields text chunks as they arrive. Handles session resume/creation
+    identically to ask_claude(). Use for real-time Feishu message updates.
+
+    Yields:
+        Text chunks from assistant content blocks. Final yield is empty string
+        on clean completion. Yields nothing on catastrophic failure.
+    """
+    prompt = prompt.strip()
+    if not prompt:
+        yield "抱歉，无法处理空消息。"
+        return
+
+    if session_id:
+        if _session_exists(session_id):
+            cmd = [CLAUDE_CMD, "--resume", session_id, "--output-format", "stream-json", "--verbose", "-p", prompt]
+        else:
+            cmd = [CLAUDE_CMD, "--session-id", session_id, "--output-format", "stream-json", "--verbose", "-p", prompt]
+    else:
+        cmd = [CLAUDE_CMD, "--output-format", "stream-json", "--verbose", "-p", prompt]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=PROJECT_DIR,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        yield "Claude Code CLI 未找到，请确认已安装。"
+        return
+    except (OSError, ValueError) as e:
+        yield f"启动分析出错: {str(e)}"
+        return
+
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = _json.loads(line)
+            except (_json.JSONDecodeError, ValueError):
+                continue
+
+            msg_type = obj.get("type", "")
+            if msg_type == "result":
+                break
+            if msg_type != "assistant":
+                continue
+
+            message = obj.get("message", {})
+            content_blocks = message.get("content", [])
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    chunk = block.get("text", "")
+                    if chunk:
+                        yield chunk
+
+        # Drain stderr after completion
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    except Exception:
+        pass
+    finally:
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
 
 
 def build_trading_prompt(market_data: str, context: str = "") -> str:

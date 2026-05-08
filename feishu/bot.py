@@ -70,6 +70,22 @@ def reply_message(message_id: str, text: str) -> dict:
     return resp.json()
 
 
+def update_message(message_id: str, text: str) -> dict:
+    """Replace the content of an existing text message. Used for streaming replies.
+
+    Feishu API: PATCH /im/v1/messages/{message_id}
+    Replaces full content — caller must send accumulated text each time.
+    """
+    content = json.dumps({"text": text})
+    resp = httpx.patch(
+        f"{FEISHU_API_BASE}/im/v1/messages/{message_id}",
+        headers=_headers(),
+        json={"content": content, "msg_type": "text"},
+        timeout=10,
+    )
+    return resp.json()
+
+
 BOT_NAMES = [n.strip() for n in FEISHU_BOT_NAME.split(",") if n.strip()] + ["stock bot", "stock-bot"]
 
 

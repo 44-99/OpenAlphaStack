@@ -35,3 +35,7 @@ ANTHROPIC_AUTH_TOKEN = os.getenv("ANTHROPIC_AUTH_TOKEN", "")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 QUICK_THINK_MODEL = os.getenv("QUICK_THINK_MODEL", "deepseek-v4-flash")
+
+# Streaming replies — Claude Code stream-json → Feishu real-time updates
+STREAM_ENABLED = os.getenv("STREAM_ENABLED", "true").lower() == "true"
+STREAM_UPDATE_MS = int(os.getenv("STREAM_UPDATE_MS", "150"))  # batch interval in ms

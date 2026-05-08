@@ -1501,6 +1501,141 @@ class OvernightPipeline:
         trace = f"=== BULL ===\n{bull_text}\n\n=== BEAR ===\n{bear_text}"
         return candidates, trace
 
+    # ── 3.10 Risk Debate ──────────────────────────────────────────────
+
+    def _build_aggressive_risk_prompt(self, candidates: list[dict],
+                                       total_pct: float) -> str:
+        """Build prompt for the Aggressive risk debater — champions high returns."""
+        cand_summary = "\n".join(
+            f"- {c['code']}: 仓位{c.get('position_pct',0)}% 入场{c.get('entry_max','?')} "
+            f"止损{c.get('stop_loss','?')} 止盈{c.get('take_profit','?')} "
+            f"理由:{c.get('reasoning','')[:60]}"
+            for c in candidates
+        )
+        return (
+            "你是交易风控委员会中的[激进派风控官]。\n"
+            "你相信趋势的延续性和波动中的机会，倾向于在可控风险下追求更高收益。\n\n"
+            f"当前待执行候选（总仓位{total_pct:.0f}%）：\n{cand_summary}\n\n"
+            "请用≤300字阐述你的立场：\n"
+            "1. 哪些仓位可以维持甚至放大？为什么？\n"
+            "2. 当前市场环境是否支持进取策略？\n"
+            "3. 给出你的综合仓位建议（维持/放大到X%）。"
+        )
+
+    def _build_conservative_risk_prompt(self, candidates: list[dict],
+                                         total_pct: float,
+                                         aggressive_text: str) -> str:
+        """Build prompt for the Conservative risk debater — champions capital preservation."""
+        cand_summary = "\n".join(
+            f"- {c['code']}: 仓位{c.get('position_pct',0)}%"
+            for c in candidates
+        )
+        return (
+            "你是交易风控委员会中的[保守派风控官]。\n"
+            "你把本金安全放在第一位，倾向在不确定时缩减仓位、收紧止损。\n\n"
+            f"当前待执行候选（总仓位{total_pct:.0f}%）：\n{cand_summary}\n\n"
+            f"激进派的观点：\n{aggressive_text[:400]}\n\n"
+            "请用≤300字阐述你的立场：\n"
+            "1. 激进派的哪些判断过于乐观？风险被低估在哪里？\n"
+            "2. 哪些仓位应该缩减或取消？为什么？\n"
+            "3. 给出你的综合仓位建议（缩减到X%或否决哪些标的）。"
+        )
+
+    def _build_neutral_risk_prompt(self, candidates: list[dict],
+                                    total_pct: float,
+                                    aggressive_text: str,
+                                    conservative_text: str) -> str:
+        """Build prompt for the Neutral risk debater — synthesizes both sides."""
+        cand_summary = "\n".join(
+            f"- {c['code']}: 仓位{c.get('position_pct',0)}% 入场{c.get('entry_max','?')}"
+            for c in candidates
+        )
+        return (
+            "你是交易风控委员会中的[中立裁决官]。\n"
+            "你听完激进派和保守派的辩论后做出最终风险裁决。\n\n"
+            f"待执行候选（总仓位{total_pct:.0f}%）：\n{cand_summary}\n\n"
+            f"=== 激进派 ===\n{aggressive_text[:400]}\n\n"
+            f"=== 保守派 ===\n{conservative_text[:400]}\n\n"
+            "请用≤200字做出裁决：\n"
+            "1. 最终仓位建议：维持 / 缩减到X% / 否决Y标的\n"
+            "2. 关键风险提示（1-2句）\n"
+            "3. 一句话裁决理由。"
+        )
+
+    def _run_risk_debate(self, candidates: list[dict]) -> dict | None:
+        """3.10 Risk debate: Aggressive/Conservative/Neutral three-person debate
+        for large-position trades. Runs only when single > 15% or total > 50%.
+
+        Returns {'action': 'maintain'|'reduce'|'reject', 'suggested_total_pct': float,
+                 'rejected_codes': [...], 'reasoning': str} or None on skip/failure.
+        """
+        # Check trigger conditions
+        total_pct = sum(c.get("position_pct", 0) for c in candidates)
+        max_single = max((c.get("position_pct", 0) for c in candidates), default=0)
+        if max_single <= 15 and total_pct <= 50:
+            return None  # Below threshold — skip debate
+
+        print(f"[RiskDebate] Triggered: max_single={max_single:.0f}% total={total_pct:.0f}%")
+
+        aggressive_prompt = self._build_aggressive_risk_prompt(candidates, total_pct)
+        aggressive_text = self._call_text_safe(aggressive_prompt, "Risk-Aggressive")
+        if not aggressive_text:
+            return None
+
+        conservative_prompt = self._build_conservative_risk_prompt(
+            candidates, total_pct, aggressive_text)
+        conservative_text = self._call_text_safe(conservative_prompt, "Risk-Conservative")
+        if not conservative_text:
+            return None
+
+        neutral_prompt = self._build_neutral_risk_prompt(
+            candidates, total_pct, aggressive_text, conservative_text)
+        neutral_text = self._call_text_safe(neutral_prompt, "Risk-Neutral")
+        if not neutral_text:
+            return None
+
+        # Parse decision from neutral text
+        reasoning = neutral_text[:200]
+        action = "maintain"
+        suggested_pct = total_pct
+        rejected = []
+        neutral_lower = neutral_text.lower()
+        has_reject = any(kw in neutral_lower for kw in ["否决", "reject", "取消", "移除", "剔除"])
+        has_reduce = any(kw in neutral_lower for kw in ["缩减", "reduce"])
+
+        if has_reject or has_reduce:
+            action = "reduce"
+            # Parse rejected codes — split into sentences, only flag codes
+            # co-occurring with rejection keywords
+            import re as _re
+            clauses = _re.split(r"[。；;.\n,，、]", neutral_text)
+            reject_kw = ["否决", "reject", "取消", "移除", "剔除", "不建议", "不推荐", "放弃"]
+            for c in candidates:
+                code = str(c.get("code", ""))
+                if not code:
+                    continue
+                for clause in clauses:
+                    if code in clause and any(kw in clause.lower() for kw in reject_kw):
+                        rejected.append(code)
+                        break
+
+            # Try to extract suggested percentage
+            pct_match = _re.search(r"(\d+)[%％]", neutral_text)
+            if pct_match:
+                suggested_pct = float(pct_match.group(1))
+
+        return {
+            "action": action,
+            "suggested_total_pct": suggested_pct,
+            "rejected_codes": rejected,
+            "reasoning": reasoning,
+            "debate_trace": "\n".join([
+                f"=== AGGRESSIVE ===\n{aggressive_text}",
+                f"=== CONSERVATIVE ===\n{conservative_text}",
+                f"=== NEUTRAL ===\n{neutral_text}",
+            ]),
+        }
+
     def run_merged_stage(self, summaries: dict[str, str]) -> dict:
         """Phase 1-3: Direct API calls with Tool Use for guaranteed structured output."""
         from tools.llm_client import (
@@ -1776,6 +1911,13 @@ class OvernightPipeline:
 
         result["stages"]["merged"] = self.run_merged_stage(summaries)
         result["stages"]["risk"] = self.run_risk_validation()
+
+        # 3.10 Risk debate: triggered only when positions are large
+        passed_candidates = self.plan._data.get("buy_candidates", [])
+        if passed_candidates:
+            debate_result = self._run_risk_debate(passed_candidates)
+            if debate_result:
+                result["stages"]["risk_debate"] = debate_result
 
         return result
 

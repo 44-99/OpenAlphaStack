@@ -16,12 +16,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from config import ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR
-from feishu.bot import parse_event, reply_message, send_text
+from config import ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR, STREAM_ENABLED, STREAM_UPDATE_MS
+from feishu.bot import parse_event, reply_message, send_text, update_message
 from feishu.group import check_membership
 from feishu.user import get_user_label
 from feishu.ws import start_ws_listener
-from claude import ask_claude
+from claude import ask_claude, ask_claude_stream
 from logging_config import setup_logging
 from scheduler import (
     run_morning_analysis,
@@ -641,6 +641,62 @@ def _ensure_session_worker(session_id: str) -> queue.Queue:
         return entry[0]
 
 
+def _reply_streaming(prompt: str, session_id: str,
+                     orig_message_id: str, chat_id: str) -> None:
+    """3.8 Streaming reply: Claude Code stream-json → Feishu real-time updates.
+
+    Sends an initial placeholder reply, then updates it token-by-token as
+    Claude Code streams output. Falls back to non-streaming on any failure.
+    """
+    import time as _time
+
+    # Send placeholder reply to get a message_id we can update
+    placeholder_resp = reply_message(orig_message_id, "▌")
+    stream_msg_id = ""
+    try:
+        stream_msg_id = placeholder_resp.get("data", {}).get("message_id", "")
+    except (AttributeError, TypeError):
+        pass
+
+    if not stream_msg_id:
+        # Fallback: can't get message_id for streaming, use non-streaming
+        response = ask_claude(prompt, session_id=session_id)
+        reply_message(orig_message_id, response)
+        return
+
+    accumulated = ""
+    last_update = 0.0
+    update_interval = STREAM_UPDATE_MS / 1000.0
+
+    try:
+        for chunk in ask_claude_stream(prompt, session_id=session_id):
+            accumulated += chunk
+            now = _time.monotonic()
+            if now - last_update >= update_interval:
+                try:
+                    update_message(stream_msg_id, accumulated + " ▌")
+                    last_update = now
+                except Exception:
+                    pass  # Single update failure shouldn't kill the stream
+    except Exception:
+        pass
+
+    # Final update: remove cursor and show complete text
+    final_text = accumulated.strip() if accumulated else "分析完成，无输出。"
+    try:
+        update_message(stream_msg_id, final_text)
+    except Exception:
+        # If final update fails, send a new reply with the text
+        if accumulated:
+            reply_message(orig_message_id, final_text)
+
+    logger.info(
+        "流式回复完成 (%d chars) → %s",
+        len(final_text), chat_id,
+        extra={"category": "reply", "chat_id": chat_id},
+    )
+
+
 def _process_one_message(task: dict, session_id: str) -> None:
     """Build prompt and send to Claude, then reply. Extracted from handle()."""
     chat_id = task["chat_id"]
@@ -713,10 +769,13 @@ def _process_one_message(task: dict, session_id: str) -> None:
     else:
         prompt = user_message
 
-    response = ask_claude(prompt, session_id=session_id)
-
-    reply_message(message_id, response)
-    logger.info("已发送到 %s", chat_id, extra={"category": "reply", "chat_id": chat_id})
+    # 3.8 Streaming: use stream-json for real-time Feishu message updates
+    if STREAM_ENABLED:
+        _reply_streaming(prompt, session_id, message_id, chat_id)
+    else:
+        response = ask_claude(prompt, session_id=session_id)
+        reply_message(message_id, response)
+        logger.info("已发送到 %s", chat_id, extra={"category": "reply", "chat_id": chat_id})
 
 
 # === Crash hook ===
