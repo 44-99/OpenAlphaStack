@@ -2092,6 +2092,9 @@ class FastLane:
         self._last_reset_day = None
         self._circuit_breaker_triggered = False
         self._circuit_breaker_reason = ""
+        # Tiered emergency dedup: code → highest tier already fired (1/2/3)
+        # Market/account use key "market"/"account" with tier 0
+        self._emergency_tiers: dict[str, int] = {}
 
     def _check_circuit_breaker(self) -> tuple[bool, str]:
         """Global circuit breaker: halt new positions at -20% drawdown."""
@@ -2426,47 +2429,63 @@ class FastLane:
         self.plan.save("execution")
         return results
 
+    # Tiered emergency thresholds: (drop_pct, label, severity)
+    _EMERGENCY_TIERS = [
+        (5.0, "⚠️ 预警", 1),
+        (7.5, "🔶 恶化", 2),
+        (10.0, "🔴 接近跌停", 3),
+    ]
+
     def _check_emergency(self, quotes: dict) -> tuple:
-        """Check for emergency conditions: market -3%, account -10%, or single stock -5%.
+        """Tiered emergency detection. Each code fires at most once per severity tier.
 
         Returns (is_emergency: bool, reason: str).
         """
         triggers = self.plan.get_emergency_triggers()
-        stock_limit = triggers.get("single_stock_drop_pct", 5.0)
         market_drop_pct = triggers.get("market_drop_pct", 3.0)
         account_drawdown_pct = triggers.get("account_drawdown_pct", 10.0)
 
-        # Check market index drop vs previous close
+        # Market index drop (once per day)
         market_q = quotes.get("000001", {})
         current_market_price = market_q.get("price", 0)
-        if current_market_price > 0 and self._prev_market_price > 0:
+        if current_market_price > 0 and self._prev_market_price > 0 and "market" not in self._emergency_tiers:
             drop_pct = (self._prev_market_price - current_market_price) / self._prev_market_price * 100
             if drop_pct >= market_drop_pct:
+                self._emergency_tiers["market"] = 1
                 return True, (
                     f"大盘下跌{drop_pct:.1f}% "
-                    f"(从{self._prev_market_price:.2f}至{current_market_price:.2f}，"
-                    f"触发阈值{market_drop_pct}%)"
+                    f"(从{self._prev_market_price:.2f}至{current_market_price:.2f})"
                 )
 
-        # Check total account drawdown
-        if self.state.initial_capital > 0:
+        # Account drawdown (once per day)
+        if self.state.initial_capital > 0 and "account" not in self._emergency_tiers:
             drawdown = (self.state.total_value - self.state.initial_capital) / self.state.initial_capital * 100
             if drawdown <= -account_drawdown_pct:
+                self._emergency_tiers["account"] = 1
                 return True, (
                     f"账户回撤{abs(drawdown):.1f}% "
                     f"(总资产{self.state.total_value:,.0f}，"
-                    f"初始资金{self.state.initial_capital:,.0f}，"
-                    f"触发阈值{account_drawdown_pct}%)"
+                    f"初始资金{self.state.initial_capital:,.0f})"
                 )
 
-        # Check individual holdings for >stock_limit drop
+        # Individual holdings: tiered escalation
         for code, h in self.state.holdings.items():
             current = h.get("current_price", 0)
             cost = h.get("avg_cost", 0)
-            if cost > 0 and current > 0:
-                drop_pct = (cost - current) / cost * 100
-                if drop_pct >= stock_limit:
-                    return True, f"{code} 个票下跌{drop_pct:.1f}% (成本{cost:.2f} 现价{current:.2f})"
+            if not (cost > 0 and current > 0):
+                continue
+            drop_pct = (cost - current) / cost * 100
+
+            last_tier = self._emergency_tiers.get(code, 0)
+            for threshold, label, tier in self._EMERGENCY_TIERS:
+                if tier <= last_tier:
+                    continue  # Already fired at this level or higher
+                if drop_pct >= threshold:
+                    self._emergency_tiers[code] = tier
+                    return True, (
+                        f"{label} {code} 下跌{drop_pct:.1f}% "
+                        f"(成本{cost:.2f} 现价{current:.2f})"
+                    )
 
         return False, ""
 
@@ -2474,6 +2493,7 @@ class FastLane:
         """Reset daily state for new trading day."""
         self._adjustments_executed = False
         self._prev_market_price = 0.0
+        self._emergency_tiers.clear()
         today = self.clock.now().strftime("%Y-%m-%d")
         if self._last_reset_day != today:
             self._signal_history.clear()
