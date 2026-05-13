@@ -49,7 +49,7 @@ def get_market_overview() -> dict:
         idx_data = indices[indices["名称"].isin(key_indices)][["名称", "最新价", "涨跌幅", "成交量", "成交额"]].to_dict("records")
 
         try:
-            sectors = ak.stock_board_industry_name_spot_em()
+            sectors = ak.stock_board_industry_name_em()
             top_sectors = sectors.nlargest(5, "涨跌幅")[["板块名称", "涨跌幅", "领涨股票"]].to_dict("records")
         except (OSError, ValueError, RuntimeError):
             top_sectors = []

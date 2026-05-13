@@ -1,6 +1,6 @@
 # E:\Project 八大项目对比分析
 
-> 2026-05-06 整理 · 2026-05-08 更新（+Vibe-Trading +AI-Trader +cc-connect）
+> 2026-05-06 整理 · 2026-05-08 更新（+Vibe-Trading +AI-Trader +cc-connect）· 2026-05-13 路径口径更新：AlphaClaude 已迁入 `src/alphaclaude/` 包结构，旧脚本入口和旧工具目录不再作为运行入口。
 
 ## 一、概览对比表
 
@@ -23,7 +23,7 @@
 
 ### 1. AlphaClaude（我们）— 模拟散户/游资策略 + AI 研判 + 实盘交易
 
-**盈利路径**：回测验证 → 模拟盘跑通 → 实盘真金白银交易。用户以散户和游资的视角，使用技术指标（MA/MACD/RSI/KDJ/布林带）、缠论中枢、波浪理论、斐波那契、量价关系等经典分析工具，借助 Claude Code 做多因子综合分析（政策面+技术面+资金面+消息面），在 A 股 T+1 制度下盘后深度研判、次日 Python 机械执行。核心策略包括均线多头排列、金叉放量突破、缩量回踩支撑等 7 条交易铁律。**赚的是认知差 + 纪律执行的钱**——AI 比散户更快更全面地消化信息，同时用铁血纪律消除情绪化交易。
+**盈利路径**：回测验证 → 模拟盘跑通 → 实盘真金白银交易。用户以散户和游资的视角，使用技术指标（MA/MACD/RSI/KDJ/布林带）、缠论中枢、波浪理论、斐波那契、量价关系等经典分析工具，借助 Claude Code 做多因子综合分析（政策面+技术面+资金面+消息面），在 A 股 T+1 制度下盘前生成计划、盘中 Python 机械执行、盘后 Python 汇总报告。核心策略包括均线多头排列、金叉放量突破、缩量回踩支撑等 7 条交易铁律。**赚的是认知差 + 纪律执行的钱**——AI 比散户更快更全面地消化信息，同时用铁血纪律消除情绪化交易。
 
 ### 2. TradingAgents — 模拟基金投委会，纯研究框架
 
@@ -73,7 +73,7 @@ daily_stock  Vibe-Trading  AlphaClaude  QuantDinger  ai-hedge  TradingAgents  Fi
 | **daily_stock** | **典型散户** | 缠论/波浪/龙头战法/一阳三阴——正宗中国散户话语体系；3线程防反爬；GitHub Actions 免费部署 |
 | **Vibe-Trading** | **散户量化 → 平台化** | 自然语言写策略 → 自动验证 → 多平台导出；有 7 引擎回测 + Shadow Account 策略自提取，但离实盘差"最后一步"；MCP Server 让它可被外部 AI 控制，正在从工具进化为平台 |
 | **AI-Trader** | **Agent 经济平台** | 不做策略、不做分析——做的是"AI Agent 的模拟交易社交网络"。Agent 注册→发布信号→互相跟单→竞赛→建立链上声誉。是 Agent-Native 理念在金融领域的最激进实验 |
-| **AlphaClaude** | **AI 游资（准量化）** | 核心+卫星仓位模型；盘后深度学习+盘中机械执行；50/30/20 仓位结构是游资打法但加了量化风控；7条交易铁律是散户智慧的结构化 |
+| **AlphaClaude** | **AI 游资（准量化）** | 核心+卫星仓位模型；盘前计划+盘中机械执行+盘后报告；50/30/20 仓位结构是游资打法但加了量化风控；7条交易铁律是散户智慧的结构化 |
 | **TradingAgents** | **学术Agent研究框架** | 11 Agent模拟交易公司全流程，但输出仅为5档评级；LangGraph编排+双模型策略+记忆反思闭环；不接实盘不做组合回测，缺乏盈利路径 |
 | **QuantDinger** | **散户量化+** | Python 策略编码 + 参数进化 + 跨交易所执行；比散户强（有回测/多因子/regime detection），但离机构差得远（无 FIX/colocation/tick级数据） |
 | **ai-hedge-fund** | **教育/理念模拟** | 19 Agent 模仿投资大师但零实盘；DCF/Moat/波动率调整都有但是玩具级规模；本质是 LangGraph 教程 |
@@ -88,15 +88,15 @@ daily_stock  Vibe-Trading  AlphaClaude  QuantDinger  ai-hedge  TradingAgents  Fi
 
 ### 1. 唯一敢让 AI 做最终决策的
 
-其他项目要么 LLM 是辅助（Fincept 的 37 个 AI 角色只做参考），要么人最终拍板（QuantDinger 用户自己写策略），要么纯模拟（ai-hedge-fund）。**AlphaClaude 直接把 Claude Code 当基金经理用**，盘后三阶段分析产出 plan.json，盘中 Python 机械执行不二次询问人类。
+其他项目要么 LLM 是辅助（Fincept 的 37 个 AI 角色只做参考），要么人最终拍板（QuantDinger 用户自己写策略），要么纯模拟（ai-hedge-fund）。**AlphaClaude 直接把 Claude Code 当基金经理用**，盘前三阶段分析产出 plan.json，盘中 Python 机械执行不二次询问人类。
 
 ### 2. 唯一针对 A 股 T+1 + 政策市设计的
 
-其他项目要么跨市场（量化因子普适），要么偏美股（基本面+DCF），只有 AlphaClaude 的整个引擎设计是围绕 **A 股特色**：政策驱动（sub-agent 宏观政策研究）、板块轮动（高政策敏感）、盘后批量分析 + 次日执行（T+1 天然适配）、紧急熔断（A 股高波动）。
+其他项目要么跨市场（量化因子普适），要么偏美股（基本面+DCF），只有 AlphaClaude 的整个引擎设计是围绕 **A 股特色**：政策驱动（sub-agent 宏观政策研究）、板块轮动（高政策敏感）、盘前批量分析 + 盘中执行（T+1 约束下机械执行）、紧急熔断（A 股高波动）。
 
-### 3. 唯一有完整策略闭环的（回测→模拟→实盘 同一代码路径）
+### 3. 唯一按完整策略闭环设计的（回测→模拟→实盘准入）
 
-这是最狠的设计。QuantDinger 和 Vibe-Trading 有回测但路径和实盘不同；ai-hedge-fund 有回测但永远不会实盘。**AlphaClaude 的回测不是玩具——回测里表现好的策略，在实盘里用完全相同代码执行。**
+这是最狠的设计。QuantDinger 和 Vibe-Trading 有回测但路径和实盘不同；ai-hedge-fund 有回测但永远不会实盘。**AlphaClaude 的回测不是玩具——回测和模拟盘已走同一套包内引擎核心；实盘仍需要券商适配器、订单确认和安全闸门完成后才能准入。**
 
 ---
 
@@ -175,7 +175,7 @@ Vibe-Trading/
 - 智能体间Mailbox通信 + 实时流式仪表盘
 - Worker重试/超时/取消
 
-**vs AlphaClaude当前方案**：我们的paper_engine用3个sub-agent(宏观→选股→风控)线性的，Vibe-Trading的DAG支持并行+辩论，但我们的优势是每次sub-agent都有完整的Claude Code推理能力(Vibe-Trading的agent可能用更小的模型)。
+**vs AlphaClaude当前方案**：我们的 `alphaclaude.engine` 用 3 个 sub-agent/阶段（宏观→选股→风控）编排，Vibe-Trading 的 DAG 支持并行+辩论，但我们的优势是每次 sub-agent 都有完整的 Claude Code 推理能力（Vibe-Trading 的 agent 可能用更小的模型）。
 
 #### 4. 策略代码生成+自动验证闭环
 
@@ -212,8 +212,8 @@ Vibe-Trading/
    - 方案：学Vibe-Trading第2层(纯字符串折叠)，对工具输出做无损压缩后再注入
 
 4. **统一工具注册表**
-   - 当前：19个CLI手动维护，新增工具需手动更新CLAUDE.md表格
-   - 方案：类似Vibe-Trading的BaseTool自动发现，tools/目录下每个工具带metadata.json，CLAUDE.md表格自动生成
+   - 当前：包内 CLI 工具表仍需手动维护，新增工具需手动更新 CLAUDE.md 表格
+   - 方案：类似 Vibe-Trading 的 BaseTool 自动发现，`src/alphaclaude/tools/` 下每个工具带 metadata.json，CLAUDE.md 表格自动生成
 
 **P2 — 远期储备：**
 
@@ -288,7 +288,7 @@ Agent 启动 → fetch("ai4trade.ai/skills/ai4trade/SKILL.md")
 | 机制 | 功能 | 对 AlphaClaude 的启发 |
 |------|------|----------------------|
 | **挑战赛** | 时间限定+市场限定+$100K启动资金+风险调整评分 | 回测可以做成"不同策略变体之间的竞赛" |
-| **团队任务** | 角色分配(lead/analyst/risk/scribe)→协作→贡献评分 | paper_engine的sub-agent可以角色化 |
+| **团队任务** | 角色分配(lead/analyst/risk/scribe)→协作→贡献评分 | `alphaclaude.engine` 的 sub-agent 可以角色化 |
 | **跟单交易** | Leader建仓→Follower自动跟单(SAVEPOINT隔离) | 暂无直接应用(我们没有多用户) |
 | **积分经济** | 积分→虚拟资金兑换(1分=$1K)，幂等账本防刷 | 信号质量可以用类似机制追踪 |
 
@@ -320,12 +320,12 @@ AI-Trader 内置了一套"给 Agent 喂信息"的基础设施：
 **P1 — 值得尝试：**
 
 1. **内建挑战赛机制**
-   - 当前 paper_engine 的回测是"单策略 vs 市场"
+   - 当前 `alphaclaude.engine` 的回测是"单策略 vs 市场"
    - 改进：回测时并行跑 3-5 个策略变体，按风险调整收益排名，自动选最优
    - 本质是把 AI-Trader 的 challenge 概念压缩到单引擎内
 
 2. **sub-agent 角色化**
-   - 当前 paper_engine 的 3 个 sub-agent 没有明确的角色定义
+   - 当前 `alphaclaude.engine` 的 3 个 sub-agent 没有明确的角色定义
    - 改进：引入 AI-Trader 的团队角色体系——lead（定方向）、analyst（选标的）、risk（风控审查）、scribe（生成报告）
    - 每个角色有明确的职责说明书（prompt），减少 sub-agent 之间的重复劳动
 
@@ -343,7 +343,7 @@ AI-Trader 内置了一套"给 Agent 喂信息"的基础设施：
 
 5. **A/B 实验框架**
    - AI-Trader 从 Day 1 就在 schema 里留了 experiment/variant/event 三张表
-   - AlphaClaude 可以更轻量：在 paper_engine 的 plan.json 里加一个 `strategy_variant` 字段，回测时自动对比不同变体的表现
+   - AlphaClaude 可以更轻量：在 `alphaclaude.engine` 的 plan.json 里加一个 `strategy_variant` 字段，回测时自动对比不同变体的表现
 
 **不适用：**
 - 跟单交易（没有多用户）
@@ -421,7 +421,7 @@ if cardSender, ok := platform.(core.CardSender); ok {
 }
 ```
 
-**对 AlphaClaude 的启发**：我们 19 个 CLI 工具的注册是手动的（手动维护 CLAUDE.md 中的表格）。可以考虑类似模式——每个工具自带 metadata.json，`tools/` 目录扫描自动发现并注册。
+**对 AlphaClaude 的启发**：包内 CLI 工具的注册仍是手动的（手动维护 CLAUDE.md 中的表格）。可以考虑类似模式——每个工具自带 metadata.json，扫描 `src/alphaclaude/tools/` 自动发现并注册。
 
 #### 2. 飞书富交互能力
 
@@ -633,7 +633,7 @@ AlphaClaude 的 API+Tool Use 没有降级路径——Tool Use 失败直接报错
 | Conservative | "轻仓、紧止损、保本金" | 高波动熊市 |
 | Neutral | 平衡视角 | 普通市场 |
 
-这恰好与我们的策略变体（2.10）互补——变体在盘后选参数，风控辩论在执行前做最后审查。
+这恰好与我们的策略变体（2.10）互补——变体在盘前选参数，风控辩论在执行前做最后审查。
 
 #### 5. LangGraph 工程实践
 
@@ -670,10 +670,10 @@ AlphaClaude 的 API+Tool Use 没有降级路径——Tool Use 失败直接报错
 **P2 — 远期参考：**
 
 5. **LangGraph 编排迁移**
-   - 当前 while-loop + time.sleep(1) 简单可靠
+   - 当前 `alphaclaude.engine` 的 while-loop + time.sleep(1) 简单可靠
    - 如果将来 Agent 间交互变复杂（>5 个协作模式），考虑迁移到 LangGraph
    - SQLite 断点续跑也有价值——引擎 crash 后不丢状态
-   - 投入：高（重写 paper_engine 核心循环），当前不需要
+   - 投入：高（重构 `alphaclaude.engine` 核心循环），当前不需要
 
 **不适用：**
 - yfinance/Alpha Vantage 数据源（我们已有 A 股三级 fallback）
@@ -701,7 +701,7 @@ AlphaClaude 的 API+Tool Use 没有降级路径——Tool Use 失败直接报错
 - **[cc-connect]** 回复冗长度控制 → /mode compact（只显示结论+关键价位）/ quiet（极简）
 - **[cc-connect]** Feishu 富卡片 → 股票分析结果用卡片展示（股票名+K线概览+关键指标），替代纯文本 dump
 - **[Vibe-Trading]** 工具输出压缩 → 学第2层 context collapse（零成本字符串折叠），减少注入 Claude Code 的冗余数据
-- **[Vibe-Trading]** 统一工具注册表 → tools/ 目录下每个工具带 metadata.json，CLAUDE.md 表格自动生成
+- **[Vibe-Trading]** 统一工具注册表 → `src/alphaclaude/tools/` 下每个工具带 metadata.json，CLAUDE.md 表格自动生成
 - **[AI-Trader]** 工具预计算快照 → 盘前/盘中/盘后定时预拉 19 个工具的核心输出，缓存为 JSON，减少 Claude Code 会话等待时间
 
 **长期（Phase 4+）—— 建立壁垒：**

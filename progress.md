@@ -1,0 +1,72 @@
+# Progress Log
+
+## 2026-05-12
+
+- Located project-related processes after an escalated command-line process query.
+- Suspended AlphaClaude main runtime process PID 8484 using Windows native process suspend.
+- Started architecture review by reading README, docs/architecture.md, CLAUDE.md, main.py, and scheduler.py.
+- Created this review's planning files.
+- Inspected `paper_engine.py`, `backtest_runner.py`, `shadow_account.py`, `engine_status.py`, test coverage, and recent `data/output` runs.
+- Noted a failed line-range read command and adjusted the approach.
+- Ran `python tools/engine_status.py`; it reported no active `paper_engine.py` instances.
+- Re-ran escalated process discovery; `python main.py` PID 8484 remains present after suspension, and no `paper_engine.py` command line appeared.
+- Wrote prioritized architecture findings and suggested refactor direction to `findings.md`.
+- Started modularization with a low-risk scaffold: `pyproject.toml`, `src/alphaclaude`, compatibility app/engine CLI entrypoints, and package entrypoint smoke tests.
+- Added `tests/engine/test_monitoring_ops.py` to replace the unsafe long-running `tools/test_ops.py` verification path.
+- New pytest coverage includes stop-loss, take-profit, expiry close, T+0 forward cycle, cooldown rebuy prevention, and bucket exposure checks.
+- Verification passed: `python -m pytest tests\engine\test_monitoring_ops.py -q` → 6 passed; `python -m pytest tests\test_package_entrypoints.py tests\engine\test_monitoring_ops.py -q` → 9 passed; `python -m pytest -q` → 12 passed.
+- Remaining warning: pytest cannot write `.pytest_cache` because of workspace cache permissions.
+- Extracted engine foundation modules: `constants.py`, `state.py`, `plan.py`, `ledger.py`, and `clock.py` under `src/alphaclaude/engine/`.
+- Updated `tools/paper_engine.py` to import extracted primitives and preserve legacy names (`paper_engine.EngineState`, `paper_engine.PlanManager`, `paper_engine.Ledger`, `paper_engine.TradingClock`).
+- Updated `tests/engine/test_monitoring_ops.py` to import extracted primitives from `alphaclaude.engine.*` while still importing `ExecutionEngine` and `FastLane` from legacy `paper_engine.py`.
+- Verification passed after extraction: engine tests 6 passed; package+engine tests 9 passed; full pytest 12 passed; compileall succeeded; `python tools\paper_engine.py --help` succeeded.
+- Extracted `ExecutionEngine` into `src/alphaclaude/engine/execution.py`.
+- Updated `tools/paper_engine.py` to import and re-export `ExecutionEngine`; `paper_engine.ExecutionEngine.__module__` now resolves to `alphaclaude.engine.execution`.
+- Changed execution trade notification to use an optional injected callback, with `PaperEngine` passing `notify_trade` only when notifier import succeeds.
+- Updated `tests/engine/test_monitoring_ops.py` to import `ExecutionEngine` from `alphaclaude.engine.execution` and added callback notification coverage.
+- Verification passed after execution extraction: engine tests 7 passed; compileall succeeded; full pytest 13 passed; `python tools\paper_engine.py --help` succeeded; legacy and package export checks passed.
+- Extracted fast-lane support primitives into package modules: `T0Tracker` -> `src/alphaclaude/engine/t0.py`, `SessionLock` -> `src/alphaclaude/engine/session.py`, and `EventQueue` -> `src/alphaclaude/engine/events.py`.
+- Updated `tools/paper_engine.py` to import those support primitives while keeping legacy symbol access for old scripts.
+- Added `tests/engine/test_support_primitives.py` for T+0 config/reset behavior, event queue push/pop/trigger behavior, and session lock acquire/release behavior.
+- Verification passed after support extraction: support tests 4 passed; engine monitoring tests 7 passed; compileall succeeded; full pytest 17 passed; `python tools\paper_engine.py --help` succeeded; legacy and package export checks passed.
+- Extracted `BacktestDataFeed` and `_generate_day_bars` into `src/alphaclaude/engine/data_feed.py`.
+- Updated `tools/paper_engine.py` to import the data-feed adapter from the package and removed the legacy in-file `BacktestDataFeed` implementation.
+- Updated `src/alphaclaude/engine/__init__.py` to export `BacktestDataFeed`.
+- Added `tests/engine/test_data_feed.py` with offline coverage for A-share session bar generation, synthetic minute quote behavior, index-backed trading-day lookup, and previous-trading-day lookup.
+- Verification passed after data-feed extraction: data-feed tests 3 passed; support+monitoring tests 11 passed; compileall succeeded; full pytest 20 passed; `python tools\paper_engine.py --help` succeeded; legacy and package export checks passed.
+- Extracted `FastLane` into `src/alphaclaude/engine/fast_lane.py`; updated monitoring tests to import it from the package.
+- Extracted `OvernightPipeline` into `src/alphaclaude/engine/pipeline.py`; fixed skill-file lookup to use `alphaclaude.paths.PROJECT_ROOT` after moving out of `tools/`.
+- Extracted `PaperEngine` into `src/alphaclaude/engine/paper.py`; `tools/paper_engine.py` is now a compatibility CLI with universe generation and argparse.
+- Updated `src/alphaclaude/engine/__init__.py` to export `FastLane`, `OvernightPipeline`, and `PaperEngine`.
+- Verification passed after final engine extraction: compileall succeeded; full pytest 20 passed; `python tools\paper_engine.py --help` succeeded; legacy symbol checks resolve `PaperEngine`, `FastLane`, and `OvernightPipeline` to package modules.
+- Removed migrated compatibility entrypoints: deleted root `main.py`, deleted `tools/paper_engine.py`, and deleted obsolete `tools/test_ops.py`.
+- Added `src/alphaclaude/app/main.py` as the package app entrypoint and updated `alphaclaude.app.cli` to run it directly.
+- Added `src/alphaclaude/engine/universe.py` and updated `alphaclaude.engine.cli` to own argument parsing and universe resolution directly.
+- Updated `tools/backtest_runner.py` and `tools/engine_status.py` to reference the package engine entrypoint instead of `paper_engine.py`.
+- Verification after removing wrappers: full pytest 20 passed; compileall succeeded; package engine CLI help passed with `PYTHONPATH=src`; package app import returned `StockTrading Bot`; code search found no remaining `paper_engine.py` imports/references under `src`, `tests`, or `tools`.
+- Moved all remaining Python tool modules from `tools/` into `src/alphaclaude/tools/` and removed the old `tools/` directory.
+- Rewrote package imports from legacy `tools.*`, `_fallback`, and `signal_rules` paths to `alphaclaude.tools.*`.
+- Updated moved tool modules to resolve project paths through `alphaclaude.paths.PROJECT_ROOT`.
+- Verification after tool migration: full pytest 20 passed; compileall succeeded; package tool CLIs `quote`, `signal_rules`, and `backtest_runner` showed help successfully with `PYTHONPATH=src`; code search found no remaining `paper_engine.py` or `from paper_engine` references under `src`, `tests`, or `pyproject.toml`.
+- Updated documentation after package refactor: README, docs/architecture.md, docs/roadmap.md, docs/skills.md, CLAUDE.md, docs/project-comparison.md, and docs/superpowers/specs/2026-05-06-architecture-v3-design.md now describe `src/alphaclaude/` package entrypoints instead of root `main.py` or legacy `tools/` scripts.
+- Tightened docs around current implementation status: backtest/paper share the package engine core, while `live` remains a reserved entrypoint until BrokerAdapter, order safety, and Phase 3 gates are implemented.
+- Verification after docs sync: `python -m pytest -q` passed 20 tests; `python -m compileall -q src\alphaclaude` passed; package help commands passed for `alphaclaude.engine.cli`, `alphaclaude.tools.quote`, and `alphaclaude.tools.backtest_runner`; stale command search for `python tools`, `tools/paper_engine.py`, `python main.py`, and `paper_engine` imports returned no matches.
+- Environment note: current interpreter is Python 3.12.10, which satisfies `pyproject.toml` `requires-python = ">=3.10"`.
+- Pruned README to remove the architecture flow diagram, detailed strategy explanation, API endpoint table, memory-system details, and long roadmap prose; README now focuses on current status, setup, run commands, common commands, project layout, and documentation links.
+- Rewrote docs/roadmap.md as a current status and priority tracker: Phase 1 complete, Phase 2 mostly complete with API reliability and reflection-loop gaps, Phase 3 live trading not admitted, Phase 4 interaction/ops enhancements prioritized from project-comparison lessons.
+- Added the engine flow diagram to docs/architecture.md so architecture diagrams live in the architecture document rather than README or roadmap.
+- Verification after README/roadmap pruning: `python -m pytest -q` passed 20 tests; `python -m compileall -q src\alphaclaude` passed; package help commands passed for `alphaclaude.engine.cli` and `alphaclaude.tools.quote`; README/roadmap/CLAUDE search found no architecture box diagrams or old `python tools` / `paper_engine` / `python main.py` command references.
+- Wired `call_with_tool_safe()` into OvernightPipeline direction, Bull/Bear risk裁决, candidate fallback, holding adjustment, and emergency action paths.
+- Added conservative text fallback parsers: direction may infer/default to neutral/bearish/bullish with bounded exposure, while candidates/adjustments/emergency only accept parseable JSON-like structures or safe hold/empty results.
+- Added tests for `call_with_tool_safe()` and pipeline fallback behavior; targeted verification passed: `python -m pytest tests\test_llm_client_safe.py tests\engine\test_pipeline_safe_fallback.py -q` → 7 passed.
+- Updated docs/roadmap.md to mark API reliability and Shadow Account Phase B as implemented, with remaining Phase B work moved to test/sample hardening.
+- Verification after Phase 2 reliability closeout: `python -m pytest -q` passed 27 tests; `python -m compileall -q src\alphaclaude` passed; package help commands passed for `alphaclaude.engine.cli` and `alphaclaude.tools.quote`; code search confirms `pipeline.py` no longer calls bare `call_with_tool()`.
+- Aligned engine schedule with the intended trading loop: pre-market Claude Code generates `plan.json`, intraday Python follows the plan mechanically, and post-close Python only writes/sends reports.
+- Added paper/live observation-mode metadata for runs started outside pre-market with no actionable plan, so an afternoon start is explicit instead of pretending the engine can trade.
+- Updated engine status and notifier wording from "盘后流水线" to "盘前计划生成" / "观察模式" where relevant.
+- Added engine process PID metadata and PID-based liveness detection so future package-entrypoint runs do not depend solely on command-line parsing.
+- Verification after schedule alignment: `python -m pytest -q` passed 30 tests; `python -m compileall -q src\alphaclaude` passed; package help commands passed for `alphaclaude.engine.cli` and `alphaclaude.tools.quote`; stale wording search found no remaining "盘后生成 plan" style references.
+- Added engine ops controls to avoid tool-session hangs: `alphaclaude.engine.cli --daemon` starts paper/backtest/live engines detached with stdout/stderr redirected to `data/logs/<run_id>.*.log`, and `--stop-running` stops recorded paper/backtest/live processes from `data/output/*/state.json` PID metadata.
+- Added package-entrypoint tests for detached daemon command construction and PID-metadata stop behavior.
+- Verification after engine ops controls: `python -m pytest -q` passed 32 tests; `python -m compileall -q src\alphaclaude` passed; package help commands passed for `alphaclaude.engine.cli` and `alphaclaude.tools.quote`.
+- Runtime validation: `python -m alphaclaude.engine.cli --stop-running` stopped old paper run `paper_2026-05-13T15-01-20` PID 24000; `python -m alphaclaude.engine.cli --mode paper --capital 100000 --daemon` returned immediately and started `paper_2026-05-13T16-24-29` PID 10964 with state metadata and log files present.

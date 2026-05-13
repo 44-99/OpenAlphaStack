@@ -18,7 +18,7 @@
 - **继承一切**: 多轮对话、工具编排、会话管理、MCP 协议 — 全部内置在 Claude Code 中。我们不重复造轮子。
 - **通用能力**: 超越股票交易 — 编程帮助、写作、知识问答、跨平台聊天 — Claude Code 有的能力 AlphaClaude 都有。
 
-本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，`tools/` 下的 CLI 脚本（腾讯→新浪→akshare）作为 Claude Code 的数据计算层，`stock.py` 为机器人内部定时报告和上下文注入提供批量数据，飞书作为通信渠道。
+本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，`src/alphaclaude/tools/` 下的 CLI 模块（腾讯→新浪→akshare）作为 Claude Code 的数据计算层，`stock.py` 为机器人内部定时报告和上下文注入提供批量数据，飞书作为通信渠道。
 
 ## 为什么用无状态脚本而不是 MCP Server
 
@@ -26,8 +26,8 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 
 | 维度 | 我们的方案 |
 |------|-----------|
-| **工具** | `tools/` 下的 Python CLI 脚本 |
-| **调用** | Bash 子进程（Claude Code 内置） |
+| **工具** | `src/alphaclaude/tools/` 下的 Python CLI 模块 |
+| **调用** | Bash 子进程（Claude Code 内置），开发态用 `python -m alphaclaude.tools.<tool>` |
 | **状态** | 无状态 — 每次调用独立，即时返回 |
 | **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
 
@@ -45,8 +45,8 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
                        │ 事件
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│                      main.py                             │
-│  消息编排 · 会话管理 · 指令处理 · 技能加载               │
+│              src/alphaclaude/app/main.py                 │
+│  消息编排 · 会话管理 · 指令处理 · 技能加载 · FastAPI     │
 └──┬────────┬────────┬────────┬────────┬────────┬──────────┘
    │        │        │        │        │        │
    ▼        ▼        ▼        ▼        ▼        ▼
@@ -58,7 +58,7 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
    │        │        │                 │
    ▼        ▼        ▼                 ▼
 ┌──────┐ ┌──────┐ ┌──────────────┐
-│ data/│ │tools/│ │  skills/     │
+│ data/│ │src/  │ │  skills/     │
 │mem/c │ │ CLI  │ │  SKILL.md    │
 │ache  │ │ JSON │ │  references/ │
 └──────┘ └──────┘ └──────────────┘
@@ -67,9 +67,70 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 **依赖关系**（无循环）:
 
 ```
-main ──→ memory, claude, scheduler, feishu, config, stock
+alphaclaude.app.main ──→ memory, claude, scheduler, feishu, config, stock
 scheduler ──→ memory, claude, feishu, stock
 memory ──→ claude, config
+alphaclaude.engine ──→ alphaclaude.tools, config, data/output
+```
+
+## 包内模块边界
+
+当前代码已从根目录脚本和旧 `tools/` 目录迁入 `src/alphaclaude/`，避免应用入口、交易引擎、工具脚本和测试互相依赖隐式路径。
+
+| 包 | 职责 |
+|----|------|
+| `alphaclaude.app` | 飞书机器人、FastAPI、会话和指令编排 |
+| `alphaclaude.engine` | 回测/模拟盘/预留 live 引擎、状态、计划、账本、执行、盘前计划生成、盘中快车道、盘后报告 |
+| `alphaclaude.tools` | Claude Code 可调用的无状态 CLI 工具和报表/风控/信号工具 |
+| `alphaclaude.paths` | 项目根目录、数据目录等路径解析，避免包内代码依赖当前工作目录 |
+
+## 引擎流程
+
+```
+┌─ 盘前计划生成 ──────────────────────────────────────────┐
+│  OvernightPipeline                                      │
+│  · Claude Code 子任务：宏观政策 / 板块轮动 / 交易复盘   │
+│  · API Tool Use：定方向 / 选标的 / 调仓                 │
+│  · Python 风控：signal + risk 硬校验                    │
+│  · 输出 plan.json                                       │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+                           ▼
+┌─ 盘中执行 ──────────────────────────────────────────────┐
+│  FastLane                                               │
+│  · 候选买入和持仓调整                                   │
+│  · 止盈、止损、到期卖出                                 │
+│  · 规则信号扫描和去重                                   │
+│  · 紧急事件进入事件队列                                 │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+                           ▼
+┌─ 状态与审计 ────────────────────────────────────────────┐
+│  EngineState / PlanV2 / Ledger / EventQueue             │
+│  · state.json：现金、持仓、风控状态                      │
+│  · plan.json：方向、候选、调仓、策略变体                 │
+│  · ledger.jsonl：成交、拒单、风控和审计记录              │
+└─────────────────────────────────────────────────────────┘
+```
+
+盘后不生成新的 `plan.json`。收盘后只运行 Python 汇总报告，记录净值、成交、持仓、盈亏、异常和风控事件，并按配置推送飞书。这样能保证交易决策来自盘前，盘中只机械执行既定计划。
+
+当前 `backtest` 和 `paper` 共享包内核心。`live` 模式入口保留，但必须等 BrokerAdapter、人工确认、订单幂等和安全闸门完成后才能准入。
+
+开发态命令示例：
+
+```bash
+PYTHONPATH=src python -m alphaclaude.app.cli
+PYTHONPATH=src python -m alphaclaude.engine.cli --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
+PYTHONPATH=src python -m alphaclaude.tools.quote 600519
+```
+
+安装态命令示例：
+
+```bash
+alphaclaude
+alphaclaude-engine --mode paper -u default
+python -m alphaclaude.tools.quote 600519
 ```
 
 ## 数据源

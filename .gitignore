@@ -4,6 +4,7 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 
@@ -16,6 +17,9 @@ data/cache/
 data/output/
 data/memory/
 data/state/
+data/test_tmp/
+data/*.json
+data/*.md
 *.log
 
 .idea/

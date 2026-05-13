@@ -3,6 +3,8 @@
 **Date:** 2026-05-06
 **Status:** design review
 
+> 2026-05-13 注：本文是 v3 设计记录；路径已按当前包结构更新为 `src/alphaclaude/`。旧根入口、旧工具目录和旧单文件引擎入口已迁移/删除。
+
 ## Summary
 
 v2 暴露了四个根因问题（死叉买入、重复下单、仓位失控、Stage 2 不工作）。v3 在此基础上做三件事：修 bug、加速、引入 sub-agent 研究层。
@@ -10,7 +12,7 @@ v2 暴露了四个根因问题（死叉买入、重复下单、仓位失控、St
 ## Architecture Diagram
 
 ```
-┌─ 盘后 (15:30) ─ 每天 1 次 ───────────────────────────────────────┐
+┌─ 盘前 (8:00-9:15) ─ 每天 1 次 ─────────────────────────────────┐
 │                                                                    │
 │  Phase 0: Python 并行启动 3 个 Claude Code 子任务 (sub-agent)       │
 │  ┌─ A: 宏观政策研究 → 500 字摘要 (Tavily 搜索+解读)                │
@@ -105,20 +107,20 @@ v2 暴露了四个根因问题（死叉买入、重复下单、仓位失控、St
 
 | File | Change |
 |------|--------|
-| `tools/signal_rules.py` | 每个规则输出加 `action` 字段 (buy/sell/alert) |
-| `tools/paper_engine.py` | FastLane 并行行情+扫描，1s tick，action 分支，去重，熔断；OvernightPipeline Phase 0 子任务 |
+| `src/alphaclaude/tools/signal_rules.py` | 每个规则输出加 `action` 字段 (buy/sell/alert) |
+| `src/alphaclaude/engine/` | FastLane 并行行情+扫描，1s tick，action 分支，去重，熔断；OvernightPipeline Phase 0 子任务 |
 | `docs/roadmap.md` | Phase 2 架构描述更新为 v3 |
 
 ## Unchanged Files
 
-`tools/risk.py`, `tools/signal.py`, `tools/screen.py`, `tools/_fallback.py`, `tools/quote.py` — 直接复用，无需修改。
+`src/alphaclaude/tools/risk.py`, `signal.py`, `screen.py`, `_fallback.py`, `quote.py` — 直接复用，无需修改。
 
 ## Implementation Order
 
-1. `signal_rules.py` action 字段 (独立, 30min)
-2. `paper_engine.py` FastLane 并行 + action 处理 + 去重 (依赖 1, 2h)
-3. `paper_engine.py` 全局熔断 (独立, 30min)
-4. `paper_engine.py` Phase 0 sub-agents + 合并 Stage 1 (独立, 1.5h)
+1. `src/alphaclaude/tools/signal_rules.py` action 字段 (独立, 30min)
+2. `src/alphaclaude/engine/fast_lane.py` FastLane 并行 + action 处理 + 去重 (依赖 1, 2h)
+3. `src/alphaclaude/engine/` 全局熔断 (独立, 30min)
+4. `src/alphaclaude/engine/pipeline.py` Phase 0 sub-agents + 合并 Stage 1 (独立, 1.5h)
 5. Dry-run 回测验证 (全仓, 1 个月)
 6. Full backtest (含 Claude Code, 1 个月)
 7. `docs/roadmap.md` 更新

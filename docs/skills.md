@@ -32,7 +32,7 @@ skills/
 
 - **SKILL.md** 启动时加载（Claude Code 注入上下文）。充当局部的分析管线路由器 —— 定义分析步骤顺序、每个步骤使用的工具、references/ 文件的加载条件。
 - **references/** 按需加载。包含公式理论、参数阈值、市场条件、评分调整规则。Agent 根据分析进度自主决定何时展开哪个 reference。
-- **无 scripts/ 目录** — 所有计算由 `tools/` 下的 CLI 工具完成，JSON 进 JSON 出，通过 Bash 调用。Skills 定义"用哪个工具、怎么组合"，工具执行计算。
+- **无 scripts/ 目录** — 所有计算由 `src/alphaclaude/tools/` 下的 CLI 模块完成，JSON 进 JSON 出，通过 Bash 调用。开发态命令为 `python -m alphaclaude.tools.<tool>`；Skills 定义"用哪个工具、怎么组合"，工具执行计算。
 
 ## 前置技能
 
@@ -44,7 +44,7 @@ skills/
 |------|---------------------|---------------------|
 | 激活方式 | 关键词触发（如"金叉"匹配 ma-golden-cross） | Description-based — Agent 理解用户意图自主选择 |
 | 策略组织 | 11 个独立 SKILL.md，各自定义工具链 | 3 个管线按分析阶段编排，策略作为 references 按需加载 |
-| 计算层 | `skills/*/scripts/` Python 脚本 | `tools/` 统一 CLI 工具（13 个），所有技能共享 |
+| 计算层 | `skills/*/scripts/` Python 脚本 | `src/alphaclaude/tools/` 统一 CLI 模块，所有技能共享 |
 | 内容保真 | 从 YAML 迁移时易丢失细节 | 深度知识集中在 references/，一个文件一个主题 |
 
 ## 工具与技能的对应
@@ -53,10 +53,10 @@ skills/
 
 | 分析阶段 | 使用的工具 |
 |----------|-----------|
-| 数据获取 | `quote.py`（行情）、`technical.py`（指标）、`fundamental.py`（财务）、`flow.py`（资金）、`news.py`（消息） |
-| 趋势研判 | `trend.py`（MA排列/交叉/乖离） |
-| 入场信号 | `signal_detector.py`（5 种信号检测） |
-| 位置判断 | `pivot.py`（箱体/中枢）、`fibonacci.py`（回撤/扩展） |
-| 情绪评估 | `sentiment.py`（换手热度/量能/ATR/均线粘合/综合评分） |
-| 筛选推荐 | `screen.py`（多因子选股）、`backtest.py`（历史回测） |
-| 持仓管理 | `portfolio.py`（自选股/盈亏概览） |
+| 数据获取 | `alphaclaude.tools.quote`（行情）、`technical`（指标）、`fundamental`（财务）、`flow`（资金）、`news`（消息） |
+| 趋势研判 | `alphaclaude.tools.trend`（MA排列/交叉/乖离） |
+| 入场信号 | `alphaclaude.tools.signal_detector`（5 种信号检测） |
+| 位置判断 | `alphaclaude.tools.pivot`（箱体/中枢）、`fibonacci`（回撤/扩展） |
+| 情绪评估 | `alphaclaude.tools.sentiment`（换手热度/量能/ATR/均线粘合/综合评分） |
+| 筛选推荐 | `alphaclaude.tools.screen`（多因子选股）、`backtest`（历史回测） |
+| 持仓管理 | `alphaclaude.tools.portfolio`（自选股/盈亏概览） |
