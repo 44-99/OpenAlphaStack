@@ -6,7 +6,7 @@ from alphaclaude.paths import PROJECT_ROOT
 import sys
 import time
 from datetime import datetime
-from _http import friendly_error  # noqa: E402
+from alphaclaude.tools._http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 3600  # fundamentals change slowly

@@ -6,7 +6,7 @@ from alphaclaude.paths import PROJECT_ROOT
 import sys
 import time
 from datetime import datetime
-from _http import friendly_error  # noqa: E402
+from alphaclaude.tools._http import friendly_error  # noqa: E402
 
 import pandas as pd
 import numpy as np

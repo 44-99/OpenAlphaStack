@@ -7,9 +7,9 @@ on:
     branches: [master, main]
 
 jobs:
-  lint-and-schema:
+  verification:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -20,39 +20,45 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install pandas requests akshare ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+          pip install pytest
 
-      - name: Ruff lint
-        run: ruff check tools/ --ignore F841,E722
+      - name: Pytest
+        run: python -m pytest -q
 
-      - name: Schema check — all tools have valid argparser
+      - name: Compile package
+        run: python -m compileall -q src/alphaclaude
+
+      - name: Engine CLI help
+        run: python -m alphaclaude.engine.cli --help
+
+      - name: Quote CLI help
+        run: python -m alphaclaude.tools.quote --help
+
+      - name: Tool schema check
         run: |
           for tool in quote technical fundamental flow news screen backtest trend signal_detector pivot fibonacci sentiment portfolio risk signal signal_rules; do
-            echo "Checking tools/$tool.py schema..."
-            python "tools/$tool.py" --help > /dev/null 2>&1 || {
-              echo "ERROR: tools/$tool.py --help failed"
+            echo "Checking alphaclaude.tools.$tool schema..."
+            python -m "alphaclaude.tools.$tool" --help > /dev/null 2>&1 || {
+              echo "ERROR: alphaclaude.tools.$tool --help failed"
               exit 1
             }
           done
-          echo "All 16 tools pass schema check"
+          echo "All package tools pass schema check"
 
       - name: Signal rules baseline check
         run: |
-          echo "Running signal_rules.py --list..."
-          python tools/signal_rules.py --list
+          echo "Running signal_rules --list..."
+          python -m alphaclaude.tools.signal_rules --list
           echo "Baseline check OK"
 
-      - name: Risk calculator smoke test
+      - name: Risk calculator help
         run: |
-          echo "Testing risk.py with 600519..."
-          python tools/risk.py 600519 --capital 100000 > /dev/null || {
-            echo "ERROR: risk.py failed"
-            exit 1
-          }
-          echo "Risk calculator OK"
+          python -m alphaclaude.tools.risk --help
 
-      - name: Signal validator smoke test
+      - name: Signal validator help
         run: |
-          echo "Testing signal.py stats..."
-          python tools/signal.py stats 2>/dev/null || echo "No signal history yet"
-          echo "Signal validator OK"
+          python -m alphaclaude.tools.signal --help

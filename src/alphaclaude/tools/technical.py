@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
-from _http import friendly_error  # noqa: E402
+from alphaclaude.tools._http import friendly_error  # noqa: E402
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 600

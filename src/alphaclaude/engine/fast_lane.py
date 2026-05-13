@@ -602,7 +602,7 @@ class FastLane:
 
             # Fetch market index for emergency detection (live/paper mode)
             try:
-                from quote import get_market_overview
+                from alphaclaude.tools.quote import get_market_overview
                 overview = get_market_overview()
                 if overview and not overview.get("error"):
                     for idx in overview.get("indices", []):
