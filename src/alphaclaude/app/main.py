@@ -651,8 +651,10 @@ def _reply_streaming(prompt: str, session_id: str,
     """
     import time as _time
 
-    # Send placeholder reply to get a message_id we can update
-    placeholder_resp = reply_message(orig_message_id, "▌")
+    # Send placeholder reply to get a message_id we can update. Feishu may reject
+    # PATCH updates for plain text messages, so the placeholder must also be
+    # acceptable as a standalone reply if streaming updates are unavailable.
+    placeholder_resp = reply_message(orig_message_id, "正在分析，请稍候...")
     stream_msg_id = ""
     try:
         stream_msg_id = placeholder_resp.get("data", {}).get("message_id", "")
@@ -668,26 +670,31 @@ def _reply_streaming(prompt: str, session_id: str,
     accumulated = ""
     last_update = 0.0
     update_interval = STREAM_UPDATE_MS / 1000.0
+    updates_available = True
+
+    def _update_stream(text: str) -> bool:
+        try:
+            resp = update_message(stream_msg_id, text)
+        except Exception:
+            return False
+        return isinstance(resp, dict) and resp.get("code", 0) == 0
 
     try:
         for chunk in ask_claude_stream(prompt, session_id=session_id):
             accumulated += chunk
             now = _time.monotonic()
-            if now - last_update >= update_interval:
-                try:
-                    update_message(stream_msg_id, accumulated + " ▌")
-                    last_update = now
-                except Exception:
-                    pass  # Single update failure shouldn't kill the stream
+            if updates_available and now - last_update >= update_interval:
+                updates_available = _update_stream(accumulated + " ▌")
+                last_update = now
     except Exception:
         pass
 
     # Final update: remove cursor and show complete text
     final_text = accumulated.strip() if accumulated else "分析完成，无输出。"
-    try:
-        update_message(stream_msg_id, final_text)
-    except Exception:
-        # If final update fails, send a new reply with the text
+    if not updates_available or not _update_stream(final_text):
+        # Text-message updates are not supported by every Feishu message type.
+        # If updating the placeholder fails, send the complete result as a new
+        # reply so the user is never left with only the placeholder.
         if accumulated:
             reply_message(orig_message_id, final_text)
 
