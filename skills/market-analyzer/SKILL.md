@@ -27,10 +27,10 @@ triggers:
 ### 阶段 1：数据获取
 
 ```
-python tools/quote.py market                     # 大盘概况：指数/涨跌比/成交额
-python tools/flow.py north                       # 北向资金净流入/5日趋势
-python tools/flow.py {sector_or_code}            # 板块资金流向（按需）
-python tools/news.py market                      # 市场头条新闻
+python -m alphaclaude.tools.quote market                     # 大盘概况：指数/涨跌比/成交额
+python -m alphaclaude.tools.flow north                       # 北向资金净流入/5日趋势
+python -m alphaclaude.tools.flow {sector_or_code}            # 板块资金流向（按需）
+python -m alphaclaude.tools.news market                      # 市场头条新闻
 ```
 
 ### 阶段 2：情绪周期判定

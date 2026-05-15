@@ -61,5 +61,5 @@ always_load: true  # 可选，始终加载到上下文
 
 - **新入场信号** → 往 `stock-analyzer/references/entry-signals.md` 加一个章节
 - **新市场分析方法** → 往 `market-analyzer/references/` 加一个 `.md`
-- **新筛选策略** → 往 `stock-screener/references/` 加参数文件，在 `tools/screen.py` 的 `STRATEGIES` 字典中添加新策略
+- **新筛选策略** → 往 `stock-screener/references/` 加参数文件，在 `src/alphaclaude/tools/screen.py` 的 `STRATEGIES` 字典中添加新策略
 - **通达信公式内化** → 分析公式逻辑 → 归类到对应场景 reference 中（信号类/筛选类/指标类）

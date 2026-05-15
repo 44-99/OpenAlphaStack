@@ -13,7 +13,7 @@
 ### 判定条件
 
 **主信号 — MA5 上穿 MA10**：
-从 `python tools/technical.py {code} --all` 返回的均线数据中检查：
+从 `python -m alphaclaude.tools.technical {code} --all` 返回的均线数据中检查：
 - MA5 在最近 3 个交易日内上穿 MA10（前一日 MA5 < MA10，当日 MA5 > MA10）
 - MA5 当前值 > MA10 当前值
 
@@ -28,7 +28,7 @@
 
 **量能确认**：
 - 金叉日成交量高于 5 日均量
-- 从 `python tools/quote.py {code}` → `volume_ratio` > 1.2 为积极信号
+- 从 `python -m alphaclaude.tools.quote {code}` → `volume_ratio` > 1.2 为积极信号
 
 **趋势背景分级**：
 - 盘整后金叉：最强信号 ⬆⬆
@@ -64,14 +64,14 @@
 ### 判定条件
 
 **阻力位识别**：
-从 `python tools/technical.py {code} --all` 返回数据中识别：
+从 `python -m alphaclaude.tools.technical {code} --all` 返回数据中识别：
 - 20 日高点
 - 布林带上轨
 - 前期震荡平台顶部（20-60 日内 3 次以上触碰未突破的高点）
 
 **量能确认**：
 - 当日成交量 > 5 日均量的 **2 倍**
-- 从 `python tools/quote.py {code}` → `volume_ratio` > 2.0
+- 从 `python -m alphaclaude.tools.quote {code}` → `volume_ratio` > 2.0
 - 使用 `technical.py` 返回的日线数据计算均量进行交叉验证
 
 **价格确认**：
@@ -84,9 +84,9 @@
 - 次日回落突破位之下 → 假突破，观望
 
 **风险过滤**：
-- `python tools/news.py {code}` 检查无重大利空
-- PE 不应明显高于行业（`python tools/fundamental.py {code}` 确认）
-- `python tools/flow.py {code}` 确认主力资金方向（主力净流入 → 加分）
+- `python -m alphaclaude.tools.news {code}` 检查无重大利空
+- PE 不应明显高于行业（`python -m alphaclaude.tools.fundamental {code}` 确认）
+- `python -m alphaclaude.tools.flow {code}` 确认主力资金方向（主力净流入 → 加分）
 
 ### 评分调整
 
@@ -113,7 +113,7 @@
 ### 判定条件
 
 **前提条件 — 多头排列（必须）**：
-从 `python tools/technical.py {code} --all` 确认：
+从 `python -m alphaclaude.tools.technical {code} --all` 确认：
 - MA5 > MA10 > MA20（上升趋势）
 - 不满足此条件则不适用此信号
 
@@ -125,11 +125,11 @@
 
 **反弹信号**：
 - 当前价格守住均线支撑位（未有效跌破）
-- 从 `python tools/quote.py {code}` → 现价 >= MA5 或现价 >= MA10
+- 从 `python -m alphaclaude.tools.quote {code}` → 现价 >= MA5 或现价 >= MA10
 - MA5 乖离率 < 2% → 最佳买入区间
 
 **确认条件**：
-- `python tools/news.py {code}` 无利空消息
+- `python -m alphaclaude.tools.news {code}` 无利空消息
 - 获利比例 50-80% 为健康筹码区间
 
 ### 评分调整
@@ -158,13 +158,13 @@
 ### 判定条件
 
 **持续下跌确认**：
-从 `python tools/technical.py {code} --all` 获取 30 日日线数据：
+从 `python -m alphaclaude.tools.technical {code} --all` 获取 30 日日线数据：
 - 股价从 20 日高点到近期低点跌幅 > 15%
 - 趋势状态应为 BEAR 或 STRONG_BEAR
 
 **量能异动**：
 - 当日成交量 > 5 日均量的 **3 倍**
-- 从 `python tools/quote.py {code}` → `volume_ratio` > 3.0
+- 从 `python -m alphaclaude.tools.quote {code}` → `volume_ratio` > 3.0
 - 该异动应出现在前期极度缩量之后（前 5-10 日成交量低迷）
 
 **价格企稳**：
@@ -173,8 +173,8 @@
 - 最好出现长下影线（下影线长度 > 实体长度），显示买方支撑
 
 **确认因素**：
-- `python tools/news.py {code}` 确认是否有基本面催化（业绩、政策、行业事件）
-- `python tools/fundamental.py {code}` 配合估值判断（低估值 + 底部放量 = 更强信号）
+- `python -m alphaclaude.tools.news {code}` 确认是否有基本面催化（业绩、政策、行业事件）
+- `python -m alphaclaude.tools.fundamental {code}` 配合估值判断（低估值 + 底部放量 = 更强信号）
 - 筹码分布：平均成本接近现价（成本收敛）
 
 ### 风险提示
@@ -207,7 +207,7 @@
 
 ### 形态定义（最近 5 个交易日）
 
-从 `python tools/technical.py {code} --all` 获取最近 10 日 K 线数据（OHLC）：
+从 `python -m alphaclaude.tools.technical {code} --all` 获取最近 10 日 K 线数据（OHLC）：
 
 1. **第 1 日 — 大阳线**：
    - 收盘价 > 开盘价

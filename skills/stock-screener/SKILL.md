@@ -27,15 +27,15 @@ triggers:
 
 根据用户意图选择：
 
-- **短线 (1-5天)**：加载 `references/short-term.md`，运行 `python tools/screen.py -s breakout`
-- **中线 (1-4周)**：加载 `references/mid-term.md`，运行 `python tools/screen.py -s value`
-- **游资热点**：加载 `references/hot-money.md`，运行 `python tools/screen.py -s hot_money`
+- **短线 (1-5天)**：加载 `references/short-term.md`，运行 `python -m alphaclaude.tools.screen -s breakout`
+- **中线 (1-4周)**：加载 `references/mid-term.md`，运行 `python -m alphaclaude.tools.screen -s value`
+- **游资热点**：加载 `references/hot-money.md`，运行 `python -m alphaclaude.tools.screen -s hot_money`
 - 用户未指定 → 短线优先
 
 ### 阶段 2：执行筛选
 
 ```
-python tools/screen.py -s {strategy}   # JSON 输出筛选结果列表
+python -m alphaclaude.tools.screen -s {strategy}   # JSON 输出筛选结果列表
 ```
 
 ### 阶段 3：二次确认
@@ -43,9 +43,9 @@ python tools/screen.py -s {strategy}   # JSON 输出筛选结果列表
 对筛选结果中排名前 3-5 的标的，逐支获取实时数据验证：
 
 ```
-python tools/quote.py {code}            # 确认现价/量比仍在筛选范围内
-python tools/technical.py {code} --all  # 确认技术形态未被破坏
-python tools/news.py {code}             # 排除突发利空
+python -m alphaclaude.tools.quote {code}            # 确认现价/量比仍在筛选范围内
+python -m alphaclaude.tools.technical {code} --all  # 确认技术形态未被破坏
+python -m alphaclaude.tools.news {code}             # 排除突发利空
 ```
 
 ### 阶段 4：输出

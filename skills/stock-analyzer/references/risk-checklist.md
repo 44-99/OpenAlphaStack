@@ -8,33 +8,33 @@
 
 | # | 风险项 | 数据来源 | 判定标准 |
 |---|--------|----------|----------|
-| 1 | 减持公告 | `python tools/news.py {code}` | 近 1 月内大股东/高管减持公告 |
-| 2 | 业绩预亏 | `python tools/news.py {code}` | 最新财报或业绩预告净利润为负 |
-| 3 | 监管处罚 | `python tools/news.py {code}` | 证监会/交易所处罚、立案调查 |
-| 4 | 行业政策利空 | `python tools/news.py {code}` | 行业级监管收紧、政策打压 |
-| 5 | 大额解禁 | `python tools/news.py {code}` | 近 1 月内限售股解禁 > 总股本 5% |
+| 1 | 减持公告 | `python -m alphaclaude.tools.news {code}` | 近 1 月内大股东/高管减持公告 |
+| 2 | 业绩预亏 | `python -m alphaclaude.tools.news {code}` | 最新财报或业绩预告净利润为负 |
+| 3 | 监管处罚 | `python -m alphaclaude.tools.news {code}` | 证监会/交易所处罚、立案调查 |
+| 4 | 行业政策利空 | `python -m alphaclaude.tools.news {code}` | 行业级监管收紧、政策打压 |
+| 5 | 大额解禁 | `python -m alphaclaude.tools.news {code}` | 近 1 月内限售股解禁 > 总股本 5% |
 
 ## 估值风险
 
 | # | 风险项 | 数据来源 | 判定标准 |
 |---|--------|----------|----------|
-| 6 | PE 偏高 | `python tools/fundamental.py {code}` | PE > 行业均值 2 倍 → 必须在风险提示中说明 |
-| 7 | PB 偏高 | `python tools/fundamental.py {code}` | PB > 行业均值 3 倍 → 高估值风险 |
-| 8 | ROE 异常 | `python tools/fundamental.py {code}` | ROE < 0 且无改善趋势 → 盈利质量存疑 |
+| 6 | PE 偏高 | `python -m alphaclaude.tools.fundamental {code}` | PE > 行业均值 2 倍 → 必须在风险提示中说明 |
+| 7 | PB 偏高 | `python -m alphaclaude.tools.fundamental {code}` | PB > 行业均值 3 倍 → 高估值风险 |
+| 8 | ROE 异常 | `python -m alphaclaude.tools.fundamental {code}` | ROE < 0 且无改善趋势 → 盈利质量存疑 |
 
 ## 筹码与技术风险
 
 | # | 风险项 | 数据来源 | 判定标准 |
 |---|--------|----------|----------|
-| 9 | 获利比例过高 | `python tools/technical.py {code} --all` | 获利比例 > 90% → 警惕获利回吐 |
-| 10 | 高位放量滞涨 | `python tools/quote.py {code}` + technical | 量比 > 1.5 但涨幅 < 1% → 主力出货嫌疑 |
-| 11 | MACD 顶背离 | `python tools/technical.py {code} --all` | 价格新高但 MACD 红柱面积缩小 |
+| 9 | 获利比例过高 | `python -m alphaclaude.tools.technical {code} --all` | 获利比例 > 90% → 警惕获利回吐 |
+| 10 | 高位放量滞涨 | `python -m alphaclaude.tools.quote {code}` + technical | 量比 > 1.5 但涨幅 < 1% → 主力出货嫌疑 |
+| 11 | MACD 顶背离 | `python -m alphaclaude.tools.technical {code} --all` | 价格新高但 MACD 红柱面积缩小 |
 
 ## 资金面风险
 
 | # | 风险项 | 数据来源 | 判定标准 |
 |---|--------|----------|----------|
-| 12 | 主力持续流出 | `python tools/flow.py {code}` | 近 5 日主力净流出 > 1 亿（中盘）或 > 3 亿（大盘） |
+| 12 | 主力持续流出 | `python -m alphaclaude.tools.flow {code}` | 近 5 日主力净流出 > 1 亿（中盘）或 > 3 亿（大盘） |
 
 ## 输出要求
 

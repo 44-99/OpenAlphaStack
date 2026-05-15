@@ -19,16 +19,16 @@ always_load: true
 同时获取三类数据，减少等待：
 
 ```
-python tools/quote.py {code}            # 实时行情：现价/涨幅/换手率/量比/PE/PB
-python tools/technical.py {code} --all  # 技术指标：MA/MACD/RSI/KDJ/布林带/量价
-python tools/news.py {code}             # 近期新闻：公告/研报/情绪
+python -m alphaclaude.tools.quote {code}            # 实时行情：现价/涨幅/换手率/量比/PE/PB
+python -m alphaclaude.tools.technical {code} --all  # 技术指标：MA/MACD/RSI/KDJ/布林带/量价
+python -m alphaclaude.tools.news {code}             # 近期新闻：公告/研报/情绪
 ```
 
 根据用户问题按需追加：
 
 ```
-python tools/fundamental.py {code}      # PE/PB/ROE/营收增速/行业对比
-python tools/flow.py {code}             # 主力资金/大单方向
+python -m alphaclaude.tools.fundamental {code}      # PE/PB/ROE/营收增速/行业对比
+python -m alphaclaude.tools.flow {code}             # 主力资金/大单方向
 ```
 
 ### 阶段 2：趋势与市场环境判定
@@ -65,7 +65,7 @@ python tools/flow.py {code}             # 主力资金/大单方向
 在做出买入建议前，必须先评估仓位风险：
 
 ```
-python tools/risk.py {code} --capital {总资金}
+python -m alphaclaude.tools.risk {code} --capital {总资金}
 ```
 
 获取以下约束：
@@ -112,7 +112,7 @@ python tools/risk.py {code} --capital {总资金}
 当给出买入/卖出建议且用户确认后，调用 signal 工具提交信号至模拟盘：
 
 ```
-python tools/signal.py submit \
+python -m alphaclaude.tools.signal submit \
   --symbol {代码} --action {buy/sell} \
   --entry {买入价} --stop {止损价} --target {止盈价} \
   --confidence {置信度0-100} --strategy {策略名} \

@@ -144,7 +144,7 @@ def _is_subscribed(chat_id: str) -> bool:
 
 # === Stock data ===
 
-STOCK_CODE_RE = re.compile(r'\b(\d{6})\b')
+STOCK_CODE_RE = re.compile(r'(?<!\d)(\d{6})(?!\d)')
 STOCK_NAME_PATTERNS = [
     (re.compile(r'(贵州茅台|茅台)'), '600519'),
     (re.compile(r'(宁德时代|宁德)'), '300750'),
@@ -169,7 +169,10 @@ def _extract_stock_codes(text: str) -> list[str]:
 
 
 def _fetch_stock_context(text: str) -> tuple[str, bool]:
-    from stock import get_market_overview, get_stock_detail
+    from stock import get_market_overview
+    from alphaclaude.tools.quote import get_stock_quote
+    from alphaclaude.tools.technical import get_technical
+
     codes = _extract_stock_codes(text)
     parts = []
     data_ok = False
@@ -187,15 +190,35 @@ def _fetch_stock_context(text: str) -> tuple[str, bool]:
         pass
     for code in codes:
         try:
-            detail = get_stock_detail(code)
-            if "error" not in detail:
+            quote = get_stock_quote(code)
+            if "error" not in quote:
                 data_ok = True
-                parts.append(f"\n【{detail.get('名称', code)} {code}】")
-                parts.append(f"  最新价: {detail.get('最新价')} | 涨跌幅: {detail.get('涨跌幅')}%")
-                parts.append(f"  换手率: {detail.get('换手率')}% | 量比: {detail.get('量比')}")
-                parts.append(f"  市盈率: {detail.get('市盈率')} | 市净率: {detail.get('市净率')}")
-                parts.append(f"  今开/最高/最低: {detail.get('今开')}/{detail.get('最高')}/{detail.get('最低')}")
-                parts.append(f"  成交量: {detail.get('成交量')}手 | 成交额: {detail.get('成交额')}元")
+                parts.append(f"\n【{quote.get('name', code)} {code} - {quote.get('fetched_at', '')}】")
+                parts.append(f"  最新价: {quote.get('price')} | 涨跌幅: {quote.get('change_pct')}%")
+                parts.append(f"  换手率: {quote.get('turnover_rate')}% | 量比: {quote.get('volume_ratio')}")
+                parts.append(f"  PE: {quote.get('pe')} | PB: {quote.get('pb')}")
+                parts.append(f"  今开/最高/最低: {quote.get('open')}/{quote.get('high')}/{quote.get('low')}")
+                parts.append(f"  成交量: {quote.get('volume')}手 | 成交额: {quote.get('amount')}元")
+            else:
+                parts.append(f"\n【{code} 行情获取失败】{quote.get('error')}")
+
+            technical = get_technical(code, "all")
+            if "error" not in technical:
+                data_ok = True
+                ma = technical.get("ma", {})
+                macd = technical.get("macd", {})
+                volume_price = technical.get("volume_price", {})
+                parts.append("  技术面:")
+                parts.append(
+                    f"    MA5/MA10/MA20: {ma.get('MA5')}/{ma.get('MA10')}/{ma.get('MA20')} "
+                    f"| 现价偏离MA5: {ma.get('vs_ma5')}%"
+                )
+                parts.append(
+                    f"    MACD: {macd.get('signal')} | 交叉: {macd.get('crossover')} "
+                    f"| 量价: {volume_price.get('signal')}({volume_price.get('volume_ratio')})"
+                )
+            else:
+                parts.append(f"  技术面获取失败: {technical.get('error')}")
         except (OSError, ValueError, RuntimeError):
             pass
     return "\n".join(parts), data_ok

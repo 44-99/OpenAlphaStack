@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pandas as pd
 import numpy as np
-from alphaclaude.tools._http import friendly_error  # noqa: E402
+from alphaclaude.tools._http import friendly_error, get_session, retry_get  # noqa: E402
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 600
@@ -46,9 +46,12 @@ def fetch_hist(code: str, days: int = 120) -> pd.DataFrame:
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
         f"CN_MarketData.getKLineData?symbol={_sina_code(code)}&scale=240&ma=no&datalen={days}"
     )
-    resp = requests.get(url, timeout=15,
-                        headers={"User-Agent": "Mozilla/5.0",
-                                 "Referer": "https://finance.sina.com.cn/"})
+    session = get_session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://finance.sina.com.cn/",
+    })
+    resp = retry_get(session, url, timeout=15)
     resp.encoding = "gbk"
     data = json.loads(resp.text)
     if not data or not isinstance(data, list):
@@ -192,6 +195,37 @@ def calc_volume_price(df: pd.DataFrame) -> dict:
     }
 
 
+def get_technical(code: str, indicator: str = "all") -> dict:
+    """Compute technical indicators for app context and CLI output."""
+    cache_key = f"{code}_{indicator}"
+    cached = _read_cache(cache_key)
+    if cached:
+        return cached
+
+    df = fetch_hist(code)
+    if df.empty:
+        return {"error": f"No historical data for {code}", "code": code}
+
+    name = str(df["name"].iloc[-1]) if "name" in df.columns else code
+    result = {"code": code, "name": name, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+    if indicator in ("ma", "all"):
+        result["ma"] = calc_ma(df)
+    if indicator in ("macd", "all"):
+        result["macd"] = calc_macd(df)
+    if indicator in ("rsi", "all"):
+        result["rsi"] = calc_rsi(df)
+    if indicator in ("kdj", "all"):
+        result["kdj"] = calc_kdj(df)
+    if indicator in ("bollinger", "all"):
+        result["bollinger"] = calc_bollinger(df)
+    if indicator in ("volume", "all"):
+        result["volume_price"] = calc_volume_price(df)
+
+    _write_cache(cache_key, result)
+    return result
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -200,40 +234,15 @@ def main():
     parser.add_argument("--indicator", "-i",
                         choices=["ma", "macd", "rsi", "kdj", "bollinger", "volume", "all"],
                         default="all", help="Which indicator to compute")
+    parser.add_argument("--all", dest="indicator", action="store_const", const="all",
+                        help="Shortcut for --indicator all")
     args = parser.parse_args()
 
     try:
-        code = args.code
-        cache_key = f"{code}_{args.indicator}"
-        cached = _read_cache(cache_key)
-        if cached:
-            print(json.dumps(cached, ensure_ascii=False, indent=2, default=str))
-            return
-
-        df = fetch_hist(code)
-        if df.empty:
-            print(json.dumps({"error": f"No historical data for {code}"}, ensure_ascii=False))
-            sys.exit(1)
-
-        name = str(df["name"].iloc[-1]) if "name" in df.columns else code
-        result = {"code": code, "name": name, "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
-
-        indicator = args.indicator
-        if indicator in ("ma", "all"):
-            result["ma"] = calc_ma(df)
-        if indicator in ("macd", "all"):
-            result["macd"] = calc_macd(df)
-        if indicator in ("rsi", "all"):
-            result["rsi"] = calc_rsi(df)
-        if indicator in ("kdj", "all"):
-            result["kdj"] = calc_kdj(df)
-        if indicator in ("bollinger", "all"):
-            result["bollinger"] = calc_bollinger(df)
-        if indicator in ("volume", "all"):
-            result["volume_price"] = calc_volume_price(df)
-
-        _write_cache(cache_key, result)
+        result = get_technical(args.code, args.indicator)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        if "error" in result:
+            sys.exit(1)
 
     except Exception as e:
         print(json.dumps({"error": friendly_error(args.code, e), "code": args.code}, ensure_ascii=False))

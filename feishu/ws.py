@@ -3,6 +3,7 @@ Feishu WebSocket long-connection client using official lark-oapi SDK.
 The SDK handles protobuf decoding automatically.
 """
 import os
+import time
 import threading
 from datetime import datetime
 from lark_oapi.ws import Client as LarkWSClient
@@ -63,15 +64,17 @@ def listen(event_handler, reconnect_delay: int = 3):
                 app_secret=FEISHU_APP_SECRET,
                 log_level=LogLevel.ERROR,
                 event_handler=dispatcher,
-                auto_reconnect=False,  # we handle reconnection ourselves
+                auto_reconnect=True,
             )
             _log("CONNECTED")
             print("[WS] 已连接", flush=True)
             client.start()
-        except (OSError, RuntimeError) as e:
+            _log("DISCONNECTED: client.start returned")
+            print(f"[WS] 连接结束，{reconnect_delay}秒后重连...", flush=True)
+            time.sleep(reconnect_delay)
+        except Exception as e:
             _log(f"DISCONNECTED: {e}")
             print(f"[WS] 连接断开: {e}，{reconnect_delay}秒后重连...", flush=True)
-            import time
             time.sleep(reconnect_delay)
 
 

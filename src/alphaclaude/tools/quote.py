@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 import requests
+from alphaclaude.tools._http import get_session, retry_get
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 300
@@ -52,7 +53,9 @@ def _fetch_tencent(code: str) -> dict | None:
     """Fetch quote from Tencent Finance API (88 fields, ~0.07s)."""
     try:
         url = f"http://qt.gtimg.cn/q={_prefixed_code(code)}"
-        resp = requests.get(url, timeout=10, headers={"User-Agent": UA})
+        session = get_session()
+        session.headers.update({"User-Agent": UA})
+        resp = retry_get(session, url, timeout=10)
         resp.encoding = "gbk"
         line = resp.text.strip()
         if '="' not in line:
@@ -92,11 +95,9 @@ def _fetch_tencent(code: str) -> dict | None:
 def _fetch_sina(code: str) -> dict | None:
     """Fetch quote from Sina Finance API (34 fields, ~0.1s)."""
     try:
-        resp = requests.get(
-            f"https://hq.sinajs.cn/list={_prefixed_code(code)}",
-            timeout=10,
-            headers={"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"},
-        )
+        session = get_session()
+        session.headers.update({"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"})
+        resp = retry_get(session, f"https://hq.sinajs.cn/list={_prefixed_code(code)}", timeout=10)
         resp.encoding = "gbk"
         raw = resp.text
         if "=" not in raw or len(raw) < 50:
@@ -182,11 +183,9 @@ def get_market_overview() -> dict:
 
     sina_codes = ",".join(v[0] for v in MARKET_INDICES.values())
     try:
-        resp = requests.get(
-            f"https://hq.sinajs.cn/list={sina_codes}",
-            timeout=10,
-            headers={"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"},
-        )
+        session = get_session()
+        session.headers.update({"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"})
+        resp = retry_get(session, f"https://hq.sinajs.cn/list={sina_codes}", timeout=10)
         resp.encoding = "gbk"
         indices = []
         for line in resp.text.strip().split("\n"):

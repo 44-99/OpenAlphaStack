@@ -1,7 +1,7 @@
 # 游资热点筛选
 
 **策略名**: hot_money（热钱追踪）
-**CLI**: `python tools/screen.py -s hot_money`
+**CLI**: `python -m alphaclaude.tools.screen -s hot_money`
 
 ---
 
@@ -26,10 +26,10 @@
 ## 二次确认
 
 ```bash
-python tools/quote.py {code}            # 现价/换手率/量比
-python tools/technical.py {code} --all  # 技术形态
-python tools/flow.py {code}             # 主力资金方向 —— 游资流入 vs 机构出货
-python tools/news.py market             # 市场热点题材
+python -m alphaclaude.tools.quote {code}            # 现价/换手率/量比
+python -m alphaclaude.tools.technical {code} --all  # 技术形态
+python -m alphaclaude.tools.flow {code}             # 主力资金方向 —— 游资流入 vs 机构出货
+python -m alphaclaude.tools.news market             # 市场热点题材
 ```
 
 ## 仓位建议

@@ -7,7 +7,7 @@
 
 ## 1. 板块资金流向
 
-从 `python tools/flow.py {sector}` 和 `python tools/flow.py north`：
+从 `python -m alphaclaude.tools.flow {sector}` 和 `python -m alphaclaude.tools.flow north`：
 
 - **北向资金**：连续流入/流出趋势。北向连续 3 日净流入 → 外资看多；连续流出 → 谨慎
 - **主力资金**：近 5 日主力净流入板块排名。持续流入的板块轮动概率更大

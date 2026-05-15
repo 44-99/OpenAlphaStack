@@ -1,7 +1,7 @@
 # 短线筛选 (1-5 天)
 
 **策略名**: breakout（放量突破）
-**CLI**: `python tools/screen.py -s breakout`
+**CLI**: `python -m alphaclaude.tools.screen -s breakout`
 
 ---
 
@@ -21,9 +21,9 @@
 对筛选结果前 5 名，逐支确认：
 
 ```bash
-python tools/quote.py {code}            # 现价/量比/换手率是否仍在筛选范围内
-python tools/technical.py {code} --all  # 均线是否多头排列、MACD 是否金叉或零轴上
-python tools/news.py {code}             # 排除突发利空
+python -m alphaclaude.tools.quote {code}            # 现价/量比/换手率是否仍在筛选范围内
+python -m alphaclaude.tools.technical {code} --all  # 均线是否多头排列、MACD 是否金叉或零轴上
+python -m alphaclaude.tools.news {code}             # 排除突发利空
 ```
 
 ## 单支输出格式
