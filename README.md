@@ -6,7 +6,7 @@ AlphaClaude 是一个面向 A 股的 Claude Code 驱动交易助手：Claude Cod
 
 - 回测和模拟盘共享 `src/alphaclaude/engine/` 包内核心。
 - 原根目录 `main.py`、旧 `tools/` 目录和旧单文件引擎入口已迁移/删除。
-- CLI 工具位于 `src/alphaclaude/tools/`，通过 `python -m alphaclaude.tools.<tool>` 调用。
+- CLI 工具位于 `src/alphaclaude/tools/`，通过 `alphaclaude tools <tool>` 调用。
 - `live` 入口只是预留；券商适配器、订单确认、幂等和安全闸门完成前，不应视为实盘能力。
 
 详细设计见 [docs/architecture.md](docs/architecture.md)，实施路线见 [docs/roadmap.md](docs/roadmap.md)。
@@ -46,17 +46,10 @@ ANTHROPIC_BASE_URL=https://api.example.com/anthropic
 ANTHROPIC_MODEL=your-model
 ```
 
-开发态运行：
-
-```powershell
-$env:PYTHONPATH='src'
-python -m alphaclaude.app.cli
-```
-
-安装后运行：
+运行：
 
 ```bash
-alphaclaude
+alphaclaude app start
 ```
 
 健康检查：`http://localhost:8800/health`
@@ -66,22 +59,22 @@ alphaclaude
 引擎：
 
 ```bash
-alphaclaude-engine --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
-alphaclaude-engine --mode paper -u default --daemon
-alphaclaude-engine --list-runs
-alphaclaude-engine --status-run paper_2026-05-16T09-00-00
-alphaclaude-engine --stop-run paper_2026-05-16T09-00-00
-alphaclaude-engine --resume-run paper_2026-05-16T09-00-00 --daemon
-alphaclaude-engine --stop-running
+alphaclaude engine start --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
+alphaclaude engine start --mode paper -u default --daemon
+alphaclaude engine list
+alphaclaude engine status paper_2026-05-16T09-00-00
+alphaclaude engine stop paper_2026-05-16T09-00-00
+alphaclaude engine resume paper_2026-05-16T09-00-00 --daemon
+alphaclaude engine stop-running
 ```
 
 工具示例：
 
 ```bash
-python -m alphaclaude.tools.quote 600519
-python -m alphaclaude.tools.technical 600519 --all
-python -m alphaclaude.tools.backtest 600519 -s ma_cross
-python -m alphaclaude.tools.backtest_runner --start 2024-01-01 --end 2024-06-30 -u default
+alphaclaude tools quote 600519
+alphaclaude tools technical 600519 --all
+alphaclaude tools backtest 600519 -s ma_cross
+alphaclaude tools backtest_runner --start 2024-01-01 --end 2024-06-30 -u default
 ```
 
 机器人常用指令：

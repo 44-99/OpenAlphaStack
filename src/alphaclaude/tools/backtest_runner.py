@@ -4,9 +4,9 @@ Adds convenience: --universe can be a screen strategy name (screen_breakout)
 or a comma-separated code list. Runs screen.py to resolve strategy names.
 
 Usage:
-  python -m alphaclaude.tools.backtest_runner --start 2023-01-01 --end 2024-12-31 --universe default --capital 100000
-  python -m alphaclaude.tools.backtest_runner --start 2024-06-01 --end 2024-12-31 --universe 600519,000858 --capital 50000
-  python -m alphaclaude.tools.backtest_runner --resume backtest_2026-05-04T12-00-00
+  alphaclaude tools backtest_runner --start 2023-01-01 --end 2024-12-31 --universe default --capital 100000
+  alphaclaude tools backtest_runner --start 2024-06-01 --end 2024-12-31 --universe 600519,000858 --capital 50000
+  alphaclaude tools backtest_runner --resume backtest_2026-05-04T12-00-00
 """
 import argparse
 import json

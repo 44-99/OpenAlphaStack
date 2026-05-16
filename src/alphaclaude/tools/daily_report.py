@@ -1,10 +1,10 @@
 """Daily report generator — reads engine output, produces summary.
 
 Usage:
-  python -m alphaclaude.tools.daily_report <run_id>                    # latest day
-  python -m alphaclaude.tools.daily_report <run_id> --date 2024-03-15  # specific day
-  python -m alphaclaude.tools.daily_report <run_id> --all              # all days
-  python -m alphaclaude.tools.daily_report <run_id> --push             # push to Feishu
+  alphaclaude tools daily_report <run_id>                    # latest day
+  alphaclaude tools daily_report <run_id> --date 2024-03-15  # specific day
+  alphaclaude tools daily_report <run_id> --all              # all days
+  alphaclaude tools daily_report <run_id> --push             # push to Feishu
 """
 import argparse
 import json

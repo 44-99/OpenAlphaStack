@@ -2,7 +2,7 @@
 
 ## Context
 
-AlphaClaude now runs from the `src/alphaclaude/` package and starts long-running engines through `alphaclaude-engine --daemon`. The current stop command can stop recorded paper/backtest/live processes, but it is still coarse grained: callers cannot reliably target one run by `run_id`, inspect a single run, or resume a run through a clear safety path.
+AlphaClaude now runs from the `src/alphaclaude/` package and starts long-running engines through the unified `alphaclaude engine ...` CLI. The current stop command can stop recorded paper/backtest/live processes, but it is still coarse grained: callers cannot reliably target one run by `run_id`, inspect a single run, or resume a run through a clear safety path.
 
 This design adds a small run control plane around existing run directories. It does not introduce a database or a web UI. `data/output/<run_id>/state.json` remains the source of truth for run metadata.
 
@@ -23,23 +23,22 @@ This design adds a small run control plane around existing run directories. It d
 
 ## CLI Surface
 
-The control plane stays in `alphaclaude-engine` / `python -m alphaclaude.engine.cli`.
+The control plane is exposed through the unified `alphaclaude engine ...` CLI.
 
 ```bash
-alphaclaude-engine --list-runs
-alphaclaude-engine --status-run <run_id>
-alphaclaude-engine --stop-run <run_id>
-alphaclaude-engine --resume-run <run_id> --daemon
+alphaclaude engine list
+alphaclaude engine status <run_id>
+alphaclaude engine stop <run_id>
+alphaclaude engine resume <run_id> --daemon
 ```
 
 Optional filters may be added without changing the core contract:
 
 ```bash
-alphaclaude-engine --list-runs --mode paper
-alphaclaude-engine --list-runs --json
+alphaclaude engine list --mode paper
 ```
 
-Existing `--stop-running` remains as a bulk cleanup command, but ordinary operations should prefer `--stop-run <run_id>`.
+Existing `alphaclaude engine stop-running` remains as a bulk cleanup command, but ordinary operations should prefer `alphaclaude engine stop <run_id>`.
 
 ## Run Metadata
 
@@ -86,7 +85,7 @@ The registry owns:
 
 ### CLI Adapter
 
-`alphaclaude.engine.cli` remains the user-facing command parser. It delegates run lookup and stop/resume planning to the registry. This keeps process scanning and metadata normalization out of argument parsing.
+`alphaclaude.app.cli` is the user-facing command router. It delegates engine actions to the package engine adapter, which keeps process scanning and metadata normalization out of argument routing.
 
 ### Engine Metadata Writer
 
@@ -96,7 +95,7 @@ The registry owns:
 
 ### List
 
-1. CLI receives `--list-runs`.
+1. CLI receives `alphaclaude engine list`.
 2. Registry scans `data/output/`.
 3. Registry reads each `state.json`.
 4. Registry checks PID liveness.
@@ -104,14 +103,14 @@ The registry owns:
 
 ### Status
 
-1. CLI receives `--status-run <run_id>`.
+1. CLI receives `alphaclaude engine status <run_id>`.
 2. Registry resolves the exact run directory.
 3. Registry returns one normalized record.
 4. Missing run returns exit code `2` with a clear JSON error.
 
 ### Stop
 
-1. CLI receives `--stop-run <run_id>`.
+1. CLI receives `alphaclaude engine stop <run_id>`.
 2. Registry resolves the exact run and reads `process_id`.
 3. If PID is alive, CLI signals only that PID.
 4. Metadata is updated to `stopped` with `stopped_at`.
@@ -119,9 +118,9 @@ The registry owns:
 
 ### Resume
 
-1. CLI receives `--resume-run <run_id> --daemon`.
+1. CLI receives `alphaclaude engine resume <run_id> --daemon`.
 2. Registry resolves mode and existing run directory.
-3. CLI starts `python -u -m alphaclaude.engine.cli --mode <mode> --resume <run_id>` as a detached process.
+3. CLI starts a detached engine process for `alphaclaude engine resume <run_id> --daemon`.
 4. Resume metadata increments `resume_count`.
 5. For live mode, the resumed engine must start in `paused` or `observation` status unless later Phase 3 safety gates explicitly authorize order execution.
 
@@ -132,7 +131,7 @@ The registry owns:
 Live resume rules:
 
 - Default resume status is `paused` or `observation`.
-- No order execution may occur only because `--resume-run <live_run_id>` was called.
+- No order execution may occur only because `alphaclaude engine resume <live_run_id>` was called.
 - Future live activation must require a separate safety gate that checks `.env`, runtime confirmation, BrokerAdapter readiness, and manual approval.
 - Tests must prove that live resume builds a safe daemon command and records the conservative status.
 
@@ -161,8 +160,9 @@ Verification baseline:
 ```powershell
 python -m pytest -q
 python -m compileall -q src\alphaclaude
-$env:PYTHONPATH='src'; python -m alphaclaude.engine.cli --help
-$env:PYTHONPATH='src'; python -m alphaclaude.tools.quote --help
+alphaclaude --help
+alphaclaude engine start --help
+alphaclaude tools quote --help
 ```
 
 ## Rollout
@@ -170,7 +170,7 @@ $env:PYTHONPATH='src'; python -m alphaclaude.tools.quote --help
 1. Add the registry module and tests.
 2. Wire CLI flags to the registry.
 3. Extend metadata writing where needed.
-4. Keep `--stop-running` as bulk cleanup.
+4. Keep `alphaclaude engine stop-running` as bulk cleanup.
 5. Restart paper mode with `--daemon` after implementation to load the new code.
 
 ## Acceptance Criteria

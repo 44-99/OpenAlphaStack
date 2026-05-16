@@ -266,7 +266,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8")
     if "-h" in sys.argv or "--help" in sys.argv:
         print("Rule-based signal scanner — pure Python, zero LLM")
-        print("Usage: python -m alphaclaude.tools.signal_rules CODE [--rule RULE] [--watchlist CODES] [--dragon-head] [--list]")
+        print("Usage: alphaclaude tools signal_rules CODE [--rule RULE] [--watchlist CODES] [--dragon-head] [--list]")
         print("  CODE            Stock code (6 digits)")
         print("  --rule, -r      Specific rule: " + ", ".join(RULES.keys()))
         print("  --watchlist, -w Comma-separated codes for batch scan")

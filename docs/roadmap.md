@@ -7,7 +7,7 @@
 | 范围 | 状态 | 说明 |
 |------|------|------|
 | 包结构重构 | ✅ 完成 | 应用入口、引擎核心、CLI 工具已迁入 `src/alphaclaude/`；旧根入口和旧 `tools/` 目录不保留兼容残留 |
-| 工具底座 | ✅ 完成 | 行情、技术、基本面、资金、信号、风控、报表等工具改为 `python -m alphaclaude.tools.<tool>` |
+| 工具底座 | ✅ 完成 | 行情、技术、基本面、资金、信号、风控、报表等工具改为 `alphaclaude tools <tool>` |
 | 引擎核心 | ✅ 完成 | `state`、`plan`、`ledger`、`execution`、`fast_lane`、`pipeline`、`paper` 等模块已拆分 |
 | 回测/模拟盘 | ✅ 可用 | 共享 `alphaclaude.engine` 包内核心；测试覆盖关键止盈止损、T+0、事件队列、数据源等行为 |
 | `live` 模式 | ⛔ 未准入 | CLI 入口预留，但缺 BrokerAdapter、订单确认、订单幂等、实盘安全闸门 |
@@ -43,7 +43,7 @@
 | 项 | 状态 | 说明 |
 |----|------|------|
 | 引擎模块化 | ✅ | 单文件引擎拆为 `alphaclaude.engine.*` 模块 |
-| 包入口 | ✅ | `alphaclaude-engine` 和 `python -m alphaclaude.engine.cli` |
+| 包入口 | ✅ | 统一为 `alphaclaude app/engine/tools ...` 子命令结构；旧独立 engine console script 已移除 |
 | 盘中快车道 | ✅ | `FastLane`、事件队列、止盈止损、T+0 支持 |
 | 状态/计划/账本 | ✅ | `EngineState`、`PlanV2`、`Ledger` 独立模块 |
 | 回测数据适配 | ✅ | `BacktestDataFeed` 和交易日/分钟线生成拆分 |
@@ -53,7 +53,7 @@
 | 结构化输出降级 | ✅ | direction、候选裁决、候选 fallback、持仓调整、emergency action 已改用 `call_with_tool_safe()` |
 | Shadow Account Phase B | ✅ | 最新 shadow diagnostics 可生成 2-4 句复盘反思，并注入 Sub-Agent C prompt |
 | 盘前/盘中/盘后节奏 | ✅ | 盘前 Claude Code 生成 plan，盘中 Python 机械执行，盘后只做 Python 报告 |
-| 运行控制基础 | ✅ | `--daemon` 脱离长进程避免工具会话挂起；`--list-runs`、`--status-run`、`--stop-run`、`--resume-run --daemon` 支持精确 run 控制 |
+| 运行控制基础 | ✅ | `alphaclaude engine start --daemon` 脱离长进程避免工具会话挂起；`engine list/status/stop/resume` 支持精确 run 控制 |
 | 测试替代旧脚本 | ✅ | 删除长时间挂起的旧 `test_ops.py`，改为 pytest 覆盖 |
 
 剩余工作：
@@ -116,6 +116,7 @@
 ```powershell
 python -m pytest -q
 python -m compileall -q src\alphaclaude
-$env:PYTHONPATH='src'; python -m alphaclaude.engine.cli --help
-$env:PYTHONPATH='src'; python -m alphaclaude.tools.quote --help
+alphaclaude --help
+alphaclaude engine start --help
+alphaclaude tools quote --help
 ```

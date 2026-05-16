@@ -32,18 +32,21 @@ jobs:
       - name: Compile package
         run: python -m compileall -q src/alphaclaude
 
+      - name: Unified CLI help
+        run: alphaclaude --help
+
       - name: Engine CLI help
-        run: python -m alphaclaude.engine.cli --help
+        run: alphaclaude engine start --help
 
       - name: Quote CLI help
-        run: python -m alphaclaude.tools.quote --help
+        run: alphaclaude tools quote --help
 
       - name: Tool schema check
         run: |
           for tool in quote technical fundamental flow news screen backtest trend signal_detector pivot fibonacci sentiment portfolio risk signal signal_rules; do
-            echo "Checking alphaclaude.tools.$tool schema..."
-            python -m "alphaclaude.tools.$tool" --help > /dev/null 2>&1 || {
-              echo "ERROR: alphaclaude.tools.$tool --help failed"
+            echo "Checking alphaclaude tools $tool schema..."
+            alphaclaude tools "$tool" --help > /dev/null 2>&1 || {
+              echo "ERROR: alphaclaude tools $tool --help failed"
               exit 1
             }
           done
@@ -52,13 +55,13 @@ jobs:
       - name: Signal rules baseline check
         run: |
           echo "Running signal_rules --list..."
-          python -m alphaclaude.tools.signal_rules --list
+          alphaclaude tools signal_rules --list
           echo "Baseline check OK"
 
       - name: Risk calculator help
         run: |
-          python -m alphaclaude.tools.risk --help
+          alphaclaude tools risk --help
 
       - name: Signal validator help
         run: |
-          python -m alphaclaude.tools.signal --help
+          alphaclaude tools signal --help

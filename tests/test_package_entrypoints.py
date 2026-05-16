@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+import tomllib
 
 import alphaclaude
 from alphaclaude import paths
@@ -43,9 +44,86 @@ def test_app_cli_runs_package_app(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "uvicorn", FakeUvicorn)
 
-    app_cli.main()
+    app_cli.main(["app", "start"])
 
     assert calls == [("StockTrading Bot", "0.0.0.0", 8800, "info")]
+
+
+def test_pyproject_exposes_only_unified_console_script():
+    data = tomllib.loads((paths.PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert data["project"]["scripts"] == {
+        "alphaclaude": "alphaclaude.app.cli:main",
+    }
+
+
+def test_legacy_root_launchers_are_removed():
+    dockerfile = (paths.PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert not (paths.PROJECT_ROOT / "start_bot.bat").exists()
+    assert 'CMD ["alphaclaude", "app", "start"]' in dockerfile
+    assert 'CMD ["python", "-u", "main.py"]' not in dockerfile
+
+
+def test_unified_engine_list_routes_to_engine_cli(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(app_cli, "_run_engine", lambda args, **_kwargs: calls.append(args))
+
+    app_cli.main(["engine", "list", "--mode", "paper"])
+
+    assert calls == [["--list-runs", "--mode", "paper"]]
+
+
+def test_unified_engine_status_routes_to_engine_cli(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(app_cli, "_run_engine", lambda args, **_kwargs: calls.append(args))
+
+    app_cli.main(["engine", "status", "paper_test_run"])
+
+    assert calls == [["--status-run", "paper_test_run"]]
+
+
+def test_unified_engine_start_routes_raw_engine_args(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(app_cli, "_run_engine", lambda args, **_kwargs: calls.append(args))
+
+    app_cli.main(["engine", "start", "--mode", "paper", "--daemon"])
+
+    assert calls == [["--mode", "paper", "--daemon"]]
+
+
+def test_unified_engine_start_help_hides_internal_control_flags(capsys):
+    app_cli.main(["engine", "start", "--help"])
+
+    out = capsys.readouterr().out
+    assert "usage: alphaclaude engine start" in out
+    assert "--list-runs" not in out
+    assert "--status-run" not in out
+    assert "--stop-run" not in out
+    assert "--resume-run" not in out
+
+
+def test_unified_engine_resume_routes_to_daemon_resume(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(app_cli, "_run_engine", lambda args, **_kwargs: calls.append(args))
+
+    app_cli.main(["engine", "resume", "live_test_run", "--daemon"])
+
+    assert calls == [["--resume-run", "live_test_run", "--daemon"]]
+
+
+def test_unified_tools_routes_to_tool_module(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(app_cli, "_run_tool", lambda tool, args: calls.append((tool, args)))
+
+    app_cli.main(["tools", "quote", "600519"])
+
+    assert calls == [("quote", ["600519"])]
 
 
 def test_engine_cli_builds_package_engine(monkeypatch):
@@ -64,7 +142,7 @@ def test_engine_cli_builds_package_engine(monkeypatch):
 
     monkeypatch.setattr(engine_cli, "PaperEngine", FakePaperEngine)
     monkeypatch.setattr(engine_cli, "fallback_universe", lambda: ["600036"])
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--mode", "backtest", "--start", "2025-01-01", "--end", "2025-01-31"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--mode", "backtest", "--start", "2025-01-01", "--end", "2025-01-31"])
 
     engine_cli.main()
 
@@ -92,7 +170,7 @@ def test_engine_cli_daemon_starts_detached_process(monkeypatch, workspace_tmp, c
     monkeypatch.setattr(engine_cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(engine_cli.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(sys, "argv", [
-        "alphaclaude-engine",
+        "alphaclaude engine",
         "--mode", "paper",
         "--capital", "100000",
         "--daemon",
@@ -128,7 +206,7 @@ def test_engine_cli_stop_running_uses_pid_metadata(monkeypatch, workspace_tmp, c
     monkeypatch.setattr(engine_cli, "_output_base", lambda: output)
     monkeypatch.setattr(engine_cli, "_is_pid_alive", lambda pid: int(pid) == 43210)
     monkeypatch.setattr(engine_cli, "_stop_pid", lambda pid: stopped.append(pid) or True)
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--stop-running"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--stop-running"])
 
     engine_cli.main()
 
@@ -144,7 +222,7 @@ def test_engine_cli_status_run_outputs_json(monkeypatch, capsys):
             return {"run_id": "paper_test_run", "mode": "paper", "status": "running"}
 
     monkeypatch.setattr(engine_cli.run_registry, "get_run", lambda run_id: FakeRun())
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--status-run", "paper_test_run"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--status-run", "paper_test_run"])
 
     engine_cli.main()
 
@@ -161,7 +239,7 @@ def test_engine_cli_list_runs_outputs_json(monkeypatch, capsys):
             return {"run_id": self.run_id}
 
     monkeypatch.setattr(engine_cli.run_registry, "list_runs", lambda mode=None: [FakeRun("paper_a"), FakeRun("live_b")])
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--list-runs"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--list-runs"])
 
     engine_cli.main()
 
@@ -175,7 +253,7 @@ def test_engine_cli_stop_run_outputs_json(monkeypatch, capsys):
             return {"run_id": "paper_test_run", "signalled": True, "already_stopped": False}
 
     monkeypatch.setattr(engine_cli.run_registry, "stop_run", lambda run_id: FakeStop())
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--stop-run", "paper_test_run"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--stop-run", "paper_test_run"])
 
     engine_cli.main()
 
@@ -185,7 +263,7 @@ def test_engine_cli_stop_run_outputs_json(monkeypatch, capsys):
 
 
 def test_engine_cli_resume_run_requires_daemon(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--resume-run", "paper_test_run"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--resume-run", "paper_test_run"])
 
     with pytest.raises(SystemExit) as exc:
         engine_cli.main()
@@ -207,7 +285,7 @@ def test_engine_cli_resume_run_starts_detached_process(monkeypatch, capsys):
     monkeypatch.setattr(engine_cli.run_registry, "build_resume_plan", lambda run_id: plan)
     monkeypatch.setattr(engine_cli.run_registry, "mark_resume_started", lambda resume_plan, pid: marked.append((resume_plan, pid)))
     monkeypatch.setattr(engine_cli, "start_daemon", lambda args: {"pid": 23456, "run_id": args.resume})
-    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--resume-run", "live_test_run", "--daemon"])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude engine", "--resume-run", "live_test_run", "--daemon"])
 
     engine_cli.main()
 

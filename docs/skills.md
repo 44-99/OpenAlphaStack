@@ -32,7 +32,7 @@ skills/
 
 - **SKILL.md** 启动时加载（Claude Code 注入上下文）。充当局部的分析管线路由器 —— 定义分析步骤顺序、每个步骤使用的工具、references/ 文件的加载条件。
 - **references/** 按需加载。包含公式理论、参数阈值、市场条件、评分调整规则。Agent 根据分析进度自主决定何时展开哪个 reference。
-- **无 scripts/ 目录** — 所有计算由 `src/alphaclaude/tools/` 下的 CLI 模块完成，JSON 进 JSON 出，通过 Bash 调用。开发态命令为 `python -m alphaclaude.tools.<tool>`；Skills 定义"用哪个工具、怎么组合"，工具执行计算。
+- **无 scripts/ 目录** — 所有计算由 `src/alphaclaude/tools/` 下的 CLI 模块完成，JSON 进 JSON 出，通过 Bash 调用。统一命令为 `alphaclaude tools <tool>`；Skills 定义"用哪个工具、怎么组合"，工具执行计算。
 
 ## 前置技能
 

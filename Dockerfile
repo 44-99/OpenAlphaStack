@@ -16,6 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN pip install --no-cache-dir .
 
 RUN mkdir -p /app/data
 
@@ -25,4 +26,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV CLAUDE_CMD=claude
 
-CMD ["python", "-u", "main.py"]
+CMD ["alphaclaude", "app", "start"]

@@ -12,6 +12,5 @@ data/cache/
 *.md
 docs/
 .gitattributes
-start_bot.bat
 .idea/
 .claude/

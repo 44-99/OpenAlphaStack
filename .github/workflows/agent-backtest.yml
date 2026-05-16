@@ -51,7 +51,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          python -m alphaclaude.tools.backtest_runner \
+          alphaclaude tools backtest_runner \
             --start "${{ inputs.start_date }}" \
             --end "${{ inputs.end_date }}" \
             --universe "${{ inputs.universe }}" \
@@ -62,10 +62,10 @@ jobs:
         run: |
           RUN_ID=$(ls -t data/output/backtest_* | head -1 | xargs basename)
           echo "Run ID: $RUN_ID"
-          python -m alphaclaude.tools.daily_report "$RUN_ID" --all
+          alphaclaude tools daily_report "$RUN_ID" --all
           echo ""
           echo "===== FINAL STATS ====="
-          python -m alphaclaude.tools.daily_report "$RUN_ID"
+          alphaclaude tools daily_report "$RUN_ID"
 
       - name: Upload backtest artifacts
         if: always()

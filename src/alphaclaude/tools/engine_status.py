@@ -16,8 +16,9 @@ STALE_HOURS = 2  # runs not updated within this window are considered inactive
 
 def _is_engine_command(line: str) -> bool:
     return (
-        "alphaclaude-engine" in line
-        or "alphaclaude.engine.cli" in line
+        "alphaclaude.engine.cli" in line
+        or "alphaclaude app.cli engine" in line
+        or "alphaclaude engine" in line
         or "alphaclaude\\engine\\cli.py" in line
         or "alphaclaude/engine/cli.py" in line
     )
@@ -425,7 +426,7 @@ def format_status_text(runs: list[dict] | None = None) -> str:
         runs = get_all_runs()
 
     if not runs:
-        return "当前没有活跃或最近的引擎实例。\n\n启动：alphaclaude-engine --mode paper --capital 100000"
+        return "当前没有活跃或最近的引擎实例。\n\n启动：alphaclaude engine start --mode paper --capital 100000"
 
     # Prioritize: alive runs first, then recent runs with holdings/trades
     alive = [r for r in runs if r["is_alive"]]

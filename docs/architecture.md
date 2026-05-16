@@ -27,7 +27,7 @@ Claude Code 内置的 Bash 工具足以满足所有工具需求：
 | 维度 | 我们的方案 |
 |------|-----------|
 | **工具** | `src/alphaclaude/tools/` 下的 Python CLI 模块 |
-| **调用** | Bash 子进程（Claude Code 内置），开发态用 `python -m alphaclaude.tools.<tool>` |
+| **调用** | Bash 子进程（Claude Code 内置），统一用 `alphaclaude tools <tool>` |
 | **状态** | 无状态 — 每次调用独立，即时返回 |
 | **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
 
@@ -121,22 +121,15 @@ alphaclaude.engine ──→ alphaclaude.tools, config, data/output
 
 `data/output/<run_id>/state.json` 是运行控制的事实来源。`alphaclaude.engine.run_registry` 扫描 `paper_*`、`backtest_*`、`live_*` 运行目录，读取 `engine_meta`，结合 PID liveness 判断运行态，并向 CLI 和飞书命令提供统一记录。
 
-CLI 支持 `--list-runs`、`--status-run <run_id>`、`--stop-run <run_id>`、`--resume-run <run_id> --daemon`。飞书侧支持 `/status <run_id>`、`/stop <run_id>` 和 `/resume <run_id>`；停止和恢复指定 run 只允许私聊触发。`live` 即使被恢复也只能进入观察/暂停语义，不能绕过 Phase 3 的 BrokerAdapter、订单确认、幂等和安全闸门。
+CLI 统一由 `alphaclaude` 暴露子命令：`alphaclaude engine list`、`alphaclaude engine status <run_id>`、`alphaclaude engine stop <run_id>`、`alphaclaude engine resume <run_id> --daemon`。飞书侧支持 `/status <run_id>`、`/stop <run_id>` 和 `/resume <run_id>`；停止和恢复指定 run 只允许私聊触发。`live` 即使被恢复也只能进入观察/暂停语义，不能绕过 Phase 3 的 BrokerAdapter、订单确认、幂等和安全闸门。
 
-开发态命令示例：
-
-```bash
-PYTHONPATH=src python -m alphaclaude.app.cli
-PYTHONPATH=src python -m alphaclaude.engine.cli --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
-PYTHONPATH=src python -m alphaclaude.tools.quote 600519
-```
-
-安装态命令示例：
+命令示例：
 
 ```bash
-alphaclaude
-alphaclaude-engine --mode paper -u default
-python -m alphaclaude.tools.quote 600519
+alphaclaude app start
+alphaclaude engine start --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
+alphaclaude engine start --mode paper -u default
+alphaclaude tools quote 600519
 ```
 
 ## 数据源
