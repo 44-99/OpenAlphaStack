@@ -36,6 +36,8 @@ from scheduler import (
     list_dynamic_tasks,
 )
 import memory
+from alphaclaude.engine import run_registry
+from alphaclaude.engine import cli as engine_cli
 from alphaclaude.paths import PROJECT_ROOT
 
 logger = setup_logging(STOCK_DATA_DIR, LOG_LEVEL)
@@ -456,9 +458,12 @@ _EXACT_COMMANDS = {
     "/status", "status", "状态", "引擎状态",
     "/positions", "positions", "持仓", "仓位",
     "/stop", "stop", "停止引擎", "停止",
+    "/resume", "resume", "恢复引擎", "恢复",
     "/groups", "groups",
     "/tasks", "tasks",
 }
+
+_RUN_CONTROL_PREFIXES = ("/status ", "/stop ", "/resume ")
 
 _COMMAND_KEYWORDS = [
     "清空", "重置", "新对话", "新开", "重新开始", "从头",
@@ -590,6 +595,15 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
             return "已取消订阅。"
         return "当前未订阅。"
 
+    if cmd_lower.startswith("/status "):
+        run_id = cmd.split(None, 1)[1].strip()
+        try:
+            return _format_run_control_status(run_registry.get_run(run_id))
+        except run_registry.RunNotFound:
+            return f"未找到 run_id: {run_id}"
+        except Exception as e:
+            return f"无法获取引擎状态: {e}"
+
     if cmd_lower in ("/status", "status", "状态"):
         try:
             from alphaclaude.tools.engine_status import format_status_text
@@ -604,6 +618,17 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
         except Exception as e:
             return f"无法获取持仓: {e}"
 
+    if cmd_lower.startswith("/stop "):
+        if chat_type != "p2p":
+            return "请在私聊中使用 /stop <run_id> 停止指定引擎。"
+        run_id = cmd.split(None, 1)[1].strip()
+        try:
+            return _format_stop_result(run_registry.stop_run(run_id))
+        except run_registry.RunNotFound:
+            return f"未找到 run_id: {run_id}"
+        except Exception as e:
+            return f"停止引擎失败: {e}"
+
     if cmd_lower in ("/stop", "stop", "停止引擎", "停止"):
         # Only stop if in DM or explicitly confirm
         if chat_type != "p2p":
@@ -613,6 +638,20 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
             return stop_engine()
         except Exception as e:
             return f"停止引擎失败: {e}"
+
+    if cmd_lower.startswith("/resume "):
+        if chat_type != "p2p":
+            return "请在私聊中使用 /resume <run_id> 恢复指定引擎。"
+        run_id = cmd.split(None, 1)[1].strip()
+        try:
+            return _format_resume_result(engine_cli.resume_run_daemon(run_id))
+        except run_registry.RunNotFound:
+            return f"未找到 run_id: {run_id}"
+        except Exception as e:
+            return f"恢复引擎失败: {e}"
+
+    if cmd_lower in ("/resume", "resume", "恢复引擎", "恢复"):
+        return "用法：/resume <run_id>。为避免误操作，请在私聊中恢复指定引擎。"
 
     if cmd_lower in ("/groups", "groups"):
         groups = memory._list_group_sessions()
@@ -666,6 +705,38 @@ def _reply_exact_command(chat_id: str, chat_type: str, text: str, message_id: st
     except (OSError, ValueError, RuntimeError) as e:
         logger.error("指令处理异常: %s", e, exc_info=True, extra={"category": "command"})
         reply_message(message_id, f"指令处理失败: {e}")
+
+
+def _format_run_control_status(record: run_registry.RunRecord) -> str:
+    status_icon = "🟢" if record.is_alive else "⚫"
+    return (
+        f"{status_icon} {record.run_id}\n"
+        f"模式: {record.mode}\n"
+        f"状态: {record.status}\n"
+        f"PID: {record.process_id or '-'}\n"
+        f"启动: {record.started_at or '-'}\n"
+        f"停止: {record.stopped_at or '-'}\n"
+        f"恢复次数: {record.resume_count}"
+    )
+
+
+def _format_stop_result(result: run_registry.StopResult) -> str:
+    if result.already_stopped:
+        return f"⏹️ {result.run_id} 已经停止。"
+    if result.signalled:
+        return f"⏹️ {result.run_id} 已发送停止信号，PID: {result.pid}。"
+    return f"⚠️ {result.run_id} 停止信号发送失败，PID: {result.pid or '-'}。"
+
+
+def _format_resume_result(info: dict) -> str:
+    run_id = str(info.get("run_id") or "")
+    pid = info.get("pid", "-")
+    resume = info.get("resume", {})
+    safe_status = resume.get("safe_status", "running") if isinstance(resume, dict) else "running"
+    lines = [f"▶️ {run_id} 已恢复，PID: {pid}。"]
+    if safe_status == "observation":
+        lines.append("live 恢复为观察模式，不会绕过 Phase 3 实盘安全准入。")
+    return "\n".join(lines)
 
 
 def _create_task_from_nl(chat_id: str, description: str) -> str:
@@ -977,7 +1048,7 @@ def _process_message(event: dict) -> None:
         return
 
     # Step 1: Exact-match commands (fast path, no Claude)
-    if text.strip().lower() in _EXACT_COMMANDS:
+    if cmd_lower in _EXACT_COMMANDS or cmd_lower.startswith(_RUN_CONTROL_PREFIXES):
         threading.Thread(
             target=_reply_exact_command,
             args=(chat_id, chat_type, text, message_id),

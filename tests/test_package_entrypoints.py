@@ -136,3 +136,83 @@ def test_engine_cli_stop_running_uses_pid_metadata(monkeypatch, workspace_tmp, c
     assert stopped == [43210]
     assert out["stopped"][0]["run_id"] == "paper_test_run"
     assert out["stopped"][0]["mode"] == "paper"
+
+
+def test_engine_cli_status_run_outputs_json(monkeypatch, capsys):
+    class FakeRun:
+        def to_dict(self):
+            return {"run_id": "paper_test_run", "mode": "paper", "status": "running"}
+
+    monkeypatch.setattr(engine_cli.run_registry, "get_run", lambda run_id: FakeRun())
+    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--status-run", "paper_test_run"])
+
+    engine_cli.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"run_id": "paper_test_run", "mode": "paper", "status": "running"}
+
+
+def test_engine_cli_list_runs_outputs_json(monkeypatch, capsys):
+    class FakeRun:
+        def __init__(self, run_id: str):
+            self.run_id = run_id
+
+        def to_dict(self):
+            return {"run_id": self.run_id}
+
+    monkeypatch.setattr(engine_cli.run_registry, "list_runs", lambda mode=None: [FakeRun("paper_a"), FakeRun("live_b")])
+    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--list-runs"])
+
+    engine_cli.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"runs": [{"run_id": "paper_a"}, {"run_id": "live_b"}]}
+
+
+def test_engine_cli_stop_run_outputs_json(monkeypatch, capsys):
+    class FakeStop:
+        def to_dict(self):
+            return {"run_id": "paper_test_run", "signalled": True, "already_stopped": False}
+
+    monkeypatch.setattr(engine_cli.run_registry, "stop_run", lambda run_id: FakeStop())
+    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--stop-run", "paper_test_run"])
+
+    engine_cli.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["run_id"] == "paper_test_run"
+    assert out["signalled"] is True
+
+
+def test_engine_cli_resume_run_requires_daemon(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--resume-run", "paper_test_run"])
+
+    with pytest.raises(SystemExit) as exc:
+        engine_cli.main()
+
+    assert exc.value.code == 2
+    assert "--resume-run requires --daemon" in capsys.readouterr().err
+
+
+def test_engine_cli_resume_run_starts_detached_process(monkeypatch, capsys):
+    plan = engine_cli.run_registry.ResumePlan(
+        run_id="live_test_run",
+        mode="live",
+        args=[],
+        safe_status="observation",
+        resume_count=3,
+    )
+    marked = []
+
+    monkeypatch.setattr(engine_cli.run_registry, "build_resume_plan", lambda run_id: plan)
+    monkeypatch.setattr(engine_cli.run_registry, "mark_resume_started", lambda resume_plan, pid: marked.append((resume_plan, pid)))
+    monkeypatch.setattr(engine_cli, "start_daemon", lambda args: {"pid": 23456, "run_id": args.resume})
+    monkeypatch.setattr(sys, "argv", ["alphaclaude-engine", "--resume-run", "live_test_run", "--daemon"])
+
+    engine_cli.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["pid"] == 23456
+    assert out["run_id"] == "live_test_run"
+    assert out["resume"]["safe_status"] == "observation"
+    assert marked == [(plan, 23456)]

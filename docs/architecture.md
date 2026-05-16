@@ -117,6 +117,12 @@ alphaclaude.engine ──→ alphaclaude.tools, config, data/output
 
 当前 `backtest` 和 `paper` 共享包内核心。`live` 模式入口保留，但必须等 BrokerAdapter、人工确认、订单幂等和安全闸门完成后才能准入。
 
+## 运行控制面
+
+`data/output/<run_id>/state.json` 是运行控制的事实来源。`alphaclaude.engine.run_registry` 扫描 `paper_*`、`backtest_*`、`live_*` 运行目录，读取 `engine_meta`，结合 PID liveness 判断运行态，并向 CLI 和飞书命令提供统一记录。
+
+CLI 支持 `--list-runs`、`--status-run <run_id>`、`--stop-run <run_id>`、`--resume-run <run_id> --daemon`。飞书侧支持 `/status <run_id>`、`/stop <run_id>` 和 `/resume <run_id>`；停止和恢复指定 run 只允许私聊触发。`live` 即使被恢复也只能进入观察/暂停语义，不能绕过 Phase 3 的 BrokerAdapter、订单确认、幂等和安全闸门。
+
 开发态命令示例：
 
 ```bash

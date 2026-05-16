@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from alphaclaude.engine import run_registry
 from alphaclaude.paths import DATA_DIR, SRC_DIR
 from alphaclaude.engine.paper import PaperEngine
 from alphaclaude.engine.universe import fallback_universe, generate_universe
@@ -169,6 +170,38 @@ def start_daemon(args: argparse.Namespace) -> dict:
     }
 
 
+def _resume_namespace(plan: run_registry.ResumePlan, base_args: argparse.Namespace | None = None) -> argparse.Namespace:
+    args = argparse.Namespace(
+        mode=plan.mode,
+        capital=100000,
+        start=None,
+        end=None,
+        universe="",
+        watchlist="",
+        resume=plan.run_id,
+        bar_period=60,
+        dry_run=False,
+        claude_every=1,
+    )
+    if base_args is not None:
+        for name in vars(args):
+            if hasattr(base_args, name):
+                setattr(args, name, getattr(base_args, name))
+    args.mode = plan.mode
+    args.resume = plan.run_id
+    return args
+
+
+def resume_run_daemon(run_id: str, base_args: argparse.Namespace | None = None) -> dict:
+    """Resume one recorded run as a detached daemon and update metadata."""
+    plan = run_registry.build_resume_plan(run_id)
+    args = _resume_namespace(plan, base_args)
+    info = start_daemon(args)
+    run_registry.mark_resume_started(plan, int(info["pid"]))
+    info["resume"] = plan.to_dict()
+    return info
+
+
 def main() -> None:
     """Run the paper/backtest/live engine."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -199,8 +232,50 @@ def main() -> None:
                         help="Start the engine as a detached background process and return immediately")
     parser.add_argument("--stop-running", action="store_true",
                         help="Stop running paper/backtest/live engines recorded in data/output")
+    parser.add_argument("--list-runs", action="store_true",
+                        help="List known paper/backtest/live runs from data/output")
+    parser.add_argument("--status-run",
+                        help="Return one run record by run_id as JSON")
+    parser.add_argument("--stop-run",
+                        help="Stop one recorded engine run by run_id")
+    parser.add_argument("--resume-run",
+                        help="Resume one recorded engine run by run_id; requires --daemon")
 
     args = parser.parse_args()
+
+    if args.list_runs:
+        runs = [r.to_dict() for r in run_registry.list_runs(args.mode)]
+        print(json.dumps({"runs": runs}, ensure_ascii=False, indent=2))
+        return
+
+    if args.status_run:
+        try:
+            record = run_registry.get_run(args.status_run)
+        except run_registry.RunNotFound as e:
+            print(json.dumps({"error": str(e), "run_id": e.run_id}, ensure_ascii=False, indent=2))
+            raise SystemExit(2)
+        print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    if args.stop_run:
+        try:
+            result = run_registry.stop_run(args.stop_run)
+        except run_registry.RunNotFound as e:
+            print(json.dumps({"error": str(e), "run_id": e.run_id}, ensure_ascii=False, indent=2))
+            raise SystemExit(2)
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    if args.resume_run:
+        if not args.daemon:
+            parser.error("--resume-run requires --daemon")
+        try:
+            info = resume_run_daemon(args.resume_run, args)
+        except run_registry.RunNotFound as e:
+            print(json.dumps({"error": str(e), "run_id": e.run_id}, ensure_ascii=False, indent=2))
+            raise SystemExit(2)
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return
 
     if args.stop_running:
         stopped = stop_running_engines(args.mode)

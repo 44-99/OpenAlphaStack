@@ -12,6 +12,7 @@
 | 回测/模拟盘 | ✅ 可用 | 共享 `alphaclaude.engine` 包内核心；测试覆盖关键止盈止损、T+0、事件队列、数据源等行为 |
 | `live` 模式 | ⛔ 未准入 | CLI 入口预留，但缺 BrokerAdapter、订单确认、订单幂等、实盘安全闸门 |
 | API 可靠性 | ✅ 完成 | `call_with_tool_safe()` 已接入 OvernightPipeline 关键结构化调用；Tool Use 失败时走文本 fallback 或保守空结果 |
+| 运行控制面 | ✅ 基础完成 | 支持按 `run_id` 列表、查询、停止和 daemon 恢复；飞书支持指定 run 查询、停止、恢复 |
 
 ## Phase 1: 工具底座 ✅ 完成
 
@@ -52,7 +53,7 @@
 | 结构化输出降级 | ✅ | direction、候选裁决、候选 fallback、持仓调整、emergency action 已改用 `call_with_tool_safe()` |
 | Shadow Account Phase B | ✅ | 最新 shadow diagnostics 可生成 2-4 句复盘反思，并注入 Sub-Agent C prompt |
 | 盘前/盘中/盘后节奏 | ✅ | 盘前 Claude Code 生成 plan，盘中 Python 机械执行，盘后只做 Python 报告 |
-| 运行控制基础 | ✅ | `--daemon` 脱离长进程避免工具会话挂起，`--stop-running` 基于 PID metadata 停止已记录引擎 |
+| 运行控制基础 | ✅ | `--daemon` 脱离长进程避免工具会话挂起；`--list-runs`、`--status-run`、`--stop-run`、`--resume-run --daemon` 支持精确 run 控制 |
 | 测试替代旧脚本 | ✅ | 删除长时间挂起的旧 `test_ops.py`，改为 pytest 覆盖 |
 
 剩余工作：
@@ -63,7 +64,7 @@
 | P1 | 双模型分层 | TradingAgents | 研究/辩论使用便宜模型，最终结构化决策使用主模型，配置可通过 `.env` 切换 |
 | P1 | 工具输出压缩 | Vibe-Trading | 常用工具组合输出能压缩为更短摘要，减少 Claude Code 上下文占用 |
 
-## Phase 3: 实盘准入 ⛔ 未开始
+## Phase 3: 实盘准入 ⛔ 未完成
 
 目标：真实资金交易前，先把订单边界、人工确认和熔断能力补齐。Phase 3 未完成前，`--mode live` 不允许视为真实交易能力。
 
@@ -75,7 +76,7 @@
 | P0 | PAPER_ONLY 安全闸门 | 默认禁止实盘；需要 `.env` 和运行时指令双重确认 |
 | P0 | 订单幂等 | 每笔订单有唯一 `trade_id`，重启/重试不能重复下单 |
 | P0 | 人工确认流 | 大额或所有实盘订单必须走飞书确认卡片 |
-| P0 | 运行控制面 | 支持按 run_id 暂停、恢复、停止和查询，不再依赖“最新进程”推断 |
+| ✅ | 运行控制面 | 已支持按 run_id 查询、停止和恢复；live 恢复保持观察/暂停语义，不构成实盘准入 |
 | P1 | 多持仓相关性风控 | 高相关持仓自动下调仓位上限 |
 | P1 | 大额交易风控辩论 | 借鉴 TradingAgents 的 Aggressive/Conservative/Neutral 三方风控审查 |
 

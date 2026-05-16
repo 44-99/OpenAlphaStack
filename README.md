@@ -68,6 +68,10 @@ alphaclaude
 ```bash
 alphaclaude-engine --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
 alphaclaude-engine --mode paper -u default --daemon
+alphaclaude-engine --list-runs
+alphaclaude-engine --status-run paper_2026-05-16T09-00-00
+alphaclaude-engine --stop-run paper_2026-05-16T09-00-00
+alphaclaude-engine --resume-run paper_2026-05-16T09-00-00 --daemon
 alphaclaude-engine --stop-running
 ```
 
@@ -85,6 +89,11 @@ python -m alphaclaude.tools.backtest_runner --start 2024-01-01 --end 2024-06-30 
 | 指令 | 说明 |
 |------|------|
 | `/help` | 显示指令列表 |
+| `/status` | 查看引擎运行状态 |
+| `/status <run_id>` | 查询指定引擎运行 |
+| `/positions` | 查看持仓 |
+| `/stop <run_id>` | 私聊中停止指定引擎 |
+| `/resume <run_id>` | 私聊中恢复指定引擎；live 恢复保持观察/暂停语义 |
 | `/sub` / `订阅` | 订阅每日推送 |
 | `/unsub` / `退订` | 取消订阅 |
 | `/task <描述>` | 创建自定义定时任务 |
