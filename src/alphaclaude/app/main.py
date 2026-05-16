@@ -9,6 +9,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import traceback
 import uuid as _uuid
 from datetime import datetime
@@ -49,6 +50,70 @@ _subs_lock = threading.RLock()
 _session_queues: dict[str, tuple[queue.Queue, threading.Thread]] = {}
 _session_queue_lock = threading.Lock()
 _skills: list[dict] = []
+_EVENT_DEDUPE_TTL_SECONDS = 30 * 60
+_EVENT_STALE_SECONDS = 10 * 60
+_processed_event_keys: dict[str, float] = {}
+_processed_event_lock = threading.Lock()
+
+
+def _event_payload(event_dict: dict) -> dict:
+    """Return the Feishu payload for webhook and WebSocket event shapes."""
+    if event_dict.get("type") == "event" and isinstance(event_dict.get("data"), dict):
+        return event_dict["data"]
+    return event_dict
+
+
+def _event_dedupe_key(event_dict: dict) -> str:
+    payload = _event_payload(event_dict)
+    header = payload.get("header", {})
+    event_id = str(header.get("event_id") or "").strip()
+    if event_id:
+        return f"event:{event_id}"
+
+    message = payload.get("event", {}).get("message", {})
+    message_id = str(message.get("message_id") or "").strip()
+    if message_id:
+        return f"message:{message_id}"
+    return ""
+
+
+def _event_create_time_ms(event_dict: dict) -> int | None:
+    payload = _event_payload(event_dict)
+    create_time = payload.get("header", {}).get("create_time")
+    if create_time in (None, ""):
+        return None
+    try:
+        return int(str(create_time).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_stale_event(event_dict: dict, now_ms: int | None = None) -> bool:
+    create_time_ms = _event_create_time_ms(event_dict)
+    if create_time_ms is None:
+        return False
+
+    current_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    age_ms = current_ms - create_time_ms
+    return age_ms > _EVENT_STALE_SECONDS * 1000
+
+
+def _is_duplicate_event(event_dict: dict, now: float | None = None) -> bool:
+    key = _event_dedupe_key(event_dict)
+    if not key:
+        return False
+
+    current = time.monotonic() if now is None else now
+    expires_before = current - _EVENT_DEDUPE_TTL_SECONDS
+    with _processed_event_lock:
+        expired_keys = [k for k, seen_at in _processed_event_keys.items() if seen_at < expires_before]
+        for expired_key in expired_keys:
+            _processed_event_keys.pop(expired_key, None)
+
+        if key in _processed_event_keys:
+            return True
+        _processed_event_keys[key] = current
+        return False
 
 
 # === Session persistence ===
@@ -593,6 +658,16 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
     return None
 
 
+def _reply_exact_command(chat_id: str, chat_type: str, text: str, message_id: str) -> None:
+    try:
+        cmd_reply = _handle_command(chat_id, chat_type, text)
+        if cmd_reply is not None:
+            reply_message(message_id, cmd_reply)
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error("指令处理异常: %s", e, exc_info=True, extra={"category": "command"})
+        reply_message(message_id, f"指令处理失败: {e}")
+
+
 def _create_task_from_nl(chat_id: str, description: str) -> str:
     """Use Claude to parse natural language task description into structured config."""
     parse_prompt = (
@@ -903,10 +978,12 @@ def _process_message(event: dict) -> None:
 
     # Step 1: Exact-match commands (fast path, no Claude)
     if text.strip().lower() in _EXACT_COMMANDS:
-        cmd_reply = _handle_command(chat_id, chat_type, text)
-        if cmd_reply is not None:
-            threading.Thread(target=reply_message, args=(message_id, cmd_reply), daemon=True).start()
-            return
+        threading.Thread(
+            target=_reply_exact_command,
+            args=(chat_id, chat_type, text, message_id),
+            daemon=True,
+        ).start()
+        return
 
     # Conversation key
     conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" else chat_id
@@ -997,6 +1074,21 @@ def _handle_sdk_event(event_obj) -> None:
             logger.debug("WS事件: %s", dump[:500], extra={"category": "ws"})
         except (TypeError, ValueError):
             pass
+        if _is_stale_event(event_dict):
+            logger.info(
+                "过期飞书事件，跳过: key=%s create_time=%s",
+                _event_dedupe_key(event_dict) or "-",
+                _event_create_time_ms(event_dict),
+                extra={"category": "ws_stale"},
+            )
+            return
+        if _is_duplicate_event(event_dict):
+            logger.info(
+                "重复飞书事件，跳过: %s",
+                _event_dedupe_key(event_dict),
+                extra={"category": "ws_duplicate"},
+            )
+            return
         event = parse_event(event_dict)
         if event is None:
             logger.info("未识别事件类型，跳过", extra={"category": "ws"})
