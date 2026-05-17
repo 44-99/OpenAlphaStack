@@ -10,6 +10,7 @@ from datetime import datetime
 
 from alphaclaude.paths import DATA_DIR, add_legacy_paths
 from alphaclaude.engine.clock import TradingClock
+from alphaclaude.engine.constants import PRE_MARKET_START
 from alphaclaude.engine.data_feed import BacktestDataFeed
 from alphaclaude.engine.execution import ExecutionEngine
 from alphaclaude.engine.fast_lane import FastLane
@@ -29,6 +30,7 @@ try:
         notify_backtest_complete,
         notify_backtest_progress,
         notify_engine_start,
+        notify_non_trading_premarket,
         notify_overnight_complete,
         notify_trade,
         notify_trading_day_end,
@@ -150,6 +152,46 @@ class PaperEngine:
             observation_reason=reason if enabled else "",
         )
 
+    def _is_non_trading_premarket_window(self) -> bool:
+        """Return whether a closed-market day should emit its daily pre-market notice."""
+        now = self.clock.now()
+        if self.mode == "backtest":
+            return False
+        return now.weekday() >= 5 and now.time() >= PRE_MARKET_START
+
+    def _non_trading_day_reason(self) -> str:
+        """Human-readable reason for skipping a closed-market day."""
+        weekday = self.clock.now().weekday()
+        if weekday == 5:
+            return "周六休市"
+        if weekday == 6:
+            return "周日休市"
+        return "非交易日休市"
+
+    def _handle_non_trading_premarket(self) -> None:
+        """Notify once during pre-market on a closed-market day, then skip actions."""
+        now = self.clock.now()
+        reason = self._non_trading_day_reason()
+        observation_reason = (
+            f"{reason}; skipping pre-market plan and intraday execution"
+        )
+        self._set_observation_mode(True, observation_reason)
+        self.state.set_data_time(now.strftime("%Y-%m-%d %H:%M:%S"))
+        self.state.save()
+        print(
+            f"[Engine] Non-trading pre-market: {reason}. "
+            "Skipping plan generation and intraday actions.",
+            flush=True,
+        )
+        if _notify:
+            notify_non_trading_premarket(
+                self.run_id,
+                now.strftime("%Y-%m-%d"),
+                reason,
+                self.state.total_value,
+                len(self.state.holdings),
+            )
+
     def run_morning_analysis(self) -> dict | None:
         """Run Claude Code plan generation. Called only in pre-market."""
         if self.dry_run:
@@ -248,6 +290,11 @@ class PaperEngine:
         while not self._stop_event.is_set():
             phase = self.clock.session_phase()
             today = self.clock.now().date()
+
+            # Closed-market days still get one pre-market Feishu notice.
+            if self._is_non_trading_premarket_window() and _last_pipeline_date != today:
+                self._handle_non_trading_premarket()
+                _last_pipeline_date = today
 
             # Pre-market (8:00-9:15): generate today's plan once, before auction.
             if phase == "pre_market" and _last_pipeline_date != today:

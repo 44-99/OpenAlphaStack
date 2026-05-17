@@ -97,6 +97,26 @@ def notify_overnight_complete(run_id: str, summary: dict) -> None:
     _send_all("\n".join(lines))
 
 
+def notify_non_trading_premarket(
+    run_id: str,
+    date: str,
+    reason: str,
+    nav: float,
+    positions_count: int,
+) -> None:
+    """Pre-market check found a closed market day; no plan or intraday actions."""
+    if not _chat_ids():
+        return
+    lines = [
+        "🌅 盘前检查完成：今日不开市",
+        f"日期: {date} | 原因: {reason}",
+        "处理: 不生成盘前交易计划，不执行盘中买卖动作",
+        f"当前净值: {nav:,.0f} 元 | 持仓: {positions_count} 只",
+        f"Run: {run_id}",
+    ]
+    _send_all("\n".join(lines))
+
+
 def notify_overnight_timeout(run_id: str, stage: str) -> None:
     """Candidate selection or other Claude Code stage timed out."""
     if not _chat_ids():
