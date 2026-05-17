@@ -99,11 +99,23 @@ def test_non_trading_day_premarket_sends_skip_notice(output_base, monkeypatch):
     ]
 
 
-def test_trading_day_premarket_is_not_closed_market_notice(output_base):
+def test_trading_day_premarket_is_not_closed_market_notice(output_base, monkeypatch):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
     engine.clock = FakeClock(datetime(2026, 5, 18, 8, 30))  # Monday
 
+    monkeypatch.setattr(paper_module, "is_trading_day", lambda _day: True)
+
     assert not engine._is_non_trading_premarket_window()
+
+
+def test_weekday_market_holiday_sends_skip_notice(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = FakeClock(datetime(2026, 5, 18, 8, 30))  # Monday
+
+    monkeypatch.setattr(paper_module, "is_trading_day", lambda _day: False)
+
+    assert engine._is_non_trading_premarket_window()
+    assert engine._non_trading_day_reason() == "交易所休市"
 
 
 def test_non_trading_day_notice_can_recover_after_premarket_window(output_base):

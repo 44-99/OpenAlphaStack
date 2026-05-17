@@ -19,6 +19,7 @@ from alphaclaude.engine.plan import PlanManager
 from alphaclaude.engine.pipeline import OvernightPipeline
 from alphaclaude.engine.session import SessionLock
 from alphaclaude.engine.state import EngineState
+from alphaclaude.engine.trading_calendar import is_trading_day, non_trading_reason
 
 add_legacy_paths()
 OUTPUT_BASE = str(DATA_DIR / "output")
@@ -157,16 +158,11 @@ class PaperEngine:
         now = self.clock.now()
         if self.mode == "backtest":
             return False
-        return now.weekday() >= 5 and now.time() >= PRE_MARKET_START
+        return now.time() >= PRE_MARKET_START and not is_trading_day(now.date())
 
     def _non_trading_day_reason(self) -> str:
         """Human-readable reason for skipping a closed-market day."""
-        weekday = self.clock.now().weekday()
-        if weekday == 5:
-            return "周六休市"
-        if weekday == 6:
-            return "周日休市"
-        return "非交易日休市"
+        return non_trading_reason(self.clock.now().date())
 
     def _handle_non_trading_premarket(self) -> None:
         """Notify once during pre-market on a closed-market day, then skip actions."""
