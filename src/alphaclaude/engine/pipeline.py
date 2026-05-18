@@ -1234,8 +1234,6 @@ class OvernightPipeline:
 
         Called when market drops >3% or single stock drops >5%.
         """
-        if _notify:
-            notify_alert("critical", "盘中紧急触发", trigger_reason)
         s = self.state.load()
         prompt = f"""盘中紧急触发。
 
@@ -1288,45 +1286,62 @@ class OvernightPipeline:
 
         # Execution logic
         executed = False
+        execution_results = []
+
+        def _sellable_shares(holding: dict) -> int:
+            shares = int(holding.get("shares", 0) or 0)
+            locked = int(holding.get("locked_today", 0) or 0)
+            return max(0, shares - locked)
+
+        def _record_execution(result: dict | None) -> None:
+            nonlocal executed
+            if result:
+                execution_results.append(result)
+            if isinstance(result, dict) and result.get("status") == "executed":
+                executed = True
+
         if action_type == "close_all" and self.execution:
             for h_code, h in list(self.state.holdings.items()):
-                shares = h.get("shares", 0)
+                shares = _sellable_shares(h)
                 price = h.get("current_price", 0)
                 if shares >= 100 and price > 0:
-                    self.execution.execute_sell(
+                    result = self.execution.execute_sell(
                         h_code, shares, price,
                         reason=f"emergency_close_all: {reasoning}",
                     )
-                    executed = True
+                    _record_execution(result)
         elif action_type == "reduce" and code_arg and self.execution:
             h = self.state.holdings.get(code_arg, {})
-            shares = h.get("shares", 0)
+            shares = _sellable_shares(h)
             price = h.get("current_price", 0)
             if shares >= 100 and price > 0:
                 reduce_qty = (shares // 200) * 100
                 if reduce_qty >= 100:
-                    self.execution.execute_sell(
+                    result = self.execution.execute_sell(
                         code_arg, reduce_qty, price,
                         reason=f"emergency_reduce: {reasoning}",
                     )
-                    executed = True
+                    _record_execution(result)
         elif action_type == "close" and code_arg and self.execution:
             h = self.state.holdings.get(code_arg, {})
-            shares = h.get("shares", 0)
+            shares = _sellable_shares(h)
             price = h.get("current_price", 0)
             if shares >= 100 and price > 0:
-                self.execution.execute_sell(
+                result = self.execution.execute_sell(
                     code_arg, shares, price,
                     reason=f"emergency_close: {reasoning}",
                 )
-                executed = True
+                _record_execution(result)
 
-        self.ledger.append({
+        entry = {
             "decision": "emergency_action",
             "action": action_type,
             "code": code_arg,
             "reasoning": reasoning,
             "executed": executed,
-        })
+        }
+        if execution_results:
+            entry["execution_results"] = execution_results
+        self.ledger.append(entry)
 
 # ═══════════════════════════════════════════════════════════════

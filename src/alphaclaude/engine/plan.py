@@ -50,6 +50,7 @@ class PlanManager:
             "risk_report": {"rejected_candidates": [], "correlation_matrix": {}},
             "cooldown": {},
             "today_stopped_out": [],
+            "emergency_tiers": {"date": "", "tiers": {}},
         }
 
     @staticmethod
@@ -130,6 +131,37 @@ class PlanManager:
     def get_emergency_triggers(self) -> dict:
         return self._data.get("emergency_triggers",
                               {"market_drop_pct": 3.0, "single_stock_drop_pct": 5.0})
+
+    def get_emergency_tiers(self) -> dict[str, int]:
+        """Return persisted same-day emergency tiers for restart-safe dedupe."""
+        today = self._now.strftime("%Y-%m-%d")
+        store = self._data.setdefault("emergency_tiers", {"date": today, "tiers": {}})
+        if store.get("date") != today:
+            store["date"] = today
+            store["tiers"] = {}
+            self.save("emergency_tiers_reset")
+        tiers = store.setdefault("tiers", {})
+        result = {}
+        for key, value in tiers.items():
+            try:
+                result[str(key)] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    def mark_emergency_tier(self, key: str, tier: int) -> None:
+        """Persist the highest emergency tier fired today for a code/account/market."""
+        today = self._now.strftime("%Y-%m-%d")
+        store = self._data.setdefault("emergency_tiers", {"date": today, "tiers": {}})
+        if store.get("date") != today:
+            store["date"] = today
+            store["tiers"] = {}
+        tiers = store.setdefault("tiers", {})
+        current = int(tiers.get(key, 0) or 0)
+        parsed_tier = int(tier)
+        if parsed_tier > current:
+            tiers[key] = parsed_tier
+            self.save("emergency_tier")
 
     def set_market_bias(self, bias: str, confidence: int, reasoning: str,
                         position_cap: float = None,

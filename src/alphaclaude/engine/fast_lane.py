@@ -98,7 +98,7 @@ class FastLane:
         self._circuit_breaker_reason = ""
         # Tiered emergency dedup: code → highest tier already fired (1/2/3)
         # Market/account use key "market"/"account" with tier 0
-        self._emergency_tiers: dict[str, int] = {}
+        self._emergency_tiers: dict[str, int] = self.plan.get_emergency_tiers()
         # T+0 intraday tracking
         self._t0_trackers: dict[str, "T0Tracker"] = {}   # code → tracker
         self._t0_global_pause_until = ""                  # HH:MM, global pause after spike
@@ -1055,6 +1055,7 @@ class FastLane:
             drop_pct = (self._prev_market_price - current_market_price) / self._prev_market_price * 100
             if drop_pct >= market_drop_pct:
                 self._emergency_tiers["market"] = 1
+                self.plan.mark_emergency_tier("market", 1)
                 return True, (
                     f"大盘下跌{drop_pct:.1f}% "
                     f"(从{self._prev_market_price:.2f}至{current_market_price:.2f})"
@@ -1065,6 +1066,7 @@ class FastLane:
             drawdown = (self.state.total_value - self.state.initial_capital) / self.state.initial_capital * 100
             if drawdown <= -account_drawdown_pct:
                 self._emergency_tiers["account"] = 1
+                self.plan.mark_emergency_tier("account", 1)
                 return True, (
                     f"账户回撤{abs(drawdown):.1f}% "
                     f"(总资产{self.state.total_value:,.0f}，"
@@ -1085,6 +1087,7 @@ class FastLane:
                     continue  # Already fired at this level or higher
                 if drop_pct >= threshold:
                     self._emergency_tiers[code] = tier
+                    self.plan.mark_emergency_tier(code, tier)
                     return True, (
                         f"{label} {code} 下跌{drop_pct:.1f}% "
                         f"(成本{cost:.2f} 现价{current:.2f})"
@@ -1096,7 +1099,7 @@ class FastLane:
         """Reset daily state for new trading day."""
         self._adjustments_executed = False
         self._prev_market_price = 0.0
-        self._emergency_tiers.clear()
+        self._emergency_tiers = self.plan.get_emergency_tiers()
         self.plan._data["today_stopped_out"] = []  # fresh day, fresh cooldown list
         today = self.clock.now().strftime("%Y-%m-%d")
         if self._last_reset_day != today:

@@ -81,17 +81,21 @@ alphaclaude tools backtest_runner --start 2024-01-01 --end 2024-06-30 -u default
 
 | 指令 | 说明 |
 |------|------|
-| `/help` | 显示指令列表 |
-| `/status` | 查看引擎运行状态 |
-| `/status <run_id>` | 查询指定引擎运行 |
-| `/positions` | 查看持仓 |
-| `/stop <run_id>` | 私聊中停止指定引擎 |
-| `/resume <run_id>` | 私聊中恢复指定引擎；live 恢复保持观察/暂停语义 |
-| `/sub` / `订阅` | 订阅每日推送 |
-| `/unsub` / `退订` | 取消订阅 |
+| `帮助` | 显示指令列表 |
+| `状态` | 查看运行健康、活跃 run、净值和风险摘要 |
+| `状态 <run_id>` | 查询指定引擎运行 |
+| `持仓` | 查看持仓明细、可卖/锁定、止损止盈 |
+| `交易` | 查看最近成交、拒单和紧急动作 |
+| `计划` | 查看今日盘前计划和风控规则 |
+| `停止 <run_id>` | 私聊中停止指定引擎 |
+| `恢复 <run_id>` | 私聊中恢复指定引擎；live 恢复保持观察/暂停语义 |
+| `订阅` | 订阅每日推送 |
+| `退订` | 取消订阅 |
 | `/task <描述>` | 创建自定义定时任务 |
 | `/tasks` | 列出定时任务 |
-| `/new` / `新对话` | 重置对话上下文 |
+| `新对话` | 重置对话上下文 |
+
+建议在飞书开发者后台把机器人菜单配置为上述中文指令；英文 slash 指令只作为兼容别名保留。配置示例见 [docs/feishu-bot-menu.md](docs/feishu-bot-menu.md)。
 
 ## Project Layout
 
@@ -106,6 +110,7 @@ alphaclaude tools backtest_runner --start 2024-01-01 --end 2024-06-30 -u default
 - [Roadmap](docs/roadmap.md)
 - [Skills](docs/skills.md)
 - [Project comparison](docs/project-comparison.md)
+- [Feishu bot menu](docs/feishu-bot-menu.md)
 
 ## License
 

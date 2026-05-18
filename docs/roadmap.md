@@ -12,7 +12,7 @@
 | 回测/模拟盘 | ✅ 可用 | 共享 `alphaclaude.engine` 包内核心；测试覆盖关键止盈止损、T+0、事件队列、数据源等行为 |
 | `live` 模式 | ⛔ 未准入 | CLI 入口预留，但缺 BrokerAdapter、订单确认、订单幂等、实盘安全闸门 |
 | API 可靠性 | ✅ 完成 | `call_with_tool_safe()` 已接入 OvernightPipeline 关键结构化调用；Tool Use 失败时走文本 fallback 或保守空结果 |
-| 运行控制面 | ✅ 基础完成 | 支持按 `run_id` 列表、查询、停止和 daemon 恢复；飞书支持指定 run 查询、停止、恢复 |
+| 运行控制面 | ✅ 基础完成 | 支持按 `run_id` 列表、查询、停止和 daemon 恢复；飞书支持中文菜单指令、指定 run 查询、停止、恢复 |
 
 ## Phase 1: 工具底座 ✅ 完成
 
@@ -54,6 +54,7 @@
 | Shadow Account Phase B | ✅ | 最新 shadow diagnostics 可生成 2-4 句复盘反思，并注入 Sub-Agent C prompt |
 | 盘前/盘中/盘后节奏 | ✅ | 盘前 Claude Code 生成 plan，盘中 Python 机械执行，盘后只做 Python 报告 |
 | 运行控制基础 | ✅ | `alphaclaude engine start --daemon` 脱离长进程避免工具会话挂起；`engine list/status/stop/resume` 支持精确 run 控制 |
+| 飞书中文菜单指令 | ✅ | `状态/持仓/交易/计划/停止/恢复/帮助` 成为可见入口；英文 slash 仅作兼容别名 |
 | 测试替代旧脚本 | ✅ | 删除长时间挂起的旧 `test_ops.py`，改为 pytest 覆盖 |
 
 剩余工作：
@@ -96,7 +97,7 @@
 | P0 | 流式消息回复 | cc-connect | Claude Code `stream-json` 逐段推送到飞书，减少长时间空白等待 |
 | P0 | Session 自动轮转 | cc-connect | 防止长会话上下文膨胀，支持整理记忆后重置 |
 | P1 | 回复冗长度模式 | cc-connect | `/mode full/compact/quiet` 控制手机端信息密度 |
-| P1 | 飞书富卡片 | cc-connect | 用按钮、表格和确认卡片承载交易确认/状态摘要 |
+| P1 | 飞书确认卡片 | cc-connect | 仅用于实盘订单确认等高风险交互；日常快捷入口使用机器人菜单 |
 | P1 | 轻量监控面板 | cc-connect / FinceptTerminal | 展示 run、净值、持仓、交易和错误 |
 | P2 | 工具注册元数据 | Vibe-Trading | 为包内工具添加 metadata，自动生成 CLAUDE.md 工具表 |
 

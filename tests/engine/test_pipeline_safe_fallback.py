@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from alphaclaude.engine import pipeline as pipeline_module
 from alphaclaude.engine.pipeline import OvernightPipeline
 from alphaclaude.tools import llm_client
 
@@ -112,3 +113,16 @@ def test_emergency_fallback_holds_when_text_is_unstructured(pipeline_dir, monkey
     assert payload == [{"action": "hold", "reasoning": "无法结构化，建议先观望。"}]
     pipeline.ledger.append.assert_called_once()
     assert pipeline.ledger.append.call_args.args[0]["action"] == "hold"
+
+
+def test_launch_emergency_does_not_send_duplicate_alert(pipeline_dir, monkeypatch):
+    pipeline = _pipeline(pipeline_dir)
+    alerts = []
+
+    monkeypatch.setattr(pipeline_module, "_notify", True)
+    monkeypatch.setattr(pipeline_module, "notify_alert", lambda *args: alerts.append(args))
+    monkeypatch.setattr(llm_client, "call_with_tool", lambda *_args, **_kwargs: [{"action": "hold", "reasoning": "test"}])
+
+    pipeline.launch_emergency("300263 下跌5.0%")
+
+    assert alerts == []

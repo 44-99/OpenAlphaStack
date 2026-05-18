@@ -237,22 +237,32 @@ def run_memory_consolidation() -> None:
         logger.error("记忆整理任务失败: %s", e, exc_info=True, extra={"category": "dream"})
 
 
-def start_scheduler():
-    """Initialize scheduler with built-in jobs and restore user-created tasks."""
+def start_scheduler(include_market_jobs: bool = True):
+    """Initialize scheduler and restore user-created tasks.
+
+    The Feishu app no longer owns the market-analysis cycle. Paper/live engines
+    generate pre-market plans and intraday/post-close reports, so app startup
+    should pass include_market_jobs=False and keep only memory/dynamic tasks.
+    """
     global _scheduler
     if _scheduler is not None:
         return
     _scheduler = BackgroundScheduler()
-    _scheduler.add_job(run_morning_analysis, CronTrigger(hour=9, minute=0, day_of_week="mon-fri"),
-                       id="morning", name="早盘分析")
-    _scheduler.add_job(run_midday_update, CronTrigger(hour=12, minute=0, day_of_week="mon-fri"),
-                       id="midday", name="午间更新")
-    _scheduler.add_job(run_closing_summary, CronTrigger(hour=15, minute=30, day_of_week="mon-fri"),
-                       id="closing", name="收盘总结")
+    if include_market_jobs:
+        _scheduler.add_job(run_morning_analysis, CronTrigger(hour=9, minute=0, day_of_week="mon-fri"),
+                           id="morning", name="早盘分析")
+        _scheduler.add_job(run_midday_update, CronTrigger(hour=12, minute=0, day_of_week="mon-fri"),
+                           id="midday", name="午间更新")
+        _scheduler.add_job(run_closing_summary, CronTrigger(hour=15, minute=30, day_of_week="mon-fri"),
+                           id="closing", name="收盘总结")
     _scheduler.add_job(run_memory_consolidation, CronTrigger(hour=3, minute=17),
                        id="dream_am", name="记忆整理(凌晨)")
     _scheduler.add_job(run_memory_consolidation, CronTrigger(hour=15, minute=17),
                        id="dream_pm", name="记忆整理(下午)")
     _scheduler.start()
-    logger.info("定时任务已启动: 工作日 9:00/12:00/15:30 + 记忆整理 3:17/15:17", extra={"category": "startup"})
+    if include_market_jobs:
+        msg = "定时任务已启动: 工作日 9:00/12:00/15:30 + 记忆整理 3:17/15:17"
+    else:
+        msg = "定时任务已启动: 记忆整理 3:17/15:17 + 自定义任务；内置行情分析由引擎负责"
+    logger.info(msg, extra={"category": "startup"})
     restore_dynamic_tasks()

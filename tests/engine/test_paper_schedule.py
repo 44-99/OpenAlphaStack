@@ -4,6 +4,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -123,6 +124,18 @@ def test_non_trading_day_notice_can_recover_after_premarket_window(output_base):
     engine.clock = FakeClock(datetime(2026, 5, 17, 10, 30))  # Sunday
 
     assert engine._is_non_trading_premarket_window()
+
+
+def test_fast_lane_reset_runs_once_per_trading_day(output_base):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    calls = []
+    engine.fast_lane = SimpleNamespace(reset_day=lambda: calls.append("reset"))
+
+    engine._reset_fast_lane_for_day_once(datetime(2026, 5, 18).date())
+    engine._reset_fast_lane_for_day_once(datetime(2026, 5, 18).date())
+    engine._reset_fast_lane_for_day_once(datetime(2026, 5, 19).date())
+
+    assert calls == ["reset", "reset"]
 
 
 def test_pid_liveness_check_detects_current_process():

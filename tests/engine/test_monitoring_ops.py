@@ -14,6 +14,7 @@ from alphaclaude.engine.clock import TradingClock
 from alphaclaude.engine.execution import ExecutionEngine
 from alphaclaude.engine.fast_lane import FastLane
 from alphaclaude.engine.plan import PlanManager
+from alphaclaude.engine.pipeline import OvernightPipeline
 from alphaclaude.engine.state import EngineState
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -241,6 +242,78 @@ def test_execution_engine_notifies_through_injected_callback(engine_parts):
     assert calls
     assert calls[0][0][:5] == ("buy", "000001", "", 10.0, 100)
     assert calls[0][1]["run_id"] == "test_run"
+
+
+def test_new_buy_is_locked_until_t1_release(engine_parts):
+    state, _plan, _clock, _ledger, execution = engine_parts
+
+    trade = execution.execute_buy("600519", 100, 100.0, reasoning="test buy")
+
+    assert trade["status"] == "executed"
+    holding = state.holdings["600519"]
+    assert holding["shares"] == 100
+    assert holding["locked_today"] == 100
+    assert holding["available"] == 0
+
+    sell = execution.execute_sell("600519", 100, 101.0, reason="same day sell")
+    assert sell["error"] == "无 600519 持仓或无可卖股数"
+    assert state.holdings["600519"]["shares"] == 100
+
+
+def test_emergency_action_does_not_mark_locked_sell_as_executed(engine_parts, engine_dir):
+    state, plan, clock, ledger, execution = engine_parts
+    state._data["holdings"]["300488"]["locked_today"] = 300
+    state._data["holdings"]["300488"]["available"] = 0
+    state.save()
+    pipeline = OvernightPipeline(
+        state,
+        plan,
+        ledger,
+        clock,
+        str(engine_dir),
+        "paper",
+        execution=execution,
+    )
+
+    pipeline._apply_emergency_decisions({
+        "action": "close",
+        "code": "300488",
+        "reasoning": "same-day locked emergency",
+    })
+
+    assert state.holdings["300488"]["shares"] == 300
+    ledger.append.assert_called()
+    final_entry = ledger.append.call_args_list[-1].args[0]
+    assert final_entry["decision"] == "emergency_action"
+    assert final_entry["executed"] is False
+
+
+def test_emergency_tier_persists_across_fast_lane_restart(engine_parts):
+    state, plan, clock, ledger, execution = engine_parts
+    state.update_quote("300488", 41.0)
+    state.update_quote("002594", 300.0)
+    quotes = {
+        "300488": {"code": "300488", "price": 41.0},
+        "000001": {"code": "000001", "price": 3200},
+    }
+
+    first = FastLane(
+        state, plan, execution, clock, "paper",
+        ["300488"], data_feed=_mock_feed(quotes),
+    )
+    triggered, reason = first._check_emergency(quotes)
+
+    assert triggered is True
+    assert "300488" in reason
+
+    restarted = FastLane(
+        state, plan, execution, clock, "paper",
+        ["300488"], data_feed=_mock_feed(quotes),
+    )
+    triggered_again, reason_again = restarted._check_emergency(quotes)
+
+    assert triggered_again is False
+    assert reason_again == ""
 
 
 def test_stop_loss_triggers_sell_and_cooldown(engine_parts):

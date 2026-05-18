@@ -119,10 +119,11 @@ class EngineState:
             h["avg_cost"] = round((old_cost + new_cost) / total_shares, 2)
             h["shares"] = total_shares
             h["locked_today"] += shares
+            h["available"] = max(0, h["shares"] - h.get("locked_today", 0))
         else:
             self._data["holdings"][code] = {
                 "shares": shares,
-                "available": shares,
+                "available": 0,
                 "locked_today": shares,
                 "avg_cost": round(price, 2),
                 "current_price": round(price, 2),

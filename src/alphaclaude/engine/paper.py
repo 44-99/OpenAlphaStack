@@ -62,6 +62,7 @@ class PaperEngine:
         self.bar_period = bar_period
         self.universe = universe or []
         self._stop_event = threading.Event()
+        self._fast_lane_reset_date = None
 
         # Determine output directory
         if resume_run_id:
@@ -152,6 +153,13 @@ class PaperEngine:
             observation_mode=enabled,
             observation_reason=reason if enabled else "",
         )
+
+    def _reset_fast_lane_for_day_once(self, today) -> None:
+        """Reset FastLane daily state once per calendar day."""
+        if self._fast_lane_reset_date == today:
+            return
+        self.fast_lane.reset_day()
+        self._fast_lane_reset_date = today
 
     def _is_non_trading_premarket_window(self) -> bool:
         """Return whether a closed-market day should emit its daily pre-market notice."""
@@ -328,14 +336,13 @@ class PaperEngine:
 
             # During trading hours, run FastLane
             if self.clock.is_trading():
+                self._reset_fast_lane_for_day_once(today)
                 if not self._has_actionable_plan_for_today():
                     self._set_observation_mode(True, "trading hours without a pre-market plan")
                     self.state.set_data_time(self.clock.now().strftime("%Y-%m-%d %H:%M:%S"))
                     self.state.save()
                     time.sleep(1)
                     continue
-
-                self.fast_lane.reset_day()
 
                 # Execute holding adjustments at auction/morning open
                 if phase in ("auction", "morning"):

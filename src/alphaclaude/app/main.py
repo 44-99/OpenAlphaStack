@@ -25,9 +25,6 @@ from feishu.ws import start_ws_listener
 from claude import ask_claude, ask_claude_stream
 from logging_config import setup_logging
 from scheduler import (
-    run_morning_analysis,
-    run_midday_update,
-    run_closing_summary,
     run_memory_consolidation,
     set_subscribers,
     start_scheduler,
@@ -421,31 +418,31 @@ def _get_always_load_skills() -> str:
 
 _WELCOME_MSG = (
     "我是 AlphaClaude，A股分析助手。\n\n"
-    "可用指令：\n"
-    "  /sub 或 订阅 — 订阅每日定时推送\n"
-    "  /unsub 或 退订 — 取消订阅\n"
-    "  /status — 查看引擎运行状态\n"
+    "机器人菜单建议配置这些中文指令：\n"
+    "  状态 — 运行健康、活跃 run、净值和风险摘要\n"
+    "  持仓 — 持仓明细、可卖/锁定、止损止盈\n"
+    "  交易 — 最近成交、拒单和紧急动作\n"
+    "  计划 — 今日盘前计划和风控规则\n"
+    "  停止 — 私聊中停止引擎\n"
+    "  恢复 — 私聊中按 run_id 恢复引擎\n"
+    "  订阅 / 退订 — 管理群推送\n"
+    "  帮助 — 显示本消息\n\n"
+    "其他：\n"
     "  /task <描述> — 创建自定义分析任务\n"
-    "  /task delete <id> — 删除任务\n"
     "  /tasks — 查看当前任务\n"
-    "  /group <群ID> <提问> — 跨群查询（私聊可用）\n"
-    "  /groups — 列出可用群\n"
-    "  /new 或 新对话 — 重置对话上下文\n"
-    "  /help — 显示本消息\n\n"
+    "  /new 或 新对话 — 重置对话上下文\n\n"
     "直接发送股票名称或代码即可开始分析。"
 )
 
 _GROUP_WELCOME_MSG = (
     "我是 AlphaClaude，A股分析助手。在群里 @我 即可提问分析股票。\n\n"
-    "可用指令（@我后发送）：\n"
-    "  /sub 或 订阅 — 订阅每日定时推送\n"
-    "  /unsub 或 退订 — 取消订阅\n"
-    "  /status — 查看引擎运行状态\n"
-    "  /task <描述> — 创建自定义分析任务\n"
-    "  /task delete <id> — 删除任务\n"
-    "  /tasks — 查看当前任务\n"
-    "  /new 或 新对话 — 重置对话上下文\n"
-    "  /help — 显示本消息"
+    "机器人菜单建议配置这些中文指令：\n"
+    "  状态 — 运行健康和活跃 run 摘要\n"
+    "  持仓 — 持仓明细\n"
+    "  交易 — 最近交易流水\n"
+    "  计划 — 今日计划摘要\n"
+    "  订阅 / 退订 — 管理群推送\n"
+    "  帮助 — 显示本消息"
 )
 
 
@@ -457,13 +454,16 @@ _EXACT_COMMANDS = {
     "/unsub", "取消订阅", "unsubscribe", "unsub", "退订", "关闭推送",
     "/status", "status", "状态", "引擎状态",
     "/positions", "positions", "持仓", "仓位",
+    "/trades", "trades", "交易", "成交",
+    "/plan", "plan", "计划", "今日计划", "盘前计划",
+    "/menu", "menu", "菜单", "控制面板",
     "/stop", "stop", "停止引擎", "停止",
     "/resume", "resume", "恢复引擎", "恢复",
     "/groups", "groups",
     "/tasks", "tasks",
 }
 
-_RUN_CONTROL_PREFIXES = ("/status ", "/stop ", "/resume ")
+_RUN_CONTROL_PREFIXES = ("/status ", "/stop ", "/resume ", "状态 ", "停止 ", "恢复 ")
 
 _COMMAND_KEYWORDS = [
     "清空", "重置", "新对话", "新开", "重新开始", "从头",
@@ -579,14 +579,14 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
     cmd = text.strip()
     cmd_lower = cmd.lower()
 
-    if cmd_lower in ("/help", "帮助", "help", "指令", "命令"):
+    if cmd_lower in ("/help", "帮助", "help", "指令", "命令", "/menu", "menu", "菜单", "控制面板"):
         return _WELCOME_MSG
 
     if cmd_lower in ("/sub", "订阅", "subscribe", "sub", "开启推送"):
         if chat_type == "p2p":
             return "私聊无需订阅，定时推送默认发送。"
         _register_subscriber(chat_id)
-        return "已订阅定时推送（早盘 9:00 / 午间 12:00 / 收盘 15:30）。"
+        return "已订阅引擎推送（盘前计划、盘中成交/预警、盘后小结）。"
 
     if cmd_lower in ("/unsub", "取消订阅", "unsubscribe", "unsub", "退订", "关闭推送"):
         if chat_type == "p2p":
@@ -595,7 +595,7 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
             return "已取消订阅。"
         return "当前未订阅。"
 
-    if cmd_lower.startswith("/status "):
+    if cmd_lower.startswith("/status ") or cmd.startswith("状态 "):
         run_id = cmd.split(None, 1)[1].strip()
         try:
             return _format_run_control_status(run_registry.get_run(run_id))
@@ -604,7 +604,7 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
         except Exception as e:
             return f"无法获取引擎状态: {e}"
 
-    if cmd_lower in ("/status", "status", "状态"):
+    if cmd_lower in ("/status", "status", "状态", "引擎状态"):
         try:
             from alphaclaude.tools.engine_status import format_status_text
             return format_status_text()
@@ -618,9 +618,23 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
         except Exception as e:
             return f"无法获取持仓: {e}"
 
-    if cmd_lower.startswith("/stop "):
+    if cmd_lower in ("/trades", "trades", "交易", "成交"):
+        try:
+            from alphaclaude.tools.engine_status import format_trades_text
+            return format_trades_text()
+        except Exception as e:
+            return f"无法获取交易流水: {e}"
+
+    if cmd_lower in ("/plan", "plan", "计划", "今日计划", "盘前计划"):
+        try:
+            from alphaclaude.tools.engine_status import format_plan_text
+            return format_plan_text()
+        except Exception as e:
+            return f"无法获取计划: {e}"
+
+    if cmd_lower.startswith("/stop ") or cmd.startswith("停止 "):
         if chat_type != "p2p":
-            return "请在私聊中使用 /stop <run_id> 停止指定引擎。"
+            return "请在私聊中使用 停止 <run_id> 停止指定引擎。"
         run_id = cmd.split(None, 1)[1].strip()
         try:
             return _format_stop_result(run_registry.stop_run(run_id))
@@ -632,16 +646,16 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
     if cmd_lower in ("/stop", "stop", "停止引擎", "停止"):
         # Only stop if in DM or explicitly confirm
         if chat_type != "p2p":
-            return "请在私聊中使用 /stop 命令停止引擎。"
+            return "请在私聊中使用 停止 命令停止引擎。"
         try:
             from alphaclaude.tools.engine_status import stop_engine
             return stop_engine()
         except Exception as e:
             return f"停止引擎失败: {e}"
 
-    if cmd_lower.startswith("/resume "):
+    if cmd_lower.startswith("/resume ") or cmd.startswith("恢复 "):
         if chat_type != "p2p":
-            return "请在私聊中使用 /resume <run_id> 恢复指定引擎。"
+            return "请在私聊中使用 恢复 <run_id> 恢复指定引擎。"
         run_id = cmd.split(None, 1)[1].strip()
         try:
             return _format_resume_result(engine_cli.resume_run_daemon(run_id))
@@ -651,7 +665,7 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
             return f"恢复引擎失败: {e}"
 
     if cmd_lower in ("/resume", "resume", "恢复引擎", "恢复"):
-        return "用法：/resume <run_id>。为避免误操作，请在私聊中恢复指定引擎。"
+        return "用法：恢复 <run_id>。为避免误操作，请在私聊中恢复指定引擎。"
 
     if cmd_lower in ("/groups", "groups"):
         groups = memory._list_group_sessions()
@@ -1190,7 +1204,7 @@ async def lifespan(_: FastAPI):
     set_subscribers(list(_subscribers))
     _skills = _load_skills()
     _setup_crash_hook(ALERT_CHAT_IDS)
-    start_scheduler()
+    start_scheduler(include_market_jobs=False)
     _ws_thread = start_ws_listener(_handle_sdk_event)
     logger.info("飞书股票机器人已启动 (WebSocket长连接)", extra={"category": "startup"})
     yield
@@ -1210,14 +1224,18 @@ async def health():
 @app.post("/trigger/now")
 async def trigger_now(session: str = "morning"):
     tasks = {
-        "morning": run_morning_analysis,
-        "midday": run_midday_update,
-        "closing": run_closing_summary,
         "dream": run_memory_consolidation,
     }
+    if session in {"morning", "midday", "closing"}:
+        return {
+            "error": (
+                "Legacy app market-analysis triggers are disabled. "
+                "Use the paper/live engine pre-market, intraday, and post-close cycle."
+            )
+        }
     task = tasks.get(session)
     if not task:
-        return {"error": f"Unknown session: {session}. Use: morning/midday/closing/dream"}
+        return {"error": f"Unknown session: {session}. Use: dream"}
     threading.Thread(target=task, daemon=True).start()
     return {"status": "triggered", "session": session}
 

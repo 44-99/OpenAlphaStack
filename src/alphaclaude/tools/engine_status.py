@@ -44,7 +44,7 @@ def _find_engine_modes() -> set[str]:
         # Windows: wmic
         out = subprocess.run(
             ["wmic", "process", "get", "processid,commandline"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=5,
         )
         _scan_lines(out.stdout)
     except Exception:
@@ -61,7 +61,7 @@ def _find_engine_modes() -> set[str]:
                 "Where-Object { $_.CommandLine } | "
                 "Select-Object -ExpandProperty CommandLine",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=5,
         )
         _scan_lines(out.stdout)
     except Exception:
@@ -69,7 +69,7 @@ def _find_engine_modes() -> set[str]:
     # Unix/Linux: ps aux
     try:
         out = subprocess.run(
-            ["ps", "aux"], capture_output=True, text=True, timeout=5,
+            ["ps", "aux"], capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=5,
         )
         _scan_lines(out.stdout)
     except Exception:
@@ -274,6 +274,7 @@ def _run_summary(run_dir: str, run_id: str, mode: str, is_alive: bool) -> dict:
 
     return {
         "run_id": run_id,
+        "run_dir": run_dir,
         "mode": mode,
         "phase": phase,
         "is_alive": is_alive,
@@ -309,6 +310,7 @@ def _run_summary(run_dir: str, run_id: str, mode: str, is_alive: bool) -> dict:
         "cooldown_codes": list(cooldown.keys())[:10],
         "stopped_out_count": len(today_stopped_out),
         "stopped_out_codes": today_stopped_out[:10],
+        "emergency_tiers": plan.get("emergency_tiers", {}),
         "rules": rules,
     }
 
@@ -416,11 +418,71 @@ def get_alive_count() -> dict:
     }
 
 
+def _select_display_runs(runs: list[dict], limit: int = 6) -> list[dict]:
+    alive = [r for r in runs if r["is_alive"]]
+    recent_with_holdings = [r for r in runs if not r["is_alive"] and len(r.get("holdings", {})) > 0]
+    recent_with_trades = [
+        r for r in runs
+        if not r["is_alive"] and len(r.get("holdings", {})) == 0 and r["trade_count"] > 0
+    ]
+    other_recent = [
+        r for r in runs
+        if not r["is_alive"] and r not in recent_with_holdings and r not in recent_with_trades
+    ]
+
+    display = alive + recent_with_holdings + recent_with_trades
+    for r in other_recent:
+        if len(display) >= limit:
+            break
+        display.append(r)
+    return display[:limit]
+
+
+def _run_time_label(run_id: str, short: bool = False) -> str:
+    if "_" not in run_id or "T" not in run_id:
+        return ""
+    try:
+        parts = run_id.split("_", 1)[1]
+        date_part, time_part = parts.split("T", 1)
+        time_text = time_part.replace("-", ":")
+        if short:
+            return f" {date_part[5:]} {time_text[:5]}"
+        return f" {date_part} {time_text}"
+    except (ValueError, IndexError):
+        return ""
+
+
+def _phase_label(phase: str) -> str:
+    return {
+        "pre_market": "盘前等待",
+        "trading": "盘中交易",
+        "lunch_break": "午间休市",
+        "post_market": "盘后处理",
+        "plan_ready": "盘前计划已生成",
+        "observing": "观察模式",
+        "stopped": "已停止",
+        "idle": "空闲",
+    }.get(phase, phase)
+
+
+def _pnl_text(value: float, pct: float | None = None) -> str:
+    sign = "+" if value >= 0 else ""
+    if pct is None:
+        return f"{sign}{value:,.0f}"
+    pct_sign = "+" if pct >= 0 else ""
+    return f"{sign}{value:,.0f} ({pct_sign}{pct:.2f}%)"
+
+
+def _active_or_recent_run(runs: list[dict]) -> dict | None:
+    alive = [r for r in runs if r["is_alive"]]
+    return alive[0] if alive else (runs[0] if runs else None)
+
+
 def format_status_text(runs: list[dict] | None = None) -> str:
     """Format engine status as a Feishu-friendly text message.
 
-    Shows at most: all alive runs + the most interesting recent stopped runs
-    (those with holdings or trades). Cap total displayed runs at 6.
+    Shows control-plane health and run summaries. Holding-level details live in
+    format_positions_text() so /status stays short enough for Feishu.
     """
     if runs is None:
         runs = get_all_runs()
@@ -428,21 +490,8 @@ def format_status_text(runs: list[dict] | None = None) -> str:
     if not runs:
         return "当前没有活跃或最近的引擎实例。\n\n启动：alphaclaude engine start --mode paper --capital 100000"
 
-    # Prioritize: alive runs first, then recent runs with holdings/trades
     alive = [r for r in runs if r["is_alive"]]
-    recent_with_holdings = [r for r in runs if not r["is_alive"] and len(r.get("holdings", {})) > 0]
-    recent_with_trades = [r for r in runs if not r["is_alive"]
-                          and len(r.get("holdings", {})) == 0
-                          and r["trade_count"] > 0]
-    other_recent = [r for r in runs
-                    if not r["is_alive"] and r not in recent_with_holdings and r not in recent_with_trades]
-
-    display = alive + recent_with_holdings + recent_with_trades
-    # Fill remaining slots with most recent others, up to 6 total
-    for r in other_recent:
-        if len(display) >= 6:
-            break
-        display.append(r)
+    display = _select_display_runs(runs)
 
     lines = []
     now_str = datetime.now().strftime("%H:%M:%S")
@@ -458,31 +507,10 @@ def format_status_text(runs: list[dict] | None = None) -> str:
         icon = {"paper": "📝", "backtest": "🔬", "live": "🔴"}.get(r["mode"], "❓")
         status = "🟢" if r["is_alive"] else "⚫"
 
-        # Extract time suffix from run_id (e.g. "paper_2026-05-06T16-06-33" → "2026-05-06 16:06:33")
         rid = r["run_id"]
-        time_suffix = ""
-        if "_" in rid and "T" in rid:
-            try:
-                parts = rid.split("_", 1)[1]
-                date_part, time_part = parts.split("T", 1)
-                time_suffix = f" {date_part} {time_part.replace('-', ':')}"
-            except (ValueError, IndexError):
-                pass
+        lines.append(f"{icon} {status} [{r['mode'].upper()}{_run_time_label(rid)}] {_phase_label(r['phase'])}")
+        lines.append(f"run_id: {rid}")
 
-        phase_label = {
-            "pre_market": "盘前等待",
-            "trading": "盘中交易",
-            "lunch_break": "午间休市",
-            "post_market": "盘后处理",
-            "plan_ready": "盘前计划已生成",
-            "observing": "观察模式",
-            "stopped": "已停止",
-            "idle": "空闲",
-        }.get(r["phase"], r["phase"])
-
-        lines.append(f"{icon} {status} [{r['mode'].upper()}{time_suffix}] {phase_label}")
-
-        # ── Backtest-specific: range, universe, progress ──
         meta = r.get("engine_meta", {})
         if r["mode"] == "backtest":
             bt_start = meta.get("backtest_start", "")
@@ -503,56 +531,31 @@ def format_status_text(runs: list[dict] | None = None) -> str:
                     prog_line += f" | Claude 每 {claude} 天"
                 lines.append(prog_line)
 
-        # ── Financial summary ──
-        pnl_sign = "+" if r["total_pnl"] >= 0 else ""
-        pct_sign = "+" if r["total_pnl_pct"] >= 0 else ""
         lines.append(
             f"净值 {r['total_value']:,.0f} | "
-            f"盈亏 {pnl_sign}{r['total_pnl']:,.0f} ({pct_sign}{r['total_pnl_pct']:.2f}%) | "
+            f"盈亏 {_pnl_text(r['total_pnl'], r['total_pnl_pct'])} | "
             f"现金 {r['cash']:,.0f}"
         )
 
-        # ── Day P&L (paper/live only, backtest data_time is historical) ──
         if r["mode"] != "backtest":
-            dp_sign = "+" if r["day_pnl"] >= 0 else ""
-            dp_pct_sign = "+" if r["day_pnl_pct"] >= 0 else ""
             if r["day_pnl"] != 0:
-                lines.append(f"今日盈亏: {dp_sign}{r['day_pnl']:,.0f} ({dp_pct_sign}{r['day_pnl_pct']:.2f}%)")
+                lines.append(f"今日盈亏: {_pnl_text(r['day_pnl'], r['day_pnl_pct'])}")
 
-        # ── Max drawdown ──
         if r["max_drawdown"] > 0:
             lines.append(f"最大回撤: -{r['max_drawdown']:.2f}%")
 
-        # ── Holdings ──
         n_holdings = len(r["holdings"])
-        if n_holdings > 0:
-            trade_line = f"持仓 {n_holdings} 只 | 累计交易 {r['trade_count']} 笔"
-            if r["mode"] != "backtest" and r["today_trades"] > 0:
-                trade_line += f" | 今日成交 {r['today_trades']} 笔"
-            trade_line += f" | 胜率 {r['win_rate']:.0f}%"
-            lines.append(trade_line)
-            for code, h in list(r["holdings"].items())[:8]:
-                shares = h.get("shares", 0)
-                avg = h.get("avg_cost", 0)
-                cur = h.get("current_price", avg)
-                pnl = (cur - avg) * shares
-                pnl_pct = (cur - avg) / avg * 100 if avg > 0 else 0
-                pnl_s = f"+{pnl:,.0f}" if pnl >= 0 else f"{pnl:,.0f}"
-                pos_pct = h.get("position_pct", 0)
-                lines.append(f"  {code} {shares}股 @{avg:.2f}→{cur:.2f} {pnl_s} ({pnl_pct:+.1f}%) 占净值{pos_pct:.0f}%")
-        else:
-            trade_line = f"持仓 0 | 累计交易 {r['trade_count']} 笔"
-            if r["mode"] != "backtest" and r["today_trades"] > 0:
-                trade_line += f" | 今日成交 {r['today_trades']} 笔"
-            lines.append(trade_line)
+        trade_line = f"持仓 {n_holdings} 只 | 累计交易 {r['trade_count']} 笔"
+        if r["mode"] != "backtest" and r["today_trades"] > 0:
+            trade_line += f" | 今日成交 {r['today_trades']} 笔"
+        trade_line += f" | 胜率 {r['win_rate']:.0f}%"
+        lines.append(trade_line)
 
-        # ── Fees ──
         commission = r.get("total_commission", 0)
         duty = r.get("total_stamp_duty", 0)
         if commission > 0 or duty > 0:
             lines.append(f"费用: 佣金 {commission:,.0f} | 印花税 {duty:,.0f}")
 
-        # ── Market bias & plan ──
         bias_emoji = {"bullish": "📈", "bearish": "📉", "neutral": "➡️"}.get(r["market_bias"], "")
         plan_parts = []
         if r["market_bias"] != "neutral" or r["candidates_count"] > 0:
@@ -564,7 +567,6 @@ def format_status_text(runs: list[dict] | None = None) -> str:
         if plan_parts:
             lines.append(" | ".join(plan_parts))
 
-        # ── Risk / cooldown / stopped out ──
         rules = r.get("rules", {})
         risk_parts = []
         if rules:
@@ -587,7 +589,7 @@ def format_status_text(runs: list[dict] | None = None) -> str:
 
     if alive:
         lines.append("—" * 20)
-        lines.append("/status 刷新 | /positions 持仓 | /stop 停止")
+        lines.append("状态刷新 | 持仓明细 | 交易流水 | 计划摘要 | 停止")
 
     return "\n".join(lines)
 
@@ -605,26 +607,28 @@ def format_positions_text() -> str:
     for r in alive + recent[:1]:
         icon = {"paper": "📝", "backtest": "🔬", "live": "🔴"}.get(r["mode"], "❓")
         status = "🟢" if r["is_alive"] else "⚫"
-        pnl_sign = "+" if r["total_pnl"] >= 0 else ""
-        pct_sign = "+" if r["total_pnl_pct"] >= 0 else ""
-
-        # Extract short time suffix
         rid = r["run_id"]
-        time_suffix = ""
-        if "_" in rid and "T" in rid:
-            try:
-                parts = rid.split("_", 1)[1]
-                date_part, time_part = parts.split("T", 1)
-                time_suffix = f" {date_part[5:]} {time_part.replace('-', ':')[:5]}"
-            except (ValueError, IndexError):
-                pass
 
-        lines.append(f"\n{icon} {status} [{r['mode'].upper()}{time_suffix}] "
+        lines.append(f"\n{icon} {status} [{r['mode'].upper()}{_run_time_label(rid, short=True)}] "
                      f"净值 {r['total_value']:,.0f} | "
-                     f"总盈亏 {pnl_sign}{r['total_pnl']:,.0f} ({pct_sign}{r['total_pnl_pct']:.2f}%)")
+                     f"总盈亏 {_pnl_text(r['total_pnl'], r['total_pnl_pct'])}")
 
-        for code, h in r["holdings"].items():
+        plan = _read_json(os.path.join(r.get("run_dir", ""), "plan.json"))
+        cooldown = set((plan.get("cooldown") or {}).keys())
+        stopped_out = set(plan.get("today_stopped_out") or [])
+        emergency_tiers = ((plan.get("emergency_tiers") or {}).get("tiers") or {})
+
+        def _holding_risk(item: tuple[str, dict]) -> float:
+            _, h = item
+            avg = h.get("avg_cost", 0)
+            cur = h.get("current_price", avg)
+            return (cur - avg) / avg * 100 if avg > 0 else 0
+
+        for code, h in sorted(r["holdings"].items(), key=_holding_risk):
             shares = h.get("shares", 0)
+            raw_available = h.get("available", shares)
+            locked = min(h.get("locked_today", 0), shares)
+            available = min(raw_available, max(0, shares - locked))
             avg = h.get("avg_cost", 0)
             cur = h.get("current_price", avg)
             strategy = h.get("strategy", "")
@@ -634,13 +638,156 @@ def format_positions_text() -> str:
             pnl_pct = (cur - avg) / avg * 100 if avg > 0 else 0
             pnl_s = f"+{pnl:,.0f}" if pnl >= 0 else f"{pnl:,.0f}"
 
-            lines.append(f"  {code} {shares}股")
+            flags = []
+            if code in cooldown:
+                flags.append("冷却")
+            if code in stopped_out:
+                flags.append("今日止损")
+            if str(code) in emergency_tiers:
+                flags.append(f"预警T{emergency_tiers[str(code)]}")
+            flag_text = f" [{' / '.join(flags)}]" if flags else ""
+
+            lines.append(f"  {code} {shares}股{flag_text}")
+            lines.append(f"    可卖 {available} | 锁定 {locked}")
             pos_pct = h.get("position_pct", 0)
             lines.append(f"    成本 {avg:.2f} → 现价 {cur:.2f}  浮盈亏 {pnl_s} ({pnl_pct:+.1f}%)  占净值{pos_pct:.0f}%")
             if strategy:
                 lines.append(f"    策略: {strategy}")
             if sl:
                 lines.append(f"    止损 {sl:.2f}  止盈 {tp:.2f}")
+
+    return "\n".join(lines)
+
+
+def format_trades_text(limit: int = 12) -> str:
+    """Format recent ledger entries for the active or latest run."""
+    runs = get_all_runs()
+    run = _active_or_recent_run(runs)
+    if not run:
+        return "当前没有可查看的交易流水。"
+
+    entries = _read_ledger_lines(run.get("run_dir", ""))
+    interesting = [
+        e for e in entries
+        if e.get("decision") in {
+            "open_position",
+            "close_position",
+            "rejected_buy",
+            "emergency_action",
+            "emergency_stop_update",
+        }
+    ]
+    if not interesting:
+        return f"交易流水\n{run['run_id']}\n暂无成交、拒单或紧急动作。"
+
+    labels = {
+        "open_position": "买入",
+        "close_position": "卖出",
+        "rejected_buy": "拒单",
+        "emergency_action": "紧急动作",
+        "emergency_stop_update": "止损更新",
+    }
+    lines = [f"交易流水\n{run['run_id']}"]
+    for e in interesting[-limit:]:
+        decision = e.get("decision", "")
+        label = labels.get(decision, decision)
+        code = e.get("code") or e.get("symbol") or "-"
+        time_text = e.get("time") or str(e.get("trade_id", ""))[:15] or "-"
+        executed = e.get("executed")
+        status = e.get("status")
+        if status == "executed" or executed is True:
+            state = "已执行"
+        elif executed is False or status in {"rejected", "failed"}:
+            state = "未执行"
+        else:
+            state = str(status or "-")
+        action = e.get("action")
+        action_text = f" {action}" if action else ""
+        reason = str(e.get("reasoning") or e.get("reason") or "")
+        if len(reason) > 56:
+            reason = reason[:56] + "..."
+        lines.append(f"{time_text} {code} {label}{action_text} | {state}")
+        if reason:
+            lines.append(f"  {reason}")
+    return "\n".join(lines)
+
+
+def format_plan_text() -> str:
+    """Format today's plan summary for the active or latest run."""
+    runs = get_all_runs()
+    run = _active_or_recent_run(runs)
+    if not run:
+        return "当前没有可查看的计划。"
+
+    plan = _read_json(os.path.join(run.get("run_dir", ""), "plan.json"))
+    if not plan:
+        return f"计划摘要\n{run['run_id']}\n未找到 plan.json。"
+
+    bias = plan.get("market_bias", "unknown")
+    confidence = plan.get("bias_confidence", 0)
+    reasoning = str(plan.get("bias_reasoning") or "").strip()
+    if len(reasoning) > 120:
+        reasoning = reasoning[:120] + "..."
+
+    candidates = plan.get("buy_candidates") or []
+    adjustments = plan.get("holding_adjustments") or []
+    rules = plan.get("rules") or {}
+    cooldown = plan.get("cooldown") or {}
+    emergency_tiers = (plan.get("emergency_tiers") or {}).get("tiers") or {}
+
+    lines = [f"计划摘要\n{run['run_id']}"]
+    lines.append(f"更新时间: {plan.get('updated', '-')}")
+    lines.append(f"市场研判: {bias} ({confidence}%)")
+    if reasoning:
+        lines.append(f"理由: {reasoning}")
+
+    max_single = rules.get("max_single_position_pct")
+    max_total = rules.get("max_total_position_pct")
+    stop_mode = rules.get("stop_loss_mode")
+    risk_parts = []
+    if max_single:
+        risk_parts.append(f"单股{max_single:.0f}%")
+    if max_total:
+        risk_parts.append(f"总仓{max_total:.0f}%")
+    if stop_mode:
+        risk_parts.append(f"止损{stop_mode}")
+    if risk_parts:
+        lines.append("风控: " + " | ".join(risk_parts))
+
+    if candidates:
+        lines.append(f"候选: {len(candidates)} 只")
+        for c in candidates[:5]:
+            code = c.get("code", "-")
+            priority = c.get("priority", "-")
+            position_pct = c.get("position_pct", c.get("position_limit_pct", 0))
+            entry_max = c.get("entry_max", 0)
+            stop_loss = c.get("stop_loss", 0)
+            take_profit = c.get("take_profit", 0)
+            lines.append(
+                f"  {code} P{priority} 仓位{position_pct:g}% "
+                f"入场≤{entry_max:g} 止损{stop_loss:g} 止盈{take_profit:g}"
+            )
+    else:
+        lines.append("候选: 0 只")
+
+    if adjustments:
+        lines.append(f"持仓调整: {len(adjustments)} 项")
+        for adj in adjustments[:5]:
+            code = adj.get("code", "-")
+            action = adj.get("action", "-")
+            reason = str(adj.get("reasoning") or adj.get("reason") or "")
+            if len(reason) > 42:
+                reason = reason[:42] + "..."
+            lines.append(f"  {code} {action} {reason}".rstrip())
+
+    ops_parts = []
+    if cooldown:
+        ops_parts.append("冷却: " + ", ".join(list(cooldown.keys())[:8]))
+    if emergency_tiers:
+        tier_text = ", ".join(f"{code}:T{tier}" for code, tier in list(emergency_tiers.items())[:8])
+        ops_parts.append("预警: " + tier_text)
+    if ops_parts:
+        lines.extend(ops_parts)
 
     return "\n".join(lines)
 
@@ -655,7 +802,7 @@ def stop_engine() -> str:
     try:
         out = subprocess.run(
             ["wmic", "process", "get", "processid,commandline"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=5,
         )
         for line in out.stdout.split("\n"):
             if _is_engine_command(line):
