@@ -69,6 +69,7 @@ class PlanManager:
                 "max_total_position_pct": 80.0,
                 "min_cash_reserve": 0.0,
                 "stop_loss_mode": "hard",
+                "daily_new_positions_limit": 3,
             },
             "pending_orders": [],
         }
@@ -122,8 +123,11 @@ class PlanManager:
 
     def get_buy_candidates(self) -> list[dict]:
         today = self._now.strftime("%Y-%m-%d")
-        return [c for c in self._data.get("buy_candidates", [])
-                if c.get("valid_until", today) >= today]
+        return [
+            self.normalize_candidate_strategy(dict(c))
+            for c in self._data.get("buy_candidates", [])
+            if c.get("valid_until", today) >= today
+        ]
 
     def get_holding_adjustments(self) -> list[dict]:
         return self._data.get("holding_adjustments", [])
@@ -202,7 +206,7 @@ class PlanManager:
             c.setdefault("expires_after_days", 2)
             c.setdefault("valid_until",
                 (self._now + timedelta(days=int(c.get("expires_after_days", 2)))).strftime("%Y-%m-%d"))
-            return c
+            return self.normalize_candidate_strategy(c)
 
         new_codes = {c.get("code", "") for c in candidates}
         new_codes.discard("")
@@ -237,8 +241,46 @@ class PlanManager:
     def get_candidate(self, code: str) -> dict | None:
         for c in self._data.get("buy_candidates", []):
             if c.get("code") == code:
-                return dict(c)
+                return self.normalize_candidate_strategy(dict(c))
         return None
+
+    @staticmethod
+    def normalize_candidate_strategy(candidate: dict) -> dict:
+        """Normalize candidate strategy type for paper-mode alpha routing.
+
+        Paper mode defaults to automatic execution. Ambiguous entries become
+        breakout candidates unless Claude explicitly marks them watch_only.
+        """
+        c = dict(candidate)
+        valid_types = {"breakout", "pullback", "defensive", "watch_only"}
+        raw_type = str(c.get("strategy_type") or "").strip().lower()
+        if raw_type in valid_types:
+            strategy_type = raw_type
+        else:
+            reasoning = str(c.get("reasoning") or "")
+            source = str(c.get("source") or "").strip().upper()
+            volatility = c.get("volatility") or {}
+            annualized_vol = float(volatility.get("annualized_volatility") or 0)
+            vol_pct = float(volatility.get("volatility_percentile") or 0)
+
+            pullback_words = ("回踩", "缩量", "低吸", "支撑", "ma5", "ma10", "MA5", "MA10")
+            defensive_words = ("防御", "高股息", "红利", "银行", "煤炭", "电力", "低波动")
+            breakout_words = ("涨停", "突破", "放量", "强势", "高换手", "首板")
+
+            if c.get("pullback_zone") or c.get("support_price") or any(w in reasoning for w in pullback_words):
+                strategy_type = "pullback"
+            elif any(w in reasoning for w in defensive_words):
+                strategy_type = "defensive"
+            elif source == "B" or annualized_vol >= 0.55 or vol_pct >= 80 or any(w in reasoning for w in breakout_words):
+                strategy_type = "breakout"
+            else:
+                strategy_type = "breakout"
+
+        c["strategy_type"] = strategy_type
+        if strategy_type == "breakout":
+            c.setdefault("confirm_after", "09:45")
+            c.setdefault("probe_position_pct", min(float(c.get("position_pct", 5) or 5), 5.0))
+        return c
 
     def get_stopped_out_today(self) -> list[str]:
         return list(self._data.get("today_stopped_out", []))

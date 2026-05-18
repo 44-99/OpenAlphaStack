@@ -103,6 +103,92 @@ class FastLane:
         self._t0_trackers: dict[str, "T0Tracker"] = {}   # code → tracker
         self._t0_global_pause_until = ""                  # HH:MM, global pause after spike
         self._t0_total_pnl = 0.0                          # daily cumulative T+0 P&L
+        self._candidate_rejections: set[tuple[str, str, str]] = set()
+        self._daily_new_positions = self._count_existing_daily_new_positions()
+
+    def _count_existing_daily_new_positions(self) -> int:
+        """Best-effort count of today's already-opened positions for cap enforcement."""
+        read_all = getattr(self.execution.ledger, "read_all", None)
+        if not callable(read_all):
+            return 0
+        try:
+            entries = read_all()
+        except Exception:
+            return 0
+        if not isinstance(entries, list):
+            return 0
+        today = self.clock.now().strftime("%Y%m%d")
+        count = 0
+        for entry in entries:
+            if entry.get("decision") != "open_position":
+                continue
+            trade_id = str(entry.get("trade_id") or "")
+            entry_date = str(entry.get("date") or "").replace("-", "")
+            if trade_id.startswith(today) or entry_date.startswith(today):
+                count += 1
+        return count
+
+    def _daily_new_position_limit(self) -> int:
+        rules = self.plan.load().get("rules", {})
+        try:
+            return max(0, int(rules.get("daily_new_positions_limit", 3)))
+        except (TypeError, ValueError):
+            return 3
+
+    def _reject_candidate(self, events: list, code: str, rule: str,
+                          reason: str, strategy_type: str = "") -> None:
+        today = self.clock.now().strftime("%Y-%m-%d")
+        key = (today, code, rule)
+        if key in self._candidate_rejections:
+            return
+        self._candidate_rejections.add(key)
+        self.execution.ledger.append({
+            "decision": "rejected_buy",
+            "symbol": code,
+            "rule": rule,
+            "reason": reason,
+            "strategy_type": strategy_type,
+        })
+        events.append({
+            "event": "candidate_rejected",
+            "code": code,
+            "rule": rule,
+            "reason": reason,
+            "strategy_type": strategy_type,
+        })
+
+    @staticmethod
+    def _time_reached(now: datetime, hhmm: str) -> bool:
+        try:
+            hour, minute = [int(part) for part in str(hhmm).split(":", 1)]
+        except (TypeError, ValueError):
+            hour, minute = 9, 45
+        return now.time() >= now.replace(hour=hour, minute=minute, second=0, microsecond=0).time()
+
+    def _candidate_blocked(self, candidate: dict, now: datetime, events: list) -> bool:
+        code = candidate.get("code", "")
+        strategy_type = candidate.get("strategy_type", "watch_only")
+        if strategy_type == "watch_only":
+            self._reject_candidate(
+                events,
+                code,
+                "watch_only",
+                "候选被标记为 watch_only，不自动买入",
+                strategy_type,
+            )
+            return True
+        if strategy_type == "breakout" and not self._time_reached(now, candidate.get("confirm_after", "09:45")):
+            return True
+        if self._daily_new_positions >= self._daily_new_position_limit():
+            self._reject_candidate(
+                events,
+                code,
+                "daily_new_positions_limit",
+                f"达到单日新开仓上限 {self._daily_new_position_limit()}",
+                strategy_type,
+            )
+            return True
+        return False
 
     def _check_circuit_breaker(self) -> tuple[bool, str]:
         """Global circuit breaker: halt new positions at -20% drawdown."""
@@ -728,6 +814,9 @@ class FastLane:
                 bucket_candidates = [c for c in candidates if c.get("priority") == priority]
                 for c in bucket_candidates:
                     code = c.get("code", "")
+                    strategy_type = c.get("strategy_type", "watch_only")
+                    if self._candidate_blocked(c, now, events):
+                        continue
                     if self.plan.is_on_cooldown(code):
                         continue
                     if code in stopped_today:
@@ -790,11 +879,13 @@ class FastLane:
                     # meaningful returns within the holding period. Mid-caps at 2%+ pass.
                     avg_daily_range_pct = self._get_avg_daily_range_pct(code)
                     if avg_daily_range_pct is not None and avg_daily_range_pct < 1.8:
-                        self.execution.ledger.append({
-                            "decision": "rejected_buy",
-                            "symbol": code,
-                            "reason": f"波动率不足: 日均振幅{avg_daily_range_pct:.1f}%<1.8%, 持仓期内难以获利",
-                        })
+                        self._reject_candidate(
+                            events,
+                            code,
+                            "low_volatility",
+                            f"波动率不足: 日均振幅{avg_daily_range_pct:.1f}%<1.8%, 持仓期内难以获利",
+                            strategy_type,
+                        )
                         continue
 
                     shares = round_lot(int(target_value / price))
@@ -809,11 +900,13 @@ class FastLane:
                         stop_loss = round(price * (1 + default_stop_pct / 100), 2)
 
                     if stop_loss >= price:
-                        self.execution.ledger.append({
-                            "decision": "rejected_buy",
-                            "symbol": code,
-                            "reason": f"止损价{stop_loss}>=买入价{price}，拒绝开仓",
-                        })
+                        self._reject_candidate(
+                            events,
+                            code,
+                            "invalid_stop_loss",
+                            f"止损价{stop_loss}>=买入价{price}，拒绝开仓",
+                            strategy_type,
+                        )
                         continue
 
                     take_profit_pct = c.get("take_profit_pct")
@@ -822,7 +915,10 @@ class FastLane:
                     else:
                         take_profit = round(price * 1.15, 2)
 
-                    cand_detail = f"桶={cfg['name']} | 止损={stop_loss}({stop_loss_pct or default_stop_pct}%) 止盈={take_profit}"
+                    cand_detail = (
+                        f"策略={strategy_type} | 桶={cfg['name']} | "
+                        f"止损={stop_loss}({stop_loss_pct or default_stop_pct}%) 止盈={take_profit}"
+                    )
                     if refined_resolution:
                         cand_detail += f" | 精度={refined_resolution}m {refined_time_str}"
                     result = self.execution.execute_buy(
@@ -834,8 +930,10 @@ class FastLane:
                         signal_detail=cand_detail,
                         refined_resolution=refined_resolution,
                         entry_bar_ts=refined_time_str,
+                        strategy_type=strategy_type,
                     )
                     if result.get("status") == "executed":
+                        self._daily_new_positions += 1
                         events.append({
                             "event": "candidate_buy",
                             "code": code,
@@ -843,6 +941,7 @@ class FastLane:
                             "shares": shares,
                             "source": c.get("source", ""),
                             "bucket": cfg["name"],
+                            "strategy_type": strategy_type,
                             "result": result,
                         })
                         bucket_remaining -= target_value
@@ -1104,6 +1203,8 @@ class FastLane:
         today = self.clock.now().strftime("%Y-%m-%d")
         if self._last_reset_day != today:
             self._signal_history.clear()
+            self._candidate_rejections.clear()
+            self._daily_new_positions = self._count_existing_daily_new_positions()
             self._last_reset_day = today
         # Reset T+0 daily state (preserve active positions across days)
         self._t0_global_pause_until = ""

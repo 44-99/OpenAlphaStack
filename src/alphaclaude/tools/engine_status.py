@@ -759,12 +759,13 @@ def format_plan_text() -> str:
         for c in candidates[:5]:
             code = c.get("code", "-")
             priority = c.get("priority", "-")
+            strategy_type = c.get("strategy_type", "-")
             position_pct = c.get("position_pct", c.get("position_limit_pct", 0))
             entry_max = c.get("entry_max", 0)
             stop_loss = c.get("stop_loss", 0)
             take_profit = c.get("take_profit", 0)
             lines.append(
-                f"  {code} P{priority} 仓位{position_pct:g}% "
+                f"  {code} {strategy_type} P{priority} 仓位{position_pct:g}% "
                 f"入场≤{entry_max:g} 止损{stop_loss:g} 止盈{take_profit:g}"
             )
     else:

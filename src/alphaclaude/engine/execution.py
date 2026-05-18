@@ -45,6 +45,7 @@ class ExecutionEngine:
         signal_detail: str = "",
         refined_resolution: int = 0,
         entry_bar_ts: str = "",
+        strategy_type: str = "",
     ) -> dict:
         """Validate and execute a buy order."""
         shares = round_lot(shares)
@@ -76,6 +77,10 @@ class ExecutionEngine:
             "status": "executed",
             "trade_id": trade["trade_id"],
         }
+        if strategy_type:
+            entry["strategy_type"] = strategy_type
+        if signal_detail:
+            entry["signal_detail"] = signal_detail
         if refined_resolution:
             entry["refined_resolution"] = refined_resolution
         if entry_bar_ts:
