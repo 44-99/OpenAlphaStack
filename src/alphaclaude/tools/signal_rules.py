@@ -4,7 +4,6 @@ Importable by the package engine, also usable as standalone CLI.
 """
 import argparse
 import json
-import os
 import sys
 
 import pandas as pd

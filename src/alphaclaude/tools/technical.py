@@ -8,7 +8,16 @@ import time
 from datetime import datetime
 
 import pandas as pd
-import numpy as np
+from alphaclaude.tools._registry import tool_meta
+
+tool_meta(
+    name="technical",
+    category="行情",
+    description="技术指标计算——MA、MACD、RSI、KDJ、布林带、量价关系",
+    usage="python -m alphaclaude.tools.technical <code> --all 或 -i <指标>",
+    scenario="查看均线、MACD金叉死叉、RSI超买超卖、布林带位置",
+)
+import numpy as np  # noqa: E402
 from alphaclaude.tools._http import friendly_error, get_session, retry_get  # noqa: E402
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
@@ -41,7 +50,6 @@ def _sina_code(code: str) -> str:
 
 def fetch_hist(code: str, days: int = 120) -> pd.DataFrame:
     """Fetch daily historical OHLCV data from Sina Finance."""
-    import requests
     url = (
         f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
         f"CN_MarketData.getKLineData?symbol={_sina_code(code)}&scale=240&ma=no&datalen={days}"

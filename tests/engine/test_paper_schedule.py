@@ -22,6 +22,33 @@ class FakeClock:
     def now(self) -> datetime:
         return self._now
 
+    def session_phase(self) -> str:
+        return "pre_market"
+
+    def is_trading(self) -> bool:
+        return False
+
+
+class SequencedClock:
+    def __init__(self, timestamps: list[datetime], phases: list[str], trading_flags: list[bool]):
+        self._timestamps = timestamps
+        self._phases = phases
+        self._trading_flags = trading_flags
+        self._index = 0
+
+    def now(self) -> datetime:
+        return self._timestamps[self._index]
+
+    def session_phase(self) -> str:
+        return self._phases[self._index]
+
+    def is_trading(self) -> bool:
+        return self._trading_flags[self._index]
+
+    def advance(self) -> None:
+        if self._index < len(self._timestamps) - 1:
+            self._index += 1
+
 
 @pytest.fixture
 def output_base(monkeypatch) -> Path:
@@ -124,6 +151,67 @@ def test_non_trading_day_notice_can_recover_after_premarket_window(output_base):
     engine.clock = FakeClock(datetime(2026, 5, 17, 10, 30))  # Sunday
 
     assert engine._is_non_trading_premarket_window()
+
+
+def test_run_paper_stays_alive_in_closed_market_observation_until_stopped(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = SequencedClock(
+        [datetime(2026, 5, 17, 10, 30), datetime(2026, 5, 17, 10, 30)],
+        ["weekend", "weekend"],
+        [False, False],
+    )
+    sleep_calls = []
+
+    def fake_sleep(_seconds: int) -> None:
+        sleep_calls.append("sleep")
+        engine.stop()
+
+    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
+
+    engine.run_paper()
+
+    meta = engine.state.load()["engine_meta"]
+    assert sleep_calls == ["sleep"]
+    assert meta["status"] == "observation"
+    assert meta["observation_mode"] is True
+    assert "waiting for next trading session" in meta["observation_reason"]
+
+
+def test_run_paper_leaves_observation_when_trading_day_becomes_actionable(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    clock = SequencedClock(
+        [
+            datetime(2026, 5, 17, 10, 30),
+            datetime(2026, 5, 19, 8, 30),
+            datetime(2026, 5, 19, 8, 30),
+        ],
+        ["weekend", "pre_market", "pre_market"],
+        [False, False, False],
+    )
+    engine.clock = clock
+    calls = []
+
+    monkeypatch.setattr(
+        engine,
+        "run_morning_analysis",
+        lambda: calls.append("morning") or {"stages": {"merged": {}, "risk": {}}},
+    )
+
+    def fake_sleep(_seconds: int) -> None:
+        if clock._index == 0:
+            clock.advance()
+            return
+        engine.stop()
+
+    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
+
+    engine.run_paper()
+
+    meta = engine.state.load()["engine_meta"]
+    assert calls == ["morning"]
+    assert meta["status"] == "running"
+    assert meta["observation_mode"] is False
+    assert meta["observation_reason"] == ""
 
 
 def test_fast_lane_reset_runs_once_per_trading_day(output_base):

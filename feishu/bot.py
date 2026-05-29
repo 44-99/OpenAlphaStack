@@ -86,6 +86,30 @@ def update_message(message_id: str, text: str) -> dict:
     return resp.json()
 
 
+def send_card(chat_id: str, card_json: dict, root_message_id: str = None) -> dict:
+    """Send a Feishu interactive card message to a chat.
+
+    card_json is the Card Message template dict (not serialized).
+    Feishu API: POST /im/v1/messages with msg_type=interactive.
+    """
+    content = json.dumps(card_json)
+    body = {
+        "receive_id": chat_id,
+        "msg_type": "interactive",
+        "content": content,
+    }
+    if root_message_id:
+        body["root_id"] = root_message_id
+
+    resp = httpx.post(
+        f"{FEISHU_API_BASE}/im/v1/messages?receive_id_type=chat_id",
+        headers=_headers(),
+        json=body,
+        timeout=15,
+    )
+    return resp.json()
+
+
 BOT_NAMES = [n.strip() for n in FEISHU_BOT_NAME.split(",") if n.strip()] + ["stock bot", "stock-bot"]
 
 

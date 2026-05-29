@@ -300,6 +300,7 @@ def _run_summary(run_dir: str, run_id: str, mode: str, is_alive: bool) -> dict:
         "adjustments_count": len(adjustments),
         # New fields
         "engine_meta": meta,
+        "observation_reason": str(meta.get("observation_reason") or ""),
         "day_pnl": day_pnl,
         "day_pnl_pct": day_pnl_pct,
         "max_drawdown": max_dd,
@@ -459,8 +460,8 @@ def _phase_label(phase: str) -> str:
         "lunch_break": "午间休市",
         "post_market": "盘后处理",
         "plan_ready": "盘前计划已生成",
-        "observing": "观察模式",
-        "stopped": "已停止",
+        "observing": "休市待机",
+        "已停止": "已停止",
         "idle": "空闲",
     }.get(phase, phase)
 
@@ -582,6 +583,9 @@ def format_status_text(runs: list[dict] | None = None) -> str:
             risk_parts.append(f"今日止损: {codes}")
         if risk_parts:
             lines.append(" | ".join(risk_parts))
+
+        if r.get("observation_reason") and r["phase"] == "observing":
+            lines.append(f"待机原因: {r['observation_reason']}")
 
         if r["data_time"]:
             lines.append(f"数据时间: {r['data_time']}")
@@ -835,6 +839,133 @@ def stop_engine() -> str:
     if failed:
         lines.append(f"无法终止: {', '.join(str(p) for p in failed)}")
     return "\n".join(lines)
+
+
+def build_monitoring_card(runs: list[dict] | None = None) -> dict:
+    """Build a Feishu interactive card JSON for the engine monitoring dashboard.
+
+    Returns a dict conforming to Feishu Card Message template schema.
+    """
+    if runs is None:
+        runs = get_all_runs()
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    display = _select_display_runs(runs)
+
+    # Aggregate totals
+    total_value = sum(r["total_value"] for r in display)
+    total_pnl = sum(r["total_pnl"] for r in display)
+    total_day_pnl = sum(r["day_pnl"] for r in display)
+    all_trades = sum(r["trade_count"] for r in display)
+
+    elements = []
+
+    # Summary row
+    elements.append({
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": (
+                f"**净值 {total_value:,.0f}**  |  "
+                f"盈亏 {_pnl_text(total_pnl)}  |  "
+                f"今日 {_pnl_text(total_day_pnl)}  |  "
+                f"交易 {all_trades:,} 笔"
+            ),
+        },
+    })
+
+    elements.append({"tag": "hr"})
+
+    if not display:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "当前无活跃或最近引擎实例。\n启动: `alphaclaude engine start --mode paper --capital 100000`",
+            },
+        })
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"引擎监控面板 ({now_str})"},
+                "template": "wathet",
+            },
+            "elements": elements,
+        }
+
+    for r in display:
+        icon = {"paper": "📝", "backtest": "🔬", "live": "🔴"}.get(r["mode"], "")
+        status_icon = "🟢" if r["is_alive"] else "⚫"
+        phase = _phase_label(r["phase"])
+        rid = r["run_id"]
+        time_label = _run_time_label(rid, short=True)
+
+        header_line = f"{icon} {status_icon} **{r['mode'].upper()}{time_label}**  {phase}"
+
+        nav_line = (
+            f"净值 {r['total_value']:,.0f}  |  "
+            f"盈亏 {_pnl_text(r['total_pnl'], r['total_pnl_pct'])}  |  "
+            f"现金 {r['cash']:,.0f}"
+        )
+
+        detail_parts = [f"持仓 {len(r['holdings'])} 只  |  交易 {r['trade_count']} 笔  |  胜率 {r['win_rate']:.0f}%"]
+
+        if r["mode"] != "backtest" and r["day_pnl"] != 0:
+            detail_parts.append(f"今日: {_pnl_text(r['day_pnl'], r['day_pnl_pct'])}")
+        if r["max_drawdown"] > 0:
+            detail_parts.append(f"最大回撤 -{r['max_drawdown']:.2f}%")
+        if r.get("today_trades", 0) > 0:
+            detail_parts.append(f"今日成交 {r['today_trades']} 笔")
+
+        if r["mode"] == "backtest":
+            meta = r.get("engine_meta", {})
+            progress = meta.get("progress", {})
+            cur = progress.get("current_day", 0)
+            tot = progress.get("total_days", 0)
+            if tot > 0:
+                detail_parts.append(f"进度 {cur}/{tot} ({cur / tot * 100:.0f}%)")
+
+        # Cooldown / stop-out flags
+        if r["cooldown_count"] > 0:
+            codes = ", ".join(r.get("cooldown_codes", [])[:3])
+            detail_parts.append(f"冷却: {codes}")
+        if r["stopped_out_count"] > 0:
+            codes = ", ".join(r.get("stopped_out_codes", [])[:3])
+            detail_parts.append(f"止损: {codes}")
+
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "\n".join([
+                    header_line,
+                    nav_line,
+                    " | ".join(detail_parts),
+                ]),
+            },
+        })
+
+        elements.append({"tag": "hr"})
+
+    # Footer
+    elements.append({
+        "tag": "note",
+        "elements": [
+            {
+                "tag": "plain_text",
+                "content": f"状态刷新 | 持仓明细 | 交易流水 | 计划摘要 | 停止 — {now_str}",
+            },
+        ],
+    })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"引擎监控面板 ({now_str})"},
+            "template": "wathet",
+        },
+        "elements": elements,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

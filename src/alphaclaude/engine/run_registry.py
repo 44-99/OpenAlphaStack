@@ -118,7 +118,7 @@ def _record_from_dir(run_dir: Path) -> RunRecord | None:
     stored_status = str(meta.get("status") or "").strip()
     if is_alive:
         status = stored_status if stored_status in {"paused", "observation"} else "running"
-    elif process_id or stored_status == "running":
+    elif process_id or stored_status in {"running", "observation", "paused"}:
         status = "stopped"
     else:
         status = stored_status or "unknown"
@@ -167,6 +167,19 @@ def get_run(run_id: str) -> RunRecord:
     if record is None:
         raise RunNotFound(run_id)
     return record
+
+
+def find_active_run(mode: str, run_id: str | None = None) -> RunRecord | None:
+    """Return a live run for the given mode, optionally preferring one run_id."""
+    records = list_runs(mode)
+    if run_id:
+        for record in records:
+            if record.run_id == run_id and record.is_alive:
+                return record
+    for record in records:
+        if record.is_alive:
+            return record
+    return None
 
 
 def _run_sort_key(run_id: str) -> str:

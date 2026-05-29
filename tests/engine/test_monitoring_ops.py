@@ -16,6 +16,7 @@ from alphaclaude.engine.fast_lane import FastLane
 from alphaclaude.engine.plan import PlanManager
 from alphaclaude.engine.pipeline import OvernightPipeline
 from alphaclaude.engine.state import EngineState
+from alphaclaude.tools import engine_status
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOLS_DIR = PROJECT_ROOT / "tools"
@@ -425,3 +426,58 @@ def test_bucket_allocation_fixture_matches_expected_exposures(engine_parts):
     assert state.holdings["300488"]["shares"] * state.holdings["300488"]["current_price"] == 12600
     assert state.holdings["002594"]["shares"] * state.holdings["002594"]["current_price"] == 28000
     assert state.holdings["002594"]["shares"] * state.holdings["002594"]["current_price"] > 20000
+
+
+def test_format_status_text_shows_observing_run_as_active_waiting():
+    runs = [
+        {
+            "run_id": "paper_2026-05-25T09-00-00",
+            "mode": "paper",
+            "phase": "observing",
+            "is_alive": True,
+            "data_time": "2026-05-25 09:00:00",
+            "plan_updated": "",
+            "initial_capital": 100000,
+            "cash": 100000,
+            "nav": 100000,
+            "total_value": 100000,
+            "total_pnl": 0,
+            "total_pnl_pct": 0,
+            "holdings_value": 0,
+            "unrealized_pnl": 0,
+            "holdings": {},
+            "trade_count": 0,
+            "win_count": 0,
+            "win_rate": 0,
+            "market_bias": "neutral",
+            "bias_confidence": 0,
+            "candidates_count": 0,
+            "pending_orders_count": 0,
+            "watchlist_count": 0,
+            "adjustments_count": 0,
+            "engine_meta": {"observation_mode": True},
+            "observation_reason": "周日休市; waiting for next trading session",
+            "day_pnl": 0,
+            "day_pnl_pct": 0,
+            "max_drawdown": 0,
+            "today_trades": 0,
+            "total_commission": 0,
+            "total_stamp_duty": 0,
+            "cooldown_count": 0,
+            "cooldown_codes": [],
+            "stopped_out_count": 0,
+            "stopped_out_codes": [],
+            "emergency_tiers": {},
+            "rules": {},
+        }
+    ]
+
+    text = engine_status.format_status_text(runs)
+
+    assert "🟢 运行中: 1 个 (paper)" in text
+    assert "休市待机" in text
+    assert "待机原因: 周日休市; waiting for next trading session" in text
+
+
+def test_phase_label_keeps_dead_observation_run_stopped():
+    assert engine_status._phase_label("已停止") == "已停止"

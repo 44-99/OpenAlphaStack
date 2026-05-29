@@ -39,3 +39,9 @@ QUICK_THINK_MODEL = os.getenv("QUICK_THINK_MODEL", "deepseek-v4-flash")
 # Streaming replies — Claude Code stream-json → Feishu real-time updates
 STREAM_ENABLED = os.getenv("STREAM_ENABLED", "true").lower() == "true"
 STREAM_UPDATE_MS = int(os.getenv("STREAM_UPDATE_MS", "150"))  # batch interval in ms
+
+# Session auto-rotation — prevent silent context overflow
+AUTO_ROTATE_ENABLED = os.getenv("AUTO_ROTATE_ENABLED", "true").lower() == "true"
+CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "180000"))
+ROTATE_THRESHOLD = float(os.getenv("ROTATE_THRESHOLD", "0.8"))
+MAX_TURNS_BEFORE_ROTATE = int(os.getenv("MAX_TURNS_BEFORE_ROTATE", "15"))

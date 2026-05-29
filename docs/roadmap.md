@@ -59,15 +59,28 @@
 
 剩余工作：
 
-| 优先级 | 项 | 来源 | 完工标准 |
-|--------|----|------|----------|
-| P1 | Shadow Account Phase B 测试加固 | TradingAgents | 增加离线样本测试，覆盖 diagnostics 生成、reflection 保存、prompt 注入 |
-| P1 | 双模型分层 | TradingAgents | 研究/辩论使用便宜模型，最终结构化决策使用主模型，配置可通过 `.env` 切换 |
-| P1 | 工具输出压缩 | Vibe-Trading | 常用工具组合输出能压缩为更短摘要，减少 Claude Code 上下文占用 |
+| 优先级 | 项 | 来源 | 状态 |
+|--------|----|------|------|
+| P1 | Shadow Account Phase B 测试加固 | TradingAgents | ✅ 完成 |
+| P1 | 双模型分层 | TradingAgents | ✅ 完成 |
+| P1 | 工具输出压缩 | Vibe-Trading | ✅ 完成 |
 
-## Phase 3: 实盘准入 ⛔ 未完成
+## Phase 3: 交互和运维增强
 
-目标：真实资金交易前，先把订单边界、人工确认和熔断能力补齐。Phase 3 未完成前，`--mode live` 不允许视为真实交易能力。
+目标：不改变交易核心，改善使用体验、可观测性和维护成本。
+
+| 优先级 | 项 | 来源 | 状态 | 说明 |
+|--------|----|------|------|------|
+| P0 | 流式消息回复 | cc-connect | ✅ 完成 | Claude Code `stream-json` 逐段推送到飞书，减少长时间空白等待 |
+| P0 | Session 自动轮转 | cc-connect | ✅ 完成 | 防止长会话上下文膨胀，支持整理记忆后重置 |
+| P1 | 回复冗长度模式 | cc-connect | ✅ 完成 | `/mode full/compact/quiet` 控制手机端信息密度 |
+| P1 | 飞书确认卡片 | cc-connect | ⏸️ 延后至 Phase 4 | 仅用于实盘订单确认等高风险交互；日常快捷入口使用机器人菜单 |
+| P1 | 轻量监控面板 | cc-connect / FinceptTerminal | ✅ 完成 | 展示 run、净值、持仓、交易和错误——飞书 `/面板` 交互式卡片 |
+| P2 | 工具注册元数据 | Vibe-Trading | ✅ 完成 | 为包内工具添加 metadata，自动生成 CLAUDE.md 工具表 |
+
+## Phase 4: 实盘准入 ⛔ 未完成
+
+目标：真实资金交易前，先把订单边界、人工确认和熔断能力补齐。Phase 4 未完成前，`--mode live` 不允许视为真实交易能力。
 
 必须完成：
 
@@ -87,19 +100,6 @@
 - 至少 30 笔有效交易。
 - 胜率、回撤、夏普和异常恢复能力达到人工确认标准。
 - 实盘前必须完成一次小资金 dry-run 和断线/重启演练。
-
-## Phase 4: 交互和运维增强
-
-目标：不改变交易核心，改善使用体验、可观测性和维护成本。
-
-| 优先级 | 项 | 来源 | 说明 |
-|--------|----|------|------|
-| P0 | 流式消息回复 | cc-connect | Claude Code `stream-json` 逐段推送到飞书，减少长时间空白等待 |
-| P0 | Session 自动轮转 | cc-connect | 防止长会话上下文膨胀，支持整理记忆后重置 |
-| P1 | 回复冗长度模式 | cc-connect | `/mode full/compact/quiet` 控制手机端信息密度 |
-| P1 | 飞书确认卡片 | cc-connect | 仅用于实盘订单确认等高风险交互；日常快捷入口使用机器人菜单 |
-| P1 | 轻量监控面板 | cc-connect / FinceptTerminal | 展示 run、净值、持仓、交易和错误 |
-| P2 | 工具注册元数据 | Vibe-Trading | 为包内工具添加 metadata，自动生成 CLAUDE.md 工具表 |
 
 ## 暂不做
 

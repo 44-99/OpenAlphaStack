@@ -10,7 +10,6 @@ Usage:
 """
 import argparse
 import json
-import os
 from alphaclaude.paths import PROJECT_ROOT
 import subprocess
 import sys

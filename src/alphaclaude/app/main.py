@@ -17,7 +17,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from config import ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR, STREAM_ENABLED, STREAM_UPDATE_MS
+from config import (
+    ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR, STREAM_ENABLED, STREAM_UPDATE_MS,
+    AUTO_ROTATE_ENABLED, CONTEXT_WINDOW_TOKENS, ROTATE_THRESHOLD, MAX_TURNS_BEFORE_ROTATE,
+)
 from feishu.bot import parse_event, reply_message, send_text, update_message
 from feishu.group import check_membership
 from feishu.user import get_user_label
@@ -141,6 +144,8 @@ def _get_or_create_session(conv_id: str, session_type: str, label: str = "") -> 
             "type": session_type,
             "label": label,
             "memory_injected": False,
+            "reply_mode": "full",
+            "turn_count": 0,
             "created_at": datetime.now().isoformat(),
         }
         _save_sessions()
@@ -158,12 +163,63 @@ def _reset_session(conv_id: str) -> str:
             "type": old["type"] if old else "dm",
             "label": old["label"] if old else "",
             "memory_injected": False,
+            "reply_mode": old.get("reply_mode", "full") if old else "full",
+            "turn_count": 0,
             "created_at": datetime.now().isoformat(),
         }
         _save_sessions()
         if old:
             logger.info("重置: %s → %s", conv_id, sid[:8], extra={"category": "session", "session_id": sid})
         return sid
+
+
+def _check_context_budget(conv_id: str) -> bool:
+    """Check if session is near context limit and auto-rotate if needed.
+
+    Returns True if rotation occurred, False otherwise.
+    Triggered when: input_tokens > threshold * context_window OR turn_count > max_turns.
+    """
+    if not AUTO_ROTATE_ENABLED:
+        return False
+
+    session = _sessions.get(conv_id)
+    if not session:
+        return False
+
+    # Increment turn counter
+    session["turn_count"] = session.get("turn_count", 0) + 1
+    _save_sessions()
+
+    # Check turn-count-based rotation
+    if session["turn_count"] >= MAX_TURNS_BEFORE_ROTATE:
+        logger.info("自动轮转(轮数): %s 已达 %s 轮", conv_id, session["turn_count"],
+                    extra={"category": "session"})
+        _trigger_rotate(conv_id)
+        return True
+
+    # Check token-based rotation
+    try:
+        from claude import get_last_token_usage
+        usage = get_last_token_usage()
+        input_tokens = usage.get("input_tokens", 0)
+        if input_tokens > 0 and input_tokens > int(CONTEXT_WINDOW_TOKENS * ROTATE_THRESHOLD):
+            logger.info("自动轮转(token): %s input=%s / %s", conv_id, input_tokens, CONTEXT_WINDOW_TOKENS,
+                        extra={"category": "session"})
+            _trigger_rotate(conv_id)
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _trigger_rotate(conv_id: str) -> None:
+    """Consolidate memory then reset session for the given conv_id."""
+    try:
+        memory._consolidate_session(conv_id)
+    except Exception:
+        pass
+    _reset_session(conv_id)
 
 
 # === Subscriber management ===
@@ -461,9 +517,15 @@ _EXACT_COMMANDS = {
     "/resume", "resume", "恢复引擎", "恢复",
     "/groups", "groups",
     "/tasks", "tasks",
+    "/mode", "mode",
+    "/dashboard", "dashboard", "监控", "面板", "总览", "/监控", "/面板", "/总览",
 }
 
-_RUN_CONTROL_PREFIXES = ("/status ", "/stop ", "/resume ", "状态 ", "停止 ", "恢复 ")
+_RUN_CONTROL_PREFIXES = (
+    "/status ", "/stop ", "/resume ",
+    "状态 ", "停止 ", "恢复 ",
+    "/mode ", "mode ",
+)
 
 _COMMAND_KEYWORDS = [
     "清空", "重置", "新对话", "新开", "重新开始", "从头",
@@ -574,7 +636,7 @@ def _execute_actions(actions: list[dict], chat_id: str, chat_type: str,
     return "\n".join(results) if results else ""
 
 
-def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
+def _handle_command(chat_id: str, chat_type: str, text: str, sender_id: str = "") -> str | None:
     """Handle exact-match bot commands. Returns reply string or None."""
     cmd = text.strip()
     cmd_lower = cmd.lower()
@@ -632,6 +694,16 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
         except Exception as e:
             return f"无法获取计划: {e}"
 
+    if cmd_lower in ("/dashboard", "dashboard", "监控", "面板", "总览", "/监控", "/面板", "/总览"):
+        try:
+            from alphaclaude.tools.engine_status import build_monitoring_card
+            from feishu.bot import send_card
+            card = build_monitoring_card()
+            send_card(chat_id, card)
+        except Exception as e:
+            return f"无法生成监控面板: {e}"
+        return None  # card already sent, no text reply needed
+
     if cmd_lower.startswith("/stop ") or cmd.startswith("停止 "):
         if chat_type != "p2p":
             return "请在私聊中使用 停止 <run_id> 停止指定引擎。"
@@ -678,6 +750,31 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
         lines.append("\n用法: /group <群ID> <提问内容>")
         return "\n".join(lines)
 
+    if cmd_lower.startswith("/mode ") or cmd.lower().startswith("mode "):
+        mode_arg = cmd.split(None, 1)[1].strip().lower()
+        if mode_arg in ("full", "完整", "详细"):
+            mode_value = "full"
+            label = "完整模式"
+        elif mode_arg in ("compact", "简洁", "精简"):
+            mode_value = "compact"
+            label = "简洁模式"
+        elif mode_arg in ("quiet", "极简", "一句话"):
+            mode_value = "quiet"
+            label = "极简模式"
+        else:
+            return "用法: /mode full|compact|quiet\nfull=完整分析 compact=简洁结论(≤300字) quiet=一句话回答"
+        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" and sender_id else chat_id
+        with _session_lock:
+            if conv_id in _sessions:
+                _sessions[conv_id]["reply_mode"] = mode_value
+                _save_sessions()
+        return f"已切换为 {label}。"
+    if cmd_lower in ("/mode", "mode"):
+        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" and sender_id else chat_id
+        current = _sessions.get(conv_id, {}).get("reply_mode", "full")
+        labels = {"full": "完整模式", "compact": "简洁模式(≤300字)", "quiet": "极简模式(一句话)"}
+        return f"当前模式: {labels.get(current, current)}\n用法: /mode full|compact|quiet"
+
     if cmd_lower in ("/tasks", "tasks"):
         tasks = list_dynamic_tasks(chat_id)
         if not tasks:
@@ -711,9 +808,9 @@ def _handle_command(chat_id: str, chat_type: str, text: str) -> str | None:
     return None
 
 
-def _reply_exact_command(chat_id: str, chat_type: str, text: str, message_id: str) -> None:
+def _reply_exact_command(chat_id: str, chat_type: str, text: str, message_id: str, sender_id: str = "") -> None:
     try:
-        cmd_reply = _handle_command(chat_id, chat_type, text)
+        cmd_reply = _handle_command(chat_id, chat_type, text, sender_id)
         if cmd_reply is not None:
             reply_message(message_id, cmd_reply)
     except (OSError, ValueError, RuntimeError) as e:
@@ -955,6 +1052,15 @@ def _process_one_message(task: dict, session_id: str) -> None:
     if action_summary:
         context_parts.append(f"[操作结果: {action_summary}]")
 
+    # Inject reply mode instruction
+    reply_mode = _sessions.get(conv_id, {}).get("reply_mode", "full")
+    _MODE_INSTRUCTIONS = {
+        "compact": "回答不超过300字，只给结论、关键数据和操作建议，不展开分析过程。",
+        "quiet": "用一句话回答，只给最关键的操作建议和价格点位，不解释理由。",
+    }
+    if reply_mode in _MODE_INSTRUCTIONS:
+        context_parts.append(f"[回复模式: {_MODE_INSTRUCTIONS[reply_mode]}]")
+
     if context_parts:
         prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
     else:
@@ -967,6 +1073,13 @@ def _process_one_message(task: dict, session_id: str) -> None:
         response = ask_claude(prompt, session_id=session_id)
         reply_message(message_id, response)
         logger.info("已发送到 %s", chat_id, extra={"category": "reply", "chat_id": chat_id})
+
+    # Auto-rotate if close to context limit
+    if _check_context_budget(conv_id):
+        try:
+            reply_message(message_id, "对话已自动整理，之前的关键信息已保存到记忆。")
+        except Exception:
+            pass
 
 
 # === Crash hook ===
@@ -1065,7 +1178,7 @@ def _process_message(event: dict) -> None:
     if cmd_lower in _EXACT_COMMANDS or cmd_lower.startswith(_RUN_CONTROL_PREFIXES):
         threading.Thread(
             target=_reply_exact_command,
-            args=(chat_id, chat_type, text, message_id),
+            args=(chat_id, chat_type, text, message_id, sender_id),
             daemon=True,
         ).start()
         return

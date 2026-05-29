@@ -1,7 +1,6 @@
 """Market sentiment: turnover trend, volume trend, ATR, MA convergence."""
 import argparse
 import json
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist
@@ -41,7 +40,6 @@ def turnover_trend(df) -> dict:
         # Normalize: recent 20d vs prior period
         recent_avg = sum(volumes[-20:]) / 20
         prior_avg = sum(volumes[-40:-20]) / min(20, len(volumes) - 20) if len(volumes) >= 40 else recent_avg
-        ratio_recent_vs_prior = recent_avg / prior_avg if prior_avg else 1.0
         rising = recent_avg > prior_avg * 1.1
         falling = recent_avg < prior_avg * 0.9
         return {

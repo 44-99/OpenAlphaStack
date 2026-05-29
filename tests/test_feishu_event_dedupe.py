@@ -116,7 +116,7 @@ def test_exact_command_dispatches_command_work_to_background(monkeypatch):
     monkeypatch.setattr(
         app_main,
         "_handle_command",
-        lambda chat_id, chat_type, text: command_calls.append((chat_id, chat_type, text)) or "状态正常",
+        lambda chat_id, chat_type, text, sender_id="": command_calls.append((chat_id, chat_type, text)) or "状态正常",
     )
     monkeypatch.setattr(app_main, "reply_message", lambda message_id, text: replies.append((message_id, text)))
 
@@ -134,7 +134,7 @@ def test_exact_command_dispatches_command_work_to_background(monkeypatch):
     assert len(started) == 1
     target, args, daemon = started[0]
     assert target is app_main._reply_exact_command
-    assert args == ("chat-1", "p2p", "/status", "message-1")
+    assert args == ("chat-1", "p2p", "/status", "message-1", "user-1")
     assert daemon is True
 
     target(*args)

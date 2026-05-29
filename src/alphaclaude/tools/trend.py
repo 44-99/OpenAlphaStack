@@ -1,7 +1,6 @@
 """Trend analysis: MA alignment, crossover detection, deviation, trend status."""
 import argparse
 import json
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist
@@ -92,8 +91,6 @@ def main():
         sys.exit(1)
 
     closes = df["close"].tolist()
-    highs = df["high"].tolist()
-    lows = df["low"].tolist()
     mas = compute_mas(closes)
 
     # Clean NaN tails

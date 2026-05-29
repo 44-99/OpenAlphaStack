@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
@@ -21,7 +21,7 @@ from alphaclaude.engine.state import EngineState
 add_legacy_paths()
 
 try:
-    from alphaclaude.tools.notifier import notify_alert, notify_overnight_timeout, notify_sub_agent_summaries
+    from alphaclaude.tools.notifier import notify_overnight_timeout, notify_sub_agent_summaries
     _notify = True
 except Exception:
     _notify = False
@@ -95,7 +95,7 @@ class OvernightPipeline:
                 with open(entry_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 # Extract just the signal summary table (lines starting with | # |)
-                sig_lines = [l for l in content.split("\n") if l.startswith("| ") and not l.startswith("|---")]
+                sig_lines = [line for line in content.split("\n") if line.startswith("| ") and not line.startswith("|---")]
                 if sig_lines:
                     inj["entry_signals"] = (
                         "## 入场信号评分 (skills/stock-analyzer/entry-signals)\n"
@@ -109,15 +109,15 @@ class OvernightPipeline:
                 # Extract the volatility bucket table
                 in_table = False
                 t0_lines = []
-                for l in content.split("\n"):
-                    if "ATR波动率" in l and "做T目标" in l:
+                for line in content.split("\n"):
+                    if "ATR波动率" in line and "做T目标" in line:
                         in_table = True
-                        t0_lines.append(l)
+                        t0_lines.append(line)
                         continue
                     if in_table:
-                        if l.startswith("|") and not l.startswith("|---"):
-                            t0_lines.append(l)
-                        elif not l.startswith("|"):
+                        if line.startswith("|") and not line.startswith("|---"):
+                            t0_lines.append(line)
+                        elif not line.startswith("|"):
                             in_table = False
                 if t0_lines:
                     inj["t0_params"] = (
@@ -128,8 +128,8 @@ class OvernightPipeline:
             if _os.path.exists(risk_path):
                 with open(risk_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                risk_items = [l.strip() for l in content.split("\n")
-                              if l.strip().startswith("- ") and len(l) > 10][:8]
+                risk_items = [line.strip() for line in content.split("\n")
+                              if line.strip().startswith("- ") and len(line) > 10][:8]
                 if risk_items:
                     inj["risk_checklist"] = (
                         "## 风险排查清单 (skills/stock-analyzer/risk-checklist)\n"
@@ -166,16 +166,12 @@ class OvernightPipeline:
             lines.append("  北向资金: 回测模式不可用")
         else:
             # ── Live: fetch from APIs ──
+            from alphaclaude.tools._compression import compress_output
             try:
                 from alphaclaude.tools.quote import get_market_overview
                 overview = get_market_overview()
                 if overview and not overview.get("error"):
-                    for idx in overview.get("indices", []):
-                        pct = idx.get("change_pct", 0)
-                        lines.append(
-                            f"  {idx.get('name','')}: {idx.get('price','N/A')} "
-                            f"{pct:+.2f}%"
-                        )
+                    lines.append(compress_output(overview, "market_overview"))
             except Exception:
                 lines.append("  (行情数据暂不可用)")
             lines.append("")
@@ -183,7 +179,7 @@ class OvernightPipeline:
                 from alphaclaude.tools.flow import get_north_flow
                 nf = get_north_flow()
                 if nf and not nf.get("error"):
-                    lines.append(f"  北向资金: 净流入{nf.get('net_inflow','N/A')}亿")
+                    lines.append(compress_output(nf, "north_flow"))
             except Exception:
                 pass
 
@@ -281,7 +277,13 @@ class OvernightPipeline:
             return ""
 
     def _run_sub_agents(self) -> dict[str, str]:
-        """Run 3 sub-agents in parallel. Returns {'A': summary, 'B': summary, 'C': summary}."""
+        """Run 3 sub-agents in parallel via SDK direct call (QUICK_THINK_MODEL).
+
+        Returns {'A': summary, 'B': summary, 'C': summary}.
+        """
+        from alphaclaude.tools.llm_client import call_text
+        from config import QUICK_THINK_MODEL
+
         prompts = {
             "A": self._build_sub_agent_a_prompt(),
             "B": self._build_sub_agent_b_prompt(),
@@ -290,11 +292,9 @@ class OvernightPipeline:
         results = {}
 
         def _run_one(label, prompt):
-            from claude import ask_claude
             for attempt in range(2):
                 try:
-                    response = ask_claude(prompt, timeout=300)
-                    text = (response or "").strip()
+                    text = (call_text(prompt, max_tokens=800, model=QUICK_THINK_MODEL) or "").strip()
                     if text and "超时" not in text and "出错" not in text:
                         return label, text[:500]
                     if attempt == 0:
@@ -392,7 +392,6 @@ class OvernightPipeline:
                     continue
                 # MA computation
                 closes_arr = [float(x) for x in hist["close"].tolist()]
-                n = len(closes_arr)
                 ma5 = sum(closes_arr[-5:]) / 5
                 ma10 = sum(closes_arr[-10:]) / 10
                 ma20 = sum(closes_arr[-20:]) / 20
@@ -473,19 +472,14 @@ class OvernightPipeline:
                 lines.append("## 策略筛选候选 (当日无数据)")
         else:
             # ── Live: run screen.py ──
+            from alphaclaude.tools._compression import compress_output
             try:
                 from alphaclaude.tools.screen import run_screen
                 result = run_screen("default")
-                stocks = result.get("results", [])[:10] if isinstance(result, dict) else []
-                if stocks:
-                    lines.append("## 技术筛选候选 (screen.py default 前10)")
-                    for s in stocks:
-                        code = s.get("代码", "")
-                        lines.append(
-                            f"  {code} {s.get('名称','')}: "
-                            f"现价{s.get('最新价','N/A')} 涨跌{s.get('涨跌幅','N/A'):+.2f}% "
-                            f"换手{s.get('换手率','N/A')}%"
-                        )
+                if isinstance(result, dict) and result.get("results"):
+                    lines.append(compress_output(result, "screen"))
+                elif not isinstance(result, dict) or not result.get("results"):
+                    lines.append("## 技术筛选候选 (无结果)")
             except Exception:
                 lines.append("## 技术筛选候选 (不可用)")
 
@@ -519,11 +513,11 @@ class OvernightPipeline:
                 lines.append(f"   规避措施: {fix}")
         return "\n".join(lines)
 
-    def _call_text_safe(self, prompt: str, label: str) -> str:
+    def _call_text_safe(self, prompt: str, label: str, model: str | None = None) -> str:
         """Call call_text with error handling. Returns '' on failure."""
         from alphaclaude.tools.llm_client import call_text
         try:
-            result = call_text(prompt, max_tokens=2048)
+            result = call_text(prompt, max_tokens=2048, model=model)
             return (result or "").strip()
         except Exception as exc:
             print(f"[OvernightPipeline] {label} text call failed: {exc}")
@@ -748,17 +742,21 @@ class OvernightPipeline:
     def _run_bull_bear_debate(self, summaries: dict[str, str],
                               direction: dict) -> tuple[list[dict], str]:
         """Run Bull/Bear/Risk three-stage debate for candidate selection.
+
+        Bull and Bear use QUICK_THINK_MODEL (research/debate). Risk final
+        decision call uses call_with_tool_safe default (ANTHROPIC_MODEL).
         Returns (candidates, debate_trace). Falls back to empty on any failure.
         """
         from alphaclaude.tools.llm_client import call_with_tool_safe, TOOL_ADD_CANDIDATE
+        from config import QUICK_THINK_MODEL
 
         bull_prompt = self._build_bull_prompt(summaries, direction)
-        bull_text = self._call_text_safe(bull_prompt, "Bull")
+        bull_text = self._call_text_safe(bull_prompt, "Bull", model=QUICK_THINK_MODEL)
         if not bull_text:
             return [], ""
 
         bear_prompt = self._build_bear_prompt(summaries, direction, bull_text)
-        bear_text = self._call_text_safe(bear_prompt, "Bear")
+        bear_text = self._call_text_safe(bear_prompt, "Bear", model=QUICK_THINK_MODEL)
         if not bear_text:
             return [], ""
 
@@ -838,9 +836,14 @@ class OvernightPipeline:
         """3.10 Risk debate: Aggressive/Conservative/Neutral three-person debate
         for large-position trades. Runs only when single > 15% or total > 50%.
 
+        Aggressive and Conservative use QUICK_THINK_MODEL (debate). Neutral
+        arbiter uses ANTHROPIC_MODEL (final decision).
+
         Returns {'action': 'maintain'|'reduce'|'reject', 'suggested_total_pct': float,
                  'rejected_codes': [...], 'reasoning': str} or None on skip/failure.
         """
+        from config import QUICK_THINK_MODEL
+
         # Check trigger conditions
         total_pct = sum(c.get("position_pct", 0) for c in candidates)
         max_single = max((c.get("position_pct", 0) for c in candidates), default=0)
@@ -850,13 +853,13 @@ class OvernightPipeline:
         print(f"[RiskDebate] Triggered: max_single={max_single:.0f}% total={total_pct:.0f}%")
 
         aggressive_prompt = self._build_aggressive_risk_prompt(candidates, total_pct)
-        aggressive_text = self._call_text_safe(aggressive_prompt, "Risk-Aggressive")
+        aggressive_text = self._call_text_safe(aggressive_prompt, "Risk-Aggressive", model=QUICK_THINK_MODEL)
         if not aggressive_text:
             return None
 
         conservative_prompt = self._build_conservative_risk_prompt(
             candidates, total_pct, aggressive_text)
-        conservative_text = self._call_text_safe(conservative_prompt, "Risk-Conservative")
+        conservative_text = self._call_text_safe(conservative_prompt, "Risk-Conservative", model=QUICK_THINK_MODEL)
         if not conservative_text:
             return None
 
@@ -1022,7 +1025,7 @@ class OvernightPipeline:
         parts = [
             f"{sim_date}次日选股。{bias}偏好{preferred}仓位{cap}%。"
             f"从筛选列表中尽量多选符合条件的标的(目标5-10只), 每只调用一次add_candidate。",
-            f"仓位分配: 单只5-15%, 多选则分摊。入选理由充分的可给高仓位, 有疑虑的给低仓位。",
+            "仓位分配: 单只5-15%, 多选则分摊。入选理由充分的可给高仓位, 有疑虑的给低仓位。",
             f"板块: {summaries.get('B','')[:200]}",
             self._fetch_candidates_screen(),
             self._bc_rules_text(),

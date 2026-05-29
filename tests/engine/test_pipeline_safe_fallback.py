@@ -59,7 +59,7 @@ def test_direction_fallback_infers_conservative_bias(pipeline_dir):
 
 def test_bull_bear_debate_uses_safe_text_fallback(pipeline_dir, monkeypatch):
     pipeline = _pipeline(pipeline_dir)
-    monkeypatch.setattr(pipeline, "_call_text_safe", lambda _prompt, label: f"{label} text")
+    monkeypatch.setattr(pipeline, "_call_text_safe", lambda _prompt, label, **kw: f"{label} text")
     monkeypatch.setattr(pipeline, "_build_bull_prompt", lambda *_args: "bull prompt")
     monkeypatch.setattr(pipeline, "_build_bear_prompt", lambda *_args: "bear prompt")
     monkeypatch.setattr(pipeline, "_build_risk_prompt", lambda *_args: "risk prompt")
@@ -120,7 +120,7 @@ def test_launch_emergency_does_not_send_duplicate_alert(pipeline_dir, monkeypatc
     alerts = []
 
     monkeypatch.setattr(pipeline_module, "_notify", True)
-    monkeypatch.setattr(pipeline_module, "notify_alert", lambda *args: alerts.append(args))
+    pipeline_module.notify_alert = lambda *args: alerts.append(args)
     monkeypatch.setattr(llm_client, "call_with_tool", lambda *_args, **_kwargs: [{"action": "hold", "reasoning": "test"}])
 
     pipeline.launch_emergency("300263 下跌5.0%")

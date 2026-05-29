@@ -119,8 +119,27 @@ def _daemon_command(args: argparse.Namespace, run_id: str) -> list[str]:
     return cmd
 
 
+def _existing_run_info(record: run_registry.RunRecord) -> dict:
+    """Return daemon-style metadata for an already-alive run."""
+    log_prefix = _logs_dir() / record.run_id
+    return {
+        "pid": record.process_id,
+        "run_id": record.run_id,
+        "run_dir": record.run_dir,
+        "stdout": str(log_prefix.with_suffix(".out.log")),
+        "stderr": str(log_prefix.with_suffix(".err.log")),
+        "existing": True,
+        "status": record.status,
+    }
+
+
 def start_daemon(args: argparse.Namespace) -> dict:
     """Start the engine detached from the current console and return metadata."""
+    if args.mode == "paper":
+        existing = run_registry.find_active_run("paper", args.resume or None)
+        if existing is not None:
+            return _existing_run_info(existing)
+
     run_id = args.resume or _daemon_run_id(args.mode)
     log_prefix = _logs_dir() / run_id
     out_path = log_prefix.with_suffix(".out.log")
@@ -194,9 +213,24 @@ def _resume_namespace(plan: run_registry.ResumePlan, base_args: argparse.Namespa
 
 def resume_run_daemon(run_id: str, base_args: argparse.Namespace | None = None) -> dict:
     """Resume one recorded run as a detached daemon and update metadata."""
+    existing = run_registry.find_active_run("paper", run_id)
+    if existing is not None:
+        info = _existing_run_info(existing)
+        info["resume"] = {
+            "run_id": existing.run_id,
+            "mode": existing.mode,
+            "args": [],
+            "safe_status": existing.status,
+            "resume_count": existing.resume_count,
+        }
+        return info
+
     plan = run_registry.build_resume_plan(run_id)
     args = _resume_namespace(plan, base_args)
     info = start_daemon(args)
+    if info.get("existing"):
+        info["resume"] = plan.to_dict()
+        return info
     run_registry.mark_resume_started(plan, int(info["pid"]))
     info["resume"] = plan.to_dict()
     return info

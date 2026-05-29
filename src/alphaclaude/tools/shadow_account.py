@@ -279,7 +279,7 @@ def _detect_patterns(paired, disp_ratio, bearish_entries, bearish_loss,
             "suggested_fix": "bearish时position_cap强制≤20%，禁止新增B/C类候选",
         })
 
-    if deviations > len(paired) * 0.2:
+    if len(paired) > 0 and deviations > len(paired) * 0.2:
         patterns.append({
             "pattern": "策略执行偏离",
             "severity": "medium",

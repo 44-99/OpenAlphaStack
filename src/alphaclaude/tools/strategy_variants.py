@@ -5,7 +5,6 @@ market volatility and trend direction. Avoids confirmation bias from
 always using the same parameters regardless of market regime.
 """
 import json
-import os
 from alphaclaude.paths import PROJECT_ROOT
 import sys
 

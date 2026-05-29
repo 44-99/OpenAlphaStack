@@ -8,13 +8,22 @@ Data flow:
 import argparse
 import json
 import os
-from alphaclaude.paths import PROJECT_ROOT
-import sys
-import time
-from datetime import datetime
+from alphaclaude.tools._registry import tool_meta
 
-import pandas as pd
-import requests
+tool_meta(
+    name="screen",
+    category="信息与筛选",
+    description="全市场多因子选股",
+    usage="python -m alphaclaude.tools.screen -s <策略> 或 --list",
+    scenario="default/breakout/value/hot_money 策略筛选",
+)
+from alphaclaude.paths import PROJECT_ROOT  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+from datetime import datetime  # noqa: E402
+
+import pandas as pd  # noqa: E402
+import requests  # noqa: E402
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 300

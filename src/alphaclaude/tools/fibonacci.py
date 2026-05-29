@@ -1,7 +1,6 @@
 """Fibonacci retracement and extension level calculator."""
 import argparse
 import json
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist

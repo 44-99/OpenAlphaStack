@@ -192,6 +192,48 @@ def test_engine_cli_daemon_starts_detached_process(monkeypatch, workspace_tmp, c
     assert kwargs["close_fds"] is True
 
 
+def test_start_daemon_reuses_alive_paper_run(monkeypatch, workspace_tmp):
+    existing = engine_cli.run_registry.RunRecord(
+        run_id="paper_alive",
+        mode="paper",
+        run_dir=str(workspace_tmp / "output" / "paper_alive"),
+        state_path=str(workspace_tmp / "output" / "paper_alive" / "state.json"),
+        process_id=22222,
+        status="observation",
+        is_alive=True,
+        started_at="2026-05-25T09:00:00",
+        stopped_at="",
+        resume_count=2,
+        observation_mode=True,
+        engine_meta={"status": "observation"},
+    )
+    popen_called = []
+
+    monkeypatch.setattr(engine_cli.run_registry, "find_active_run", lambda mode, run_id=None: existing)
+    monkeypatch.setattr(engine_cli.subprocess, "Popen", lambda *args, **kwargs: popen_called.append((args, kwargs)))
+    monkeypatch.setattr(engine_cli, "_logs_dir", lambda: workspace_tmp / "logs")
+
+    args = engine_cli.argparse.Namespace(
+        mode="paper",
+        capital=100000,
+        start=None,
+        end=None,
+        universe="",
+        watchlist="",
+        resume=None,
+        bar_period=60,
+        dry_run=False,
+        claude_every=1,
+    )
+
+    out = engine_cli.start_daemon(args)
+
+    assert out["pid"] == 22222
+    assert out["run_id"] == "paper_alive"
+    assert out["existing"] is True
+    assert popen_called == []
+
+
 def test_engine_cli_stop_running_uses_pid_metadata(monkeypatch, workspace_tmp, capsys):
     output = workspace_tmp / "output"
     run_dir = output / "paper_test_run"
@@ -294,3 +336,29 @@ def test_engine_cli_resume_run_starts_detached_process(monkeypatch, capsys):
     assert out["run_id"] == "live_test_run"
     assert out["resume"]["safe_status"] == "observation"
     assert marked == [(plan, 23456)]
+
+
+def test_resume_run_daemon_reuses_alive_paper_run(monkeypatch, workspace_tmp):
+    existing = engine_cli.run_registry.RunRecord(
+        run_id="paper_alive",
+        mode="paper",
+        run_dir=str(workspace_tmp / "output" / "paper_alive"),
+        state_path=str(workspace_tmp / "output" / "paper_alive" / "state.json"),
+        process_id=33333,
+        status="observation",
+        is_alive=True,
+        started_at="2026-05-25T09:00:00",
+        stopped_at="",
+        resume_count=4,
+        observation_mode=True,
+        engine_meta={"status": "observation"},
+    )
+    monkeypatch.setattr(engine_cli.run_registry, "find_active_run", lambda mode, run_id=None: existing)
+    monkeypatch.setattr(engine_cli, "_logs_dir", lambda: workspace_tmp / "logs")
+
+    out = engine_cli.resume_run_daemon("paper_alive")
+
+    assert out["pid"] == 33333
+    assert out["run_id"] == "paper_alive"
+    assert out["existing"] is True
+    assert out["resume"]["safe_status"] == "observation"

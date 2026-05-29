@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -148,11 +147,38 @@ class PaperEngine:
         )
 
     def _set_observation_mode(self, enabled: bool, reason: str = "") -> None:
-        """Persist whether the engine is only observing because no daily plan exists."""
+        """Persist whether the engine is observing instead of actively trading."""
         self.state.set_engine_meta(
+            status="observation" if enabled else "running",
             observation_mode=enabled,
             observation_reason=reason if enabled else "",
+            stopped_at="",
         )
+
+    def _heartbeat(self) -> None:
+        """Persist current time so status views can reflect an alive idle engine."""
+        self.state.set_data_time(self.clock.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.state.save()
+
+    def _should_idle_for_calendar(self) -> bool:
+        """Return whether the engine should stay in closed-market idle observation."""
+        now = self.clock.now()
+        if not is_trading_day(now.date()):
+            return True
+        phase = self.clock.session_phase()
+        return phase == "closed"
+
+    def _observation_reason_for_current_time(self) -> str:
+        """Return a human-readable reason for the current observation state."""
+        now = self.clock.now()
+        if not is_trading_day(now.date()):
+            return f"{self._non_trading_day_reason()}; waiting for next trading session"
+        phase = self.clock.session_phase()
+        if phase == "closed":
+            return "交易日前等待盘前时段"
+        if phase in {"post_market", "lunch", "pre_open"}:
+            return f"{phase}; waiting for next actionable session"
+        return "等待下一个可执行时段"
 
     def _reset_fast_lane_for_day_once(self, today) -> None:
         """Reset FastLane daily state once per calendar day."""
@@ -180,8 +206,7 @@ class PaperEngine:
             f"{reason}; skipping pre-market plan and intraday execution"
         )
         self._set_observation_mode(True, observation_reason)
-        self.state.set_data_time(now.strftime("%Y-%m-%d %H:%M:%S"))
-        self.state.save()
+        self._heartbeat()
         print(
             f"[Engine] Non-trading pre-market: {reason}. "
             "Skipping plan generation and intraday actions.",
@@ -294,11 +319,24 @@ class PaperEngine:
         while not self._stop_event.is_set():
             phase = self.clock.session_phase()
             today = self.clock.now().date()
+            should_idle = self._should_idle_for_calendar()
 
             # Closed-market days still get one pre-market Feishu notice.
             if self._is_non_trading_premarket_window() and _last_pipeline_date != today:
                 self._handle_non_trading_premarket()
                 _last_pipeline_date = today
+
+            if should_idle:
+                meta = self.state.load().get("engine_meta", {})
+                reason = self._observation_reason_for_current_time()
+                if (
+                    not meta.get("observation_mode")
+                    or meta.get("observation_reason") != reason
+                ):
+                    self._set_observation_mode(True, reason)
+                self._heartbeat()
+                time.sleep(1)
+                continue
 
             # Pre-market (8:00-9:15): generate today's plan once, before auction.
             if phase == "pre_market" and _last_pipeline_date != today:
@@ -339,8 +377,7 @@ class PaperEngine:
                 self._reset_fast_lane_for_day_once(today)
                 if not self._has_actionable_plan_for_today():
                     self._set_observation_mode(True, "trading hours without a pre-market plan")
-                    self.state.set_data_time(self.clock.now().strftime("%Y-%m-%d %H:%M:%S"))
-                    self.state.save()
+                    self._heartbeat()
                     time.sleep(1)
                     continue
 
@@ -372,6 +409,7 @@ class PaperEngine:
                         finally:
                             self.lock.release()
 
+            self._heartbeat()
             time.sleep(1)
 
     def run_backtest(self, claude_every: int = 1) -> None:

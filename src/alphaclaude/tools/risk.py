@@ -4,7 +4,6 @@ Ported from ai-hedge-fund src/agents/risk_manager.py (pure math, no LLM).
 import argparse
 import json
 import math
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist

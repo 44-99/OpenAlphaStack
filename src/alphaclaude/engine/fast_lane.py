@@ -367,7 +367,7 @@ class FastLane:
             if abort_reason:
                 if tracker.state == "active_buy":
                     if tracker.t0_shares >= 100:
-                        exit_price = min(price, day_low) if is_bt else price
+                        exit_price = price
                         self.execution.execute_sell(
                             code, tracker.t0_shares, exit_price,
                             reason=f"T0_abort: {abort_reason}",
@@ -379,7 +379,7 @@ class FastLane:
                     tracker.load_config(
                         self._get_t0_config_from_plan(code) or {}, available)
                 elif tracker.state == "active_sell":
-                    buy_price = min(price, day_low) if is_bt else price
+                    buy_price = price
                     buy_shares = min(tracker.t0_shares, round_lot(
                         int(self.state.cash * 0.9 / buy_price)))
                     if buy_shares >= 100:
@@ -406,18 +406,12 @@ class FastLane:
                 sellable = min(tracker.t0_shares, available)
                 if sellable < 100:
                     continue
-                if is_bt:
-                    target_hit = day_high >= tracker.t0_target_price if tracker.t0_target_price > 0 else False
-                    stop_hit = day_low <= tracker.t0_stop_price if tracker.t0_stop_price > 0 else False
-                else:
-                    pnl_pct = (price - tracker.t0_entry_price) / tracker.t0_entry_price * 100
-                    target_hit = pnl_pct >= tracker.sell_target_pct
-                    stop_hit = pnl_pct <= tracker.stop_loss_pct
+                pnl_pct = (price - tracker.t0_entry_price) / tracker.t0_entry_price * 100
+                target_hit = pnl_pct >= tracker.sell_target_pct
+                stop_hit = pnl_pct <= tracker.stop_loss_pct
 
                 if target_hit:
-                    exit_price = tracker.t0_target_price if is_bt else price
-                    if is_bt and exit_price <= 0:
-                        exit_price = price
+                    exit_price = price
                     r = self.execution.execute_sell(
                         code, sellable, exit_price,
                         reason=f"T0_target: {tracker.sell_target_pct}%",
@@ -437,9 +431,7 @@ class FastLane:
                         tracker.t0_target_price = 0.0
                         tracker.t0_stop_price = 0.0
                 elif stop_hit:
-                    exit_price = tracker.t0_stop_price if is_bt else price
-                    if is_bt and exit_price <= 0:
-                        exit_price = price
+                    exit_price = price
                     r = self.execution.execute_sell(
                         code, sellable, exit_price,
                         reason=f"T0_stop: {tracker.stop_loss_pct}%",
@@ -459,18 +451,12 @@ class FastLane:
                         tracker.t0_target_price = 0.0
                         tracker.t0_stop_price = 0.0
             elif tracker.state == "active_sell":
-                if is_bt:
-                    target_hit = day_low <= tracker.t0_target_price if tracker.t0_target_price > 0 else False
-                    stop_hit = day_high >= tracker.t0_stop_price if tracker.t0_stop_price > 0 else False
-                else:
-                    pnl_pct = (tracker.t0_entry_price - price) / tracker.t0_entry_price * 100
-                    target_hit = pnl_pct >= tracker.sell_target_pct
-                    stop_hit = pnl_pct <= tracker.stop_loss_pct
+                pnl_pct = (tracker.t0_entry_price - price) / tracker.t0_entry_price * 100
+                target_hit = pnl_pct >= tracker.sell_target_pct
+                stop_hit = pnl_pct <= tracker.stop_loss_pct
 
                 if target_hit:
-                    buy_price = tracker.t0_target_price if is_bt else price
-                    if is_bt and buy_price <= 0:
-                        buy_price = price
+                    buy_price = price
                     buy_shares = min(tracker.t0_shares, round_lot(
                         int(self.state.cash * 0.4 / buy_price)))
                     if buy_shares >= 100:
@@ -536,15 +522,10 @@ class FastLane:
 
             if direction in ("forward", "both"):
                 if tracker.buy_trigger_price > 0:
-                    if is_bt:
-                        # Backtest: entry triggered if day's low crossed the buy trigger
-                        trigger_fired = day_low <= tracker.buy_trigger_price
-                        entry_price = tracker.buy_trigger_price
-                    else:
-                        # Live/paper: price within 0.5% of trigger
-                        trigger_fired = (tracker.buy_trigger_price * 0.995 <= price <=
-                                         tracker.buy_trigger_price * 1.005)
-                        entry_price = price
+                    # Live/paper: price within 0.5% of trigger
+                    trigger_fired = (tracker.buy_trigger_price * 0.995 <= price <=
+                                     tracker.buy_trigger_price * 1.005)
+                    entry_price = price
 
                     if trigger_fired:
                         t0_shares = tracker.max_shares
@@ -574,15 +555,9 @@ class FastLane:
 
             if direction in ("reverse", "both"):
                 if tracker.buy_trigger_price > 0:
-                    if is_bt:
-                        # Backtest: reverse T triggered if day's high crossed sell trigger
-                        sell_trigger_price = tracker.buy_trigger_price * (1 + tracker.sell_target_pct / 100)
-                        trigger_fired = day_high >= sell_trigger_price
-                        entry_price = sell_trigger_price
-                    else:
-                        sell_trigger_price = price * (1 + tracker.sell_target_pct / 100)
-                        trigger_fired = price >= sell_trigger_price * 0.98
-                        entry_price = price
+                    sell_trigger_price = price * (1 + tracker.sell_target_pct / 100)
+                    trigger_fired = price >= sell_trigger_price * 0.98
+                    entry_price = price
 
                     if trigger_fired > 0 and trigger_fired:
                         t0_sell_shares = min(tracker.max_shares, available)
@@ -792,7 +767,7 @@ class FastLane:
         if candidates:
             total_value = self.state.total_value
             cash = self.state.cash
-            position_value = total_value - cash
+            _ = total_value - cash
 
             bucket_config = {
                 1: {"name": "core", "cap_pct": 50, "default_stop_pct": -8, "max_hold_condition": None},

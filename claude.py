@@ -19,6 +19,19 @@ def _session_exists(session_id: str) -> bool:
     return os.path.exists(os.path.join(SESSIONS_DIR, f"{session_id}.jsonl"))
 
 
+# Token usage from last stream — populated by ask_claude_stream(), read by caller.
+_last_token_usage: dict = {}
+
+
+def get_last_token_usage() -> dict:
+    """Return token usage info from the most recent stream-json call.
+
+    Returns dict with keys: input_tokens, output_tokens, cache_creation_input_tokens,
+    cache_read_input_tokens. Empty dict if no stream has been run.
+    """
+    return dict(_last_token_usage)
+
+
 def ask_claude(prompt: str, session_id: str = None, timeout: int = CLAUDE_TIMEOUT) -> str:
     """Run claude -p. If session_id given, use --resume or --session-id for persistent context."""
     prompt = prompt.strip()
@@ -120,6 +133,12 @@ def ask_claude_stream(
                 continue
 
             message = obj.get("message", {})
+            # Capture token usage from the assistant message
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                _last_token_usage.clear()
+                _last_token_usage.update(usage)
+
             content_blocks = message.get("content", [])
             for block in content_blocks:
                 if block.get("type") == "text":

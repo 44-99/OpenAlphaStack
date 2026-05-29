@@ -1,7 +1,6 @@
 """Signal detector: K-line patterns, volume signals, MA cross confirmations."""
 import argparse
 import json
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist
@@ -17,7 +16,6 @@ def detect_one_yang_three_yin(df) -> dict:
         return {"signal": "insufficient_data", "description": "需要至少 10 日数据"}
 
     recent = df.tail(5).reset_index(drop=True)
-    prev = df.iloc[-6:-1]
 
     # Day 1 (index 0 in recent): big yang
     d1_open = float(recent.iloc[0]["open"])
@@ -36,7 +34,7 @@ def detect_one_yang_three_yin(df) -> dict:
 
     for i in range(1, 4):
         row = recent.iloc[i]
-        o, c, h, lo, v = float(row["open"]), float(row["close"]), float(row["high"]), float(row["low"]), float(row["volume"])
+        o, c, _h, lo, v = float(row["open"]), float(row["close"]), float(row["high"]), float(row["low"]), float(row["volume"])
         entity = abs(c - o) / o * 100
 
         day_info = {"day": i + 1, "entity_pct": round(entity, 2),

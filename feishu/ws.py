@@ -31,6 +31,18 @@ def listen(event_handler, reconnect_delay: int = 3):
     Runs in a daemon thread since SDK's Client.start() is blocking.
     Auto-reconnects on disconnect.
     """
+    import asyncio
+    import lark_oapi.ws.client as _ws_client_module
+
+    # The lark-oapi SDK captures asyncio.get_event_loop() at module import
+    # time — which happens on the main thread and returns uvicorn's already-
+    # running loop.  Calling loop.run_until_complete() on a running loop
+    # raises "This event loop is already running".  Replace the captured
+    # loop with a fresh one bound to this daemon thread.
+    _dedicated_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_dedicated_loop)
+    _ws_client_module.loop = _dedicated_loop
+
     global _event_handler
     _event_handler = event_handler
 

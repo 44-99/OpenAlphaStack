@@ -106,7 +106,7 @@ def test_run_control_prefix_dispatches_without_claude(monkeypatch):
     assert len(started) == 1
     target, args, daemon = started[0]
     assert target is app_main._reply_exact_command
-    assert args == ("chat-1", "p2p", "/status paper_test_run", "message-1")
+    assert args == ("chat-1", "p2p", "/status paper_test_run", "message-1", "user-1")
     assert daemon is True
 
 

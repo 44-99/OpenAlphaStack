@@ -9,6 +9,15 @@ from datetime import datetime
 
 import requests
 from alphaclaude.tools._http import get_session, retry_get
+from alphaclaude.tools._registry import tool_meta
+
+tool_meta(
+    name="quote",
+    category="行情",
+    description="个股实时行情或大盘指数",
+    usage="python -m alphaclaude.tools.quote <code> 或 market",
+    scenario="获取价格、涨跌幅、换手率、量比、PE/PB",
+)
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 300

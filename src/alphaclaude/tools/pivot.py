@@ -1,7 +1,6 @@
 """Pivot point detection: swing highs/lows, support/resistance clusters, box range."""
 import argparse
 import json
-import os
 import sys
 
 from alphaclaude.tools._fallback import get_hist

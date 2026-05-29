@@ -4,7 +4,6 @@ All functions are no-ops when ENGINE_CHAT_IDS is empty.
 Importable from the package engine or any other engine component.
 """
 
-import os
 from alphaclaude.paths import PROJECT_ROOT
 import sys
 import time
