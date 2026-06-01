@@ -7,15 +7,6 @@ import sys
 import time
 from datetime import datetime
 from alphaclaude.tools._http import friendly_error  # noqa: E402
-from alphaclaude.tools._registry import tool_meta
-
-tool_meta(
-    name="flow",
-    category="基本面与资金",
-    description="资金流向——个股主力大单方向、北向资金净流入与趋势",
-    usage="python -m alphaclaude.tools.flow <code> 或 north",
-    scenario="判断主力资金方向、北向资金态度、大单净买入/卖出",
-)
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 300

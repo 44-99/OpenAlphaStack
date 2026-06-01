@@ -8,15 +8,6 @@ Data flow:
 import argparse
 import json
 import os
-from alphaclaude.tools._registry import tool_meta
-
-tool_meta(
-    name="screen",
-    category="信息与筛选",
-    description="全市场多因子选股",
-    usage="python -m alphaclaude.tools.screen -s <策略> 或 --list",
-    scenario="default/breakout/value/hot_money 策略筛选",
-)
 from alphaclaude.paths import PROJECT_ROOT  # noqa: E402
 import sys  # noqa: E402
 import time  # noqa: E402

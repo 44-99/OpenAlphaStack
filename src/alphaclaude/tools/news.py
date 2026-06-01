@@ -7,15 +7,6 @@ import sys
 import time
 from datetime import datetime
 from alphaclaude.tools._http import friendly_error  # noqa: E402
-from alphaclaude.tools._registry import tool_meta
-
-tool_meta(
-    name="news",
-    category="信息与筛选",
-    description="消息面——个股近期新闻与情绪、市场头条",
-    usage="python -m alphaclaude.tools.news <code> 或 market",
-    scenario="检索个股公告、行业新闻、市场情绪，排查利空利多",
-)
 
 CACHE_DIR = os.path.join(str(PROJECT_ROOT), "data", "cache")
 CACHE_TTL = 600

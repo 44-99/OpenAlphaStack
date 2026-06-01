@@ -8,15 +8,6 @@ import time
 from datetime import datetime
 
 import pandas as pd
-from alphaclaude.tools._registry import tool_meta
-
-tool_meta(
-    name="technical",
-    category="行情",
-    description="技术指标计算——MA、MACD、RSI、KDJ、布林带、量价关系",
-    usage="python -m alphaclaude.tools.technical <code> --all 或 -i <指标>",
-    scenario="查看均线、MACD金叉死叉、RSI超买超卖、布林带位置",
-)
 import numpy as np  # noqa: E402
 from alphaclaude.tools._http import friendly_error, get_session, retry_get  # noqa: E402
 

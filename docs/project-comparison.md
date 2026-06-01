@@ -1,6 +1,6 @@
 # E:\Project 八大项目对比分析
 
-> 2026-05-06 整理 · 2026-05-08 更新（+Vibe-Trading +AI-Trader +cc-connect）· 2026-05-13 路径口径更新：AlphaClaude 已迁入 `src/alphaclaude/` 包结构，旧脚本入口和旧工具目录不再作为运行入口。
+> 2026-05-06 整理 · 2026-05-08 更新（+Vibe-Trading +AI-Trader +cc-connect）· 2026-05-13 路径口径更新：AlphaClaude 已迁入 `src/alphaclaude/` 包结构，旧脚本入口和旧工具目录不再作为运行入口。· 2026-06-01：回复冗长度模式、飞书卡片、监控面板、工具注册元数据四个 Phase 3 功能经评估后移除（单用户场景过度设计，ROI 为负）。
 
 ## 一、概览对比表
 

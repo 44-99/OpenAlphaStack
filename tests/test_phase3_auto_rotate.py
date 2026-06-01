@@ -22,7 +22,7 @@ def _isolate(monkeypatch):
 
 
 def _make_session(sid="s1", stype="dm", turn_count=0):
-    return {"session_id": sid, "type": stype, "label": "", "reply_mode": "full", "turn_count": turn_count}
+    return {"session_id": sid, "type": stype, "label": "", "turn_count": turn_count}
 
 
 def test_check_budget_increments_turn_count():
@@ -89,7 +89,7 @@ def test_check_budget_handles_empty_usage():
 
 def test_trigger_rotate_resets_session():
     old_sid = "old-session-uuid"
-    s = {"session_id": old_sid, "type": "dm", "label": "", "reply_mode": "compact", "turn_count": 15}
+    s = {"session_id": old_sid, "type": "dm", "label": "", "turn_count": 15}
     app_main._sessions["conv-1"] = s
 
     app_main._trigger_rotate("conv-1")
@@ -97,7 +97,6 @@ def test_trigger_rotate_resets_session():
     new_session = app_main._sessions["conv-1"]
     assert new_session["session_id"] != old_sid
     assert new_session["turn_count"] == 0
-    assert new_session["reply_mode"] == "compact"
     assert new_session["type"] == "dm"
 
 
@@ -109,12 +108,3 @@ def test_trigger_rotate_calls_consolidate_memory(monkeypatch):
     app_main._trigger_rotate("conv-1")
 
     assert calls == ["conv-1"]
-
-
-def test_rotate_preserves_reply_mode():
-    s = {"session_id": "old-id", "type": "dm", "label": "Me", "reply_mode": "quiet", "turn_count": 20}
-    app_main._sessions["conv-1"] = s
-
-    app_main._trigger_rotate("conv-1")
-
-    assert app_main._sessions["conv-1"]["reply_mode"] == "quiet"

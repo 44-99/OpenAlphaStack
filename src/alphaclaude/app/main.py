@@ -144,7 +144,6 @@ def _get_or_create_session(conv_id: str, session_type: str, label: str = "") -> 
             "type": session_type,
             "label": label,
             "memory_injected": False,
-            "reply_mode": "full",
             "turn_count": 0,
             "created_at": datetime.now().isoformat(),
         }
@@ -163,7 +162,6 @@ def _reset_session(conv_id: str) -> str:
             "type": old["type"] if old else "dm",
             "label": old["label"] if old else "",
             "memory_injected": False,
-            "reply_mode": old.get("reply_mode", "full") if old else "full",
             "turn_count": 0,
             "created_at": datetime.now().isoformat(),
         }
@@ -517,14 +515,11 @@ _EXACT_COMMANDS = {
     "/resume", "resume", "恢复引擎", "恢复",
     "/groups", "groups",
     "/tasks", "tasks",
-    "/mode", "mode",
-    "/dashboard", "dashboard", "监控", "面板", "总览", "/监控", "/面板", "/总览",
 }
 
 _RUN_CONTROL_PREFIXES = (
     "/status ", "/stop ", "/resume ",
     "状态 ", "停止 ", "恢复 ",
-    "/mode ", "mode ",
 )
 
 _COMMAND_KEYWORDS = [
@@ -694,16 +689,6 @@ def _handle_command(chat_id: str, chat_type: str, text: str, sender_id: str = ""
         except Exception as e:
             return f"无法获取计划: {e}"
 
-    if cmd_lower in ("/dashboard", "dashboard", "监控", "面板", "总览", "/监控", "/面板", "/总览"):
-        try:
-            from alphaclaude.tools.engine_status import build_monitoring_card
-            from feishu.bot import send_card
-            card = build_monitoring_card()
-            send_card(chat_id, card)
-        except Exception as e:
-            return f"无法生成监控面板: {e}"
-        return None  # card already sent, no text reply needed
-
     if cmd_lower.startswith("/stop ") or cmd.startswith("停止 "):
         if chat_type != "p2p":
             return "请在私聊中使用 停止 <run_id> 停止指定引擎。"
@@ -749,31 +734,6 @@ def _handle_command(chat_id: str, chat_type: str, text: str, sender_id: str = ""
             lines.append(f"  {g['short_id']} — {label}")
         lines.append("\n用法: /group <群ID> <提问内容>")
         return "\n".join(lines)
-
-    if cmd_lower.startswith("/mode ") or cmd.lower().startswith("mode "):
-        mode_arg = cmd.split(None, 1)[1].strip().lower()
-        if mode_arg in ("full", "完整", "详细"):
-            mode_value = "full"
-            label = "完整模式"
-        elif mode_arg in ("compact", "简洁", "精简"):
-            mode_value = "compact"
-            label = "简洁模式"
-        elif mode_arg in ("quiet", "极简", "一句话"):
-            mode_value = "quiet"
-            label = "极简模式"
-        else:
-            return "用法: /mode full|compact|quiet\nfull=完整分析 compact=简洁结论(≤300字) quiet=一句话回答"
-        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" and sender_id else chat_id
-        with _session_lock:
-            if conv_id in _sessions:
-                _sessions[conv_id]["reply_mode"] = mode_value
-                _save_sessions()
-        return f"已切换为 {label}。"
-    if cmd_lower in ("/mode", "mode"):
-        conv_id = f"{chat_id}_{sender_id}" if chat_type == "p2p" and sender_id else chat_id
-        current = _sessions.get(conv_id, {}).get("reply_mode", "full")
-        labels = {"full": "完整模式", "compact": "简洁模式(≤300字)", "quiet": "极简模式(一句话)"}
-        return f"当前模式: {labels.get(current, current)}\n用法: /mode full|compact|quiet"
 
     if cmd_lower in ("/tasks", "tasks"):
         tasks = list_dynamic_tasks(chat_id)
@@ -1051,15 +1011,6 @@ def _process_one_message(task: dict, session_id: str) -> None:
         context_parts.append(f"[技能提示]\n{skill_context}")
     if action_summary:
         context_parts.append(f"[操作结果: {action_summary}]")
-
-    # Inject reply mode instruction
-    reply_mode = _sessions.get(conv_id, {}).get("reply_mode", "full")
-    _MODE_INSTRUCTIONS = {
-        "compact": "回答不超过300字，只给结论、关键数据和操作建议，不展开分析过程。",
-        "quiet": "用一句话回答，只给最关键的操作建议和价格点位，不解释理由。",
-    }
-    if reply_mode in _MODE_INSTRUCTIONS:
-        context_parts.append(f"[回复模式: {_MODE_INSTRUCTIONS[reply_mode]}]")
 
     if context_parts:
         prompt = user_message + "\n\n---\n" + "\n".join(context_parts)
