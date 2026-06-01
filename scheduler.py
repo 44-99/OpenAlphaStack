@@ -4,8 +4,10 @@ Scheduled tasks — daily stock analysis, dynamic task management.
 import json
 import logging
 import os
+import subprocess
+import sys
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -237,6 +239,97 @@ def run_memory_consolidation() -> None:
         logger.error("记忆整理任务失败: %s", e, exc_info=True, extra={"category": "dream"})
 
 
+# === Paper engine scheduling ===
+
+_PROJECT_ROOT = os.path.dirname(STOCK_DATA_DIR)
+
+
+def _pre_market_paper() -> None:
+    """盘前自动启动模拟盘引擎：检查交易日 → 停旧 → 起新"""
+    _today = date.today()
+    from alphaclaude.engine.trading_calendar import is_trading_day
+
+    if not is_trading_day(_today):
+        logger.info("今日非交易日，跳过模拟盘启动", extra={"category": "paper"})
+        return
+
+    # 防重复：同一天只启动一次
+    _sentinel = os.path.join(STOCK_DATA_DIR, "state", ".paper_last_start")
+    _today_str = _today.isoformat()
+    if os.path.exists(_sentinel):
+        try:
+            if open(_sentinel).read().strip() == _today_str:
+                logger.info("今日模拟盘已启动过，跳过", extra={"category": "paper"})
+                return
+        except OSError:
+            pass
+
+    logger.info("盘前模拟盘启动开始", extra={"category": "paper"})
+    try:
+        # Step 1: 停止所有运行中的 paper 引擎
+        _r1 = subprocess.run(
+            [sys.executable, "-m", "alphaclaude.engine.cli",
+             "--stop-running", "--mode", "paper"],
+            capture_output=True, text=True, timeout=30,
+            cwd=_PROJECT_ROOT,
+        )
+        _stdout = _r1.stdout.strip() if _r1.stdout else ""
+        logger.info("停旧模拟盘: %s", _stdout or "无运行中进程", extra={"category": "paper"})
+
+        # Step 2: 启动新的 paper daemon
+        _r2 = subprocess.run(
+            [sys.executable, "-m", "alphaclaude.engine.cli",
+             "--mode", "paper", "--daemon"],
+            capture_output=True, text=True, timeout=30,
+            cwd=_PROJECT_ROOT,
+        )
+        _stdout2 = _r2.stdout.strip() if _r2.stdout else ""
+        logger.info("新模拟盘: %s", _stdout2, extra={"category": "paper"})
+
+        # 标记今日已启动
+        os.makedirs(os.path.dirname(_sentinel), exist_ok=True)
+        with open(_sentinel, "w") as _f:
+            _f.write(_today_str)
+
+        _send_to_all(f"[模拟盘] 今日模拟盘已启动 | {_today_str}")
+    except Exception as e:
+        logger.error("模拟盘启动失败: %s", e, exc_info=True, extra={"category": "paper"})
+
+
+def _post_market_paper() -> None:
+    """盘后自动停止模拟盘引擎"""
+    _today = date.today()
+    if _today.weekday() >= 5:
+        return
+
+    logger.info("盘后模拟盘停止", extra={"category": "paper"})
+    try:
+        _r = subprocess.run(
+            [sys.executable, "-m", "alphaclaude.engine.cli",
+             "--stop-running", "--mode", "paper"],
+            capture_output=True, text=True, timeout=30,
+            cwd=_PROJECT_ROOT,
+        )
+        _stdout = _r.stdout.strip() if _r.stdout else ""
+        logger.info("停模拟盘: %s", _stdout or "无运行中进程", extra={"category": "paper"})
+
+        # 同时生成日报
+        from alphaclaude.engine.cli import run_registry
+        _runs = run_registry.list_runs("paper")
+        if _runs:
+            _last = _runs[0]
+            _dr = subprocess.run(
+                [sys.executable, "-m", "alphaclaude.tools.daily_report",
+                 _last.run_id],
+                capture_output=True, text=True, timeout=60,
+                cwd=_PROJECT_ROOT,
+            )
+            if _dr.stdout.strip():
+                _send_to_all(_dr.stdout.strip())
+    except Exception as e:
+        logger.error("模拟盘停止失败: %s", e, exc_info=True, extra={"category": "paper"})
+
+
 def start_scheduler(include_market_jobs: bool = True):
     """Initialize scheduler and restore user-created tasks.
 
@@ -259,10 +352,15 @@ def start_scheduler(include_market_jobs: bool = True):
                        id="dream_am", name="记忆整理(凌晨)")
     _scheduler.add_job(run_memory_consolidation, CronTrigger(hour=15, minute=17),
                        id="dream_pm", name="记忆整理(下午)")
+    # 模拟盘自动调度：盘前 8:30 启动，盘后 15:05 停止（交易日历兜底非交易日跳过）
+    _scheduler.add_job(_pre_market_paper, CronTrigger(hour=8, minute=30, day_of_week="mon-fri"),
+                       id="paper_start", name="模拟盘启动")
+    _scheduler.add_job(_post_market_paper, CronTrigger(hour=15, minute=5, day_of_week="mon-fri"),
+                       id="paper_stop", name="模拟盘停止")
     _scheduler.start()
     if include_market_jobs:
-        msg = "定时任务已启动: 工作日 9:00/12:00/15:30 + 记忆整理 3:17/15:17"
+        msg = "定时任务已启动: 模拟盘 8:30/15:05 + 工作日 9:00/12:00/15:30 + 记忆整理 3:17/15:17"
     else:
-        msg = "定时任务已启动: 记忆整理 3:17/15:17 + 自定义任务；内置行情分析由引擎负责"
+        msg = "定时任务已启动: 模拟盘 8:30/15:05 + 记忆整理 3:17/15:17 + 自定义任务；内置行情分析由引擎负责"
     logger.info(msg, extra={"category": "startup"})
     restore_dynamic_tasks()

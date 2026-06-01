@@ -22,4 +22,14 @@ data/*.json
 data/*.md
 *.log
 
+# Code intelligence
+.codegraph/
+
+# Build artifacts
+src/alphaclaude.egg-info/
+
+# uv
+uv.lock
+
+# IDE
 .idea/
