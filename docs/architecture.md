@@ -2,6 +2,23 @@
 
 AlphaClaude 的核心定位是本地运行的 “交易软件 + AI IDE 工作台”。交易研究和策略判断交给 Claude Code / Codex 这类本机 Agent，行情、风控、回测、模拟盘和执行审计由 Python 包内模块承担，Dashboard 提供可视化盯盘和本机终端入口。
 
+## 对外定位
+
+项目名继续使用 **AlphaClaude**，但对外描述不再限定为 Claude 专属项目，而是：
+
+> Local AI Agent Trading Workbench for A-shares.
+
+命名层次：
+
+| 层级 | 名称 | 说明 |
+|------|------|------|
+| 仓库/项目 | AlphaClaude | 保留历史和辨识度 |
+| 产品定位 | AI Agent Trading Workbench | 强调本地 Agent 工作台，而不是自动赚钱机器人 |
+| 右侧面板 | Agent | 面板内切换 Claude Code / Codex CLI |
+| Provider | Claude Code / Codex CLI | 明确具体本机 Agent |
+
+这个定位避免 `AlphaAgent` 这类过泛命名，也为未来接入其他本机 Agent CLI 保留空间。
+
 ## 设计原则
 
 - **本地优先**：核心服务运行在本机，数据落在 `data/`，Dashboard 默认面向本地/局域网使用。
