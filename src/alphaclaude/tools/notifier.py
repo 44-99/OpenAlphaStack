@@ -13,7 +13,7 @@ PROJECT_DIR = str(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_DIR)
 
 from config import ENGINE_CHAT_IDS  # noqa: E402
-from feishu.bot import send_post, send_text  # noqa: E402
+from alphaclaude.feishu.bot import send_post, send_text  # noqa: E402
 
 
 def _chat_ids():

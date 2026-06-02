@@ -177,7 +177,7 @@ def generate_report(run_id: str, date_str: str = None, push: bool = False) -> st
 def _push_to_feishu(report: dict) -> None:
     """Push report as Feishu card message."""
     try:
-        from feishu.bot import send_text
+        from alphaclaude.feishu.bot import send_text
         from config import ALERT_CHAT_IDS
     except ImportError:
         print("[daily_report] Feishu SDK not available, skipping push")

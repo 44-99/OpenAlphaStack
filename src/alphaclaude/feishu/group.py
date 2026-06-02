@@ -2,7 +2,7 @@
 Feishu group chat operations — membership check.
 """
 import httpx
-from feishu.auth import get_tenant_token
+from alphaclaude.feishu.auth import get_tenant_token
 from config import FEISHU_API_BASE
 
 

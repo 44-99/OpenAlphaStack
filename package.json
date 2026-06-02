@@ -1,0 +1,31 @@
+{
+  "name": "alphaclaude-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 && concurrently -k -n API,WEB -c blue,green \"npm run backend:dev\" \"npm run dashboard:dev\"",
+    "backend:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-backend.ps1",
+    "dashboard:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-frontend.ps1",
+    "dashboard:build": "tsc -p dashboard/tsconfig.json && vite build --config dashboard/vite.config.ts",
+    "dashboard:test": "vitest run --config dashboard/vite.config.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "echarts": "^5.5.1",
+    "lucide-react": "1.17.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "concurrently": "^10.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -39,14 +39,14 @@ def test_app_cli_runs_package_app(monkeypatch):
 
     class FakeUvicorn:
         @staticmethod
-        def run(app, host: str, port: int, log_level: str):
-            calls.append((app.title, host, port, log_level))
+        def run(app, host: str, port: int, log_level: str, timeout_graceful_shutdown: int):
+            calls.append((app.title, host, port, log_level, timeout_graceful_shutdown))
 
     monkeypatch.setitem(sys.modules, "uvicorn", FakeUvicorn)
 
     app_cli.main(["app", "start"])
 
-    assert calls == [("StockTrading Bot", "0.0.0.0", 8800, "info")]
+    assert calls == [("StockTrading Bot", "0.0.0.0", 8800, "info", 3)]
 
 
 def test_pyproject_exposes_only_unified_console_script():

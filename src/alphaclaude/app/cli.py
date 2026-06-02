@@ -14,7 +14,13 @@ def run_app() -> None:
     from alphaclaude.app.main import app
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8800, log_level="info")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8800,
+        log_level="info",
+        timeout_graceful_shutdown=3,
+    )
 
 
 def _print_help() -> None:

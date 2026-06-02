@@ -14,17 +14,18 @@ import traceback
 import uuid as _uuid
 from datetime import datetime
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from config import (
     ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR, STREAM_ENABLED, STREAM_UPDATE_MS,
     AUTO_ROTATE_ENABLED, CONTEXT_WINDOW_TOKENS, ROTATE_THRESHOLD, MAX_TURNS_BEFORE_ROTATE,
 )
-from feishu.bot import parse_event, reply_message, send_text, update_message
-from feishu.group import check_membership
-from feishu.user import get_user_label
-from feishu.ws import start_ws_listener
+from alphaclaude.app import dashboard
+from alphaclaude.feishu.bot import parse_event, reply_message, send_text, update_message
+from alphaclaude.feishu.group import check_membership
+from alphaclaude.feishu.user import get_user_label
+from alphaclaude.feishu.ws import start_ws_listener
 from claude import ask_claude, ask_claude_stream
 from logging_config import setup_logging
 from scheduler import (
@@ -1267,15 +1268,26 @@ async def lifespan(_: FastAPI):
     memory.set_session_state(_sessions, _session_lock)
     set_subscribers(list(_subscribers))
     _skills = _load_skills()
+    dashboard.reset_sse_shutdown()
     _setup_crash_hook(ALERT_CHAT_IDS)
     start_scheduler(include_market_jobs=False)
     _ws_thread = start_ws_listener(_handle_sdk_event)
     logger.info("飞书股票机器人已启动 (WebSocket长连接)", extra={"category": "startup"})
     yield
+    dashboard.arm_forced_exit_timer()
+    dashboard.shutdown_sse()
+    from scheduler import stop_scheduler
+    stop_scheduler()
     logger.info("飞书股票机器人已停止", extra={"category": "shutdown"})
 
 
 app = FastAPI(title="StockTrading Bot", lifespan=lifespan)
+app.mount(
+    "/dashboard/assets",
+    StaticFiles(directory=dashboard.DASHBOARD_ASSETS_DIR, check_dir=False),
+    name="dashboard-assets",
+)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")
@@ -1316,4 +1328,11 @@ async def get_sessions():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8800, log_level="info")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8800,
+        log_level="info",
+        timeout_graceful_shutdown=3,
+    )
+

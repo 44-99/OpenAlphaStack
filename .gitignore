@@ -5,8 +5,12 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .venv/
 venv/
+htmlcov/
+.coverage
+.coverage.*
 
 # Claude Code local data
 .claude/
@@ -25,8 +29,15 @@ data/*.md
 # Code intelligence
 .codegraph/
 
+# Local planning files
+findings.md
+progress.md
+task_plan.md
+
 # Build artifacts
 src/alphaclaude.egg-info/
+node_modules/
+dashboard/dist/
 
 # uv
 uv.lock

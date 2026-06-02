@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from config import STOCK_DATA_DIR
-from feishu.bot import send_text
+from alphaclaude.feishu.bot import send_text
 from stock import format_market_report
 from claude import ask_claude, build_trading_prompt
 from memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
@@ -40,6 +40,13 @@ def get_subscribers() -> list[str]:
 
 def get_scheduler() -> BackgroundScheduler | None:
     return _scheduler
+
+
+def stop_scheduler() -> None:
+    global _scheduler
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
 
 
 def add_task(task_id: str, cron_expr: str, func, name: str = "") -> None:

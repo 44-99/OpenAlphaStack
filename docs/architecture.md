@@ -1,163 +1,236 @@
 # 架构设计
 
-## 设计理念
+AlphaClaude 的核心定位是本地运行的 “交易软件 + AI IDE 工作台”。交易研究和策略判断交给 Claude Code / Codex 这类本机 Agent，行情、风控、回测、模拟盘和执行审计由 Python 包内模块承担，Dashboard 提供可视化盯盘和本机终端入口。
 
-**Alpha** = 知识大脑 — 多维情报喂给 Agent：
+## 设计原则
 
-| 来源 | 角色 |
-|------|------|
-| 实时行情（腾讯 qt.gtimg.cn 主源 + 新浪 hq.sinajs.cn + akshare Sina 后端 fallback） | 价格、成交量、换手率、PE、PB、量比 |
-| 通达信公式（skills） | 实战检验的策略，编码为渐进式展开技能 |
-| 新闻 / 研报（RAG） | 外部信息按需注入上下文 |
-| 模型内置知识 | 预训练的金融概念、估值理论、市场机制 |
+- **本地优先**：核心服务运行在本机，数据落在 `data/`，Dashboard 默认面向本地/局域网使用。
+- **Agent 不重复造轮子**：Claude Code 和 Codex CLI 已经有对话、工具调用和文件编辑能力，Dashboard 只负责把本机终端嵌入工作台。
+- **交易执行可审计**：盘前 `plan.json`、盘中 `state.json`、成交 `ledger.jsonl` 和日志文件都是事实来源。
+- **飞书降级为通知渠道**：深度分析和盘中调整以 Dashboard 为主，飞书保留状态查询、指令和关键告警。
+- **实盘保守准入**：`live` 入口预留，但 BrokerAdapter、人工确认、订单幂等和安全闸门完成前不视为可用实盘能力。
 
-**Claude** = 执行核心 — Claude Code CLI 作为本地 Agent：
-
-- **比替代方案更轻**: 无服务器基础设施、无进程池。`pip install` + 一个 CLI 二进制文件就是全部运行时。
-- **强编码 + 高性价比**: Claude Code + DeepSeek 用于编排和分析。
-- **继承一切**: 多轮对话、工具编排、会话管理、MCP 协议 — 全部内置在 Claude Code 中。我们不重复造轮子。
-- **通用能力**: 超越股票交易 — 编程帮助、写作、知识问答、跨平台聊天 — Claude Code 有的能力 AlphaClaude 都有。
-
-本项目专注于为 Claude Code Agent 装上"股票大脑"：Skills 作为策略知识，`src/alphaclaude/tools/` 下的 CLI 模块（腾讯→新浪→akshare）作为 Claude Code 的数据计算层，`stock.py` 为机器人内部定时报告和上下文注入提供批量数据，飞书作为通信渠道。
-
-## 为什么用无状态脚本而不是 MCP Server
-
-Claude Code 内置的 Bash 工具足以满足所有工具需求：
-
-| 维度 | 我们的方案 |
-|------|-----------|
-| **工具** | `src/alphaclaude/tools/` 下的 Python CLI 模块 |
-| **调用** | Bash 子进程（Claude Code 内置），统一用 `alphaclaude tools <tool>` |
-| **状态** | 无状态 — 每次调用独立，即时返回 |
-| **复杂度** | 几乎零运维开销 — 无进程管理、无生命周期、无回调基础设施 |
-
-我们所有的工具都是轻量 Python 函数（腾讯/Sina HTTP 调用、公式计算）。它们无状态、即时返回、无特殊要求。Claude Code 的 Bash 工具原生处理它们 — 不需要单独的 MCP server、进程池或回调系统。
-
-当 Phase 3 自动交易需要专用信号监控进程时，它将是一个独立的 sidecar 守护进程，而非分层的服务网格。
-
-## 架构
+## 三通道交互模型
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      飞书 (Lark)                         │
-│               WebSocket 长连接                           │
-└──────────────────────┬──────────────────────────────────┘
-                       │ 事件
+┌─────────────────────────────────────────────────────────────┐
+│ Web Dashboard                                                │
+│ · React/Vite 工作台                                          │
+│ · ECharts K线、指标、缓存管理                                │
+│ · xterm 内嵌 PowerShell：Claude Code / Codex CLI             │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ HTTP / SSE / WebSocket
                        ▼
-┌─────────────────────────────────────────────────────────┐
-│              src/alphaclaude/app/main.py                 │
-│  消息编排 · 会话管理 · 指令处理 · 技能加载 · FastAPI     │
-└──┬────────┬────────┬────────┬────────┬────────┬──────────┘
-   │        │        │        │        │        │
-   ▼        ▼        ▼        ▼        ▼        ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│memory│ │claude│ │sched │ │config│ │stock │ │ feishu/  │
-│ .py  │ │ .py  │ │ .py  │ │ .py  │ │ .py  │ │ auth bot │
-│      │ │      │ │      │ │      │ │      │ │ group ws │
-└──┬───┘ └──┬───┘ └──┬───┘ └──────┘ └──┬───┘ └──────────┘
-   │        │        │                 │
-   ▼        ▼        ▼                 ▼
-┌──────┐ ┌──────┐ ┌──────────────┐
-│ data/│ │src/  │ │  skills/     │
-│mem/c │ │ CLI  │ │  SKILL.md    │
-│ache  │ │ JSON │ │  references/ │
-└──────┘ └──────┘ └──────────────┘
-```
-
-**依赖关系**（无循环）:
-
-```
-alphaclaude.app.main ──→ memory, claude, scheduler, feishu, config, stock
-scheduler ──→ memory, claude, feishu, stock
-memory ──→ claude, config
-alphaclaude.engine ──→ alphaclaude.tools, config, data/output
+┌─────────────────────────────────────────────────────────────┐
+│ FastAPI App                                                  │
+│ · Dashboard API、SSE、Agent terminal WebSocket               │
+│ · 飞书 WebSocket 长连接                                      │
+│ · Scheduler、会话、命令编排                                  │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ 文件状态 + 包内模块
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Engine / Tools / Data                                        │
+│ · alphaclaude.engine: plan/state/ledger/execution/paper       │
+│ · alphaclaude.tools: quote/technical/risk/signal/report       │
+│ · data/output、data/cache、data/state                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## 包内模块边界
 
-当前代码已从根目录脚本和旧 `tools/` 目录迁入 `src/alphaclaude/`，避免应用入口、交易引擎、工具脚本和测试互相依赖隐式路径。
+| 包/目录 | 职责 |
+|---------|------|
+| `src/alphaclaude/app/` | FastAPI 应用、Dashboard API/SSE/WebSocket、应用 CLI、会话和指令编排 |
+| `src/alphaclaude/engine/` | 回测/模拟盘/预留 live 引擎、状态、计划、账本、执行、盘前计划生成、盘中快车道、盘后报告 |
+| `src/alphaclaude/tools/` | Claude Code/Codex 可调用的无状态 CLI 工具和报表/风控/信号工具 |
+| `src/alphaclaude/feishu/` | 飞书认证、机器人消息、群聊、用户和长连接适配 |
+| `src/alphaclaude/paths.py` | 项目根目录、数据目录等路径解析 |
+| `dashboard/` | React + Vite + TypeScript Dashboard 源码 |
+| `scripts/` | Windows 开发启动、前后端热重载和端口清理脚本 |
 
-| 包 | 职责 |
-|----|------|
-| `alphaclaude.app` | 飞书机器人、FastAPI、会话和指令编排 |
-| `alphaclaude.engine` | 回测/模拟盘/预留 live 引擎、状态、计划、账本、执行、盘前计划生成、盘中快车道、盘后报告 |
-| `alphaclaude.tools` | Claude Code 可调用的无状态 CLI 工具和报表/风控/信号工具 |
-| `alphaclaude.paths` | 项目根目录、数据目录等路径解析，避免包内代码依赖当前工作目录 |
+依赖方向：
+
+```
+alphaclaude.app.main
+  ├─ alphaclaude.app.dashboard
+  ├─ alphaclaude.feishu
+  ├─ scheduler / memory / claude / stock
+  └─ alphaclaude.engine run registry
+
+alphaclaude.engine
+  ├─ alphaclaude.tools
+  ├─ alphaclaude.paths
+  └─ data/output/<run_id>
+
+dashboard React app
+  └─ FastAPI /api, /api/stream, /api/agent/terminal/*
+```
+
+## Dashboard 架构
+
+当前 Dashboard 是 `dashboard/` 下的 React + Vite + TypeScript 应用。开发时由 Vite 在 `5173` 提供热重载，生产/日常使用时构建到 `dashboard/dist/`，由 FastAPI `/dashboard` 直接服务 `dist/index.html` 和静态资源。
+
+### 前端组件
+
+| 模块 | 说明 |
+|------|------|
+| `dashboard/src/App.tsx` | 页面骨架、左侧导航、顶部资产栏、右侧 Agent 面板、页面状态 |
+| `dashboard/src/components/KlineChart.tsx` | ECharts 实例生命周期、数据加载、缩放/平移事件、触控板灵敏度控制 |
+| `dashboard/src/charts/klineOption.ts` | 纯函数构造 K 线 option，便于测试和隔离 ECharts 配置 |
+| `dashboard/src/components/AgentPanel.tsx` | xterm 终端，连接后端 WebSocket，并切换 Claude Code / Codex CLI |
+| `dashboard/src/api.ts` | Dashboard API 客户端 |
+| `dashboard/src/styles.css` | 暗色金融工作台主题、侧栏、K线 tooltip、终端样式 |
+
+### 布局
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Topbar: 总资产 / 现金 / 持仓 / 当日盈亏 / K线缓存 / 引擎状态  │
+├──────────────┬──────────────────────────────┬────────────────┤
+│ Left Sidebar │ Workspace                    │ Agent Terminal │
+│ · 可折叠     │ · K线图                      │ · 可折叠       │
+│ · 可拖宽     │ · 周期/指标控制              │ · 可拖宽       │
+│ · 真实图标   │ · 持仓/计划/成交/日志页面     │ · PowerShell   │
+└──────────────┴──────────────────────────────┴────────────────┘
+```
+
+左侧侧边栏展开时显示图标和中文标签，折叠时只保留居中图标。右侧 Agent 面板折叠后显示窄 rail，展开后显示终端和 provider 切换按钮。
+
+### K 线图
+
+Dashboard 的 K 线交互由独立 React 组件管理，避免旧单文件实现里 ECharts 生命周期和状态更新互相污染。
+
+已实现：
+
+- 周期：`day`、`week`、`1m`、`5m`、`15m`、`60m`。
+- 主图：candlestick + MA/EMA/BOLL 叠加。
+- 副图：VOL。
+- 交互：十字光标、item tooltip、拖拽平移、底部 slider、低灵敏度滚轮缩放。
+- Tooltip：暗色玻璃金融卡片，只在鼠标命中 K 线 item 时显示，不在成交量图或空白区域保留旧 K 线卡片。
+
+分钟级数据以 1 分钟数据为基础，5/15/60 分钟由后端 resample 生成并缓存。日线/周线也进入统一 K 线缓存链路，前端提供缓存大小显示和手动清理。
+
+### Agent 终端
+
+右侧 Agent 面板不是自定义聊天气泡，而是一个浏览器内嵌终端：
+
+```
+React AgentPanel
+  └─ @xterm/xterm
+      └─ WebSocket /api/agent/terminal/{provider}
+          └─ FastAPI
+              └─ winpty.PTY
+                  └─ PowerShell
+                      ├─ claude
+                      └─ codex --no-alt-screen
+```
+
+后端会：
+
+- 接收浏览器终端输入并写入 PTY。
+- 读取 PTY 输出并通过 WebSocket 推回 xterm。
+- 初始化 PowerShell UTF-8 编码。
+- 对当前 PowerShell 进程设置临时 `ExecutionPolicy Bypass`，避免 npm CLI wrapper 被本机策略拦截。
+- 根据 provider 自动执行本机 `claude` 或 `codex --no-alt-screen`。
+
+这使用户可以在盯盘同时直接操作 Claude Code 或 Codex CLI，体验更接近 JetBrains/PyCharm 的工具窗口，而不是另造一个弱化版聊天 UI。
+
+## FastAPI Dashboard API
+
+| 端点 | 类型 | 说明 |
+|------|------|------|
+| `/dashboard` | HTTP | 返回构建后的 React Dashboard |
+| `/api/state` | HTTP | 当前 run 的资金、持仓、净值和数据时间 |
+| `/api/plan` | HTTP | 当前 run 的 `plan.json` |
+| `/api/ledger` | HTTP | 当前 run 的成交账本 |
+| `/api/kline/{code}` | HTTP | K 线 OHLCV，支持日/周/分钟缓存链路 |
+| `/api/cache/status` | HTTP | K 线缓存文件数和大小 |
+| `/api/cache/kline/clear` | HTTP POST | 清理所有 Dashboard K 线缓存层级 |
+| `/api/watchlist` | HTTP | 用户自选股 |
+| `/api/engine/status` | HTTP | 当前引擎运行状态 |
+| `/api/stream` | SSE | Dashboard 实时事件和状态更新 |
+| `/api/agent/terminal/{provider}` | WebSocket | Agent 终端 PTY 通道 |
+
+历史兼容的 `/api/agent/{provider}/stream` 文本聊天接口仍可保留，但当前 UI 主路径是内嵌终端。
 
 ## 引擎流程
 
 ```
 ┌─ 盘前计划生成 ──────────────────────────────────────────┐
-│  OvernightPipeline                                      │
-│  · Claude Code 子任务：宏观政策 / 板块轮动 / 交易复盘   │
-│  · API Tool Use：定方向 / 选标的 / 调仓                 │
-│  · Python 风控：signal + risk 硬校验                    │
-│  · 输出 plan.json                                       │
+│ OvernightPipeline                                       │
+│ · Claude Code 子任务：市场方向 / 候选标的 / 风控         │
+│ · Python 工具：行情、技术、风控、信号校验                │
+│ · 输出 plan.json                                        │
 └──────────────────────────┬──────────────────────────────┘
-                           │
                            ▼
-┌─ 盘中执行 ──────────────────────────────────────────────┐
-│  FastLane                                               │
-│  · 候选买入和持仓调整                                   │
-│  · 止盈、止损、到期卖出                                 │
-│  · 规则信号扫描和去重                                   │
-│  · 紧急事件进入事件队列                                 │
+┌─ 盘中机械执行 ──────────────────────────────────────────┐
+│ FastLane                                                │
+│ · 读取 plan.json                                        │
+│ · 候选买入、持仓调整、止盈止损、规则信号                 │
+│ · 写 state.json / ledger.jsonl / event queue             │
+│ · SSE 推送 Dashboard，关键事件推送飞书                   │
 └──────────────────────────┬──────────────────────────────┘
-                           │
                            ▼
-┌─ 状态与审计 ────────────────────────────────────────────┐
-│  EngineState / PlanV2 / Ledger / EventQueue             │
-│  · state.json：现金、持仓、风控状态                      │
-│  · plan.json：方向、候选、调仓、策略变体                 │
-│  · ledger.jsonl：成交、拒单、风控和审计记录              │
+┌─ 盘后汇总 ──────────────────────────────────────────────┐
+│ Python report                                           │
+│ · 净值、成交、持仓、盈亏、异常和风控事件                 │
+│ · 可选飞书推送                                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
-非交易日仍执行每日盘前检查，但不调用 Claude Code 生成交易计划。引擎会按周末和 A 股交易日历判断休市，通过飞书说明当日不开市，并将运行状态置为观察模式，跳过后续盘中动作。
-
-盘后不生成新的 `plan.json`。收盘后只运行 Python 汇总报告，记录净值、成交、持仓、盈亏、异常和风控事件，并按配置推送飞书。这样能保证交易决策来自盘前，盘中只机械执行既定计划。
-
-当前 `backtest` 和 `paper` 共享包内核心。`live` 模式入口保留，但必须等 BrokerAdapter、人工确认、订单幂等和安全闸门完成后才能准入。
+非交易日或非盘前启动时，引擎可以进入观察模式，明确记录状态，不假装生成可执行交易计划。盘后不生成新的 `plan.json`，只做 Python 汇总报告。
 
 ## 运行控制面
 
-`data/output/<run_id>/state.json` 是运行控制的事实来源。`alphaclaude.engine.run_registry` 扫描 `paper_*`、`backtest_*`、`live_*` 运行目录，读取 `engine_meta`，结合 PID liveness 判断运行态，并向 CLI 和飞书命令提供统一记录。
-
-CLI 统一由 `alphaclaude` 暴露子命令：`alphaclaude engine list`、`alphaclaude engine status <run_id>`、`alphaclaude engine stop <run_id>`、`alphaclaude engine resume <run_id> --daemon`。飞书侧支持 `/status <run_id>`、`/stop <run_id>` 和 `/resume <run_id>`；停止和恢复指定 run 只允许私聊触发。`live` 即使被恢复也只能进入观察/暂停语义，不能绕过 Phase 3 的 BrokerAdapter、订单确认、幂等和安全闸门。
+`data/output/<run_id>/state.json` 是运行控制的事实来源。`alphaclaude.engine.run_registry` 扫描 `paper_*`、`backtest_*`、`live_*` 运行目录，读取 `engine_meta`，结合 PID liveness 判断运行态，并向 CLI、飞书命令和 Dashboard API 提供统一记录。
 
 命令示例：
 
 ```bash
 alphaclaude app start
 alphaclaude engine start --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
-alphaclaude engine start --mode paper -u default
+alphaclaude engine start --mode paper -u default --daemon
+alphaclaude engine list
+alphaclaude engine stop-running
 alphaclaude tools quote 600519
 ```
 
-## 数据源
+## 数据源与缓存
 
-实地测试对比后确定的数据源优先级：
+行情数据优先级：
 
-| 优先级 | 数据源 | 速度 | 字段 | 用途 |
-|--------|--------|------|------|------|
-| 1 (主) | 腾讯 `qt.gtimg.cn` | ~0.07s | 88（含PE/PB/换手率/量比/市值） | 实时行情、全市场选股 |
-| 2 | 新浪 `hq.sinajs.cn` | ~0.1s | 34（基础OHLCV） | 行情 fallback、K线历史 |
-| 3 | akshare Sina 后端 | ~25s | 14（价量） | 代码列表缓存、最后手段 |
+| 优先级 | 数据源 | 用途 |
+|--------|--------|------|
+| 1 | 腾讯 | 实时行情、K线、选股 |
+| 2 | 新浪 | fallback |
+| 3 | akshare | 代码列表、财务/资金/新闻、最后手段 |
 
-- **腾讯 API**：不依赖 eastmoney push2，不受 IP 封锁影响，速度最快、字段最全
-- **K线历史**：新浪 K线 API 提供日线 OHLCV，最大 ~2000 天
-- **财务/资金/新闻**：akshare 东方财富接口（非 push2 端点，可用）
-- **efinance / pytdx**：实测不可用
+Dashboard K 线缓存统一放在 `data/cache/kline/`，兼容旧分钟缓存目录 `data/cache/minute/`。手动清理缓存会清理 Dashboard K 线相关层级，不删除交易账本、计划、持仓状态或记忆文件。
 
-每个工具内部封装 fallback 逻辑，优先腾讯 → 失败自动切换新浪 → akshare 最后手段。
+## 开发启动
 
-## 记忆系统
+```bash
+npm run dev
+```
 
-双层架构：
+该命令会：
 
-| 层级 | 位置 | 管理者 | 内容 |
-|------|------|--------|------|
-| Claude Code transcript | `~/.claude/projects/.../` | Claude Code | 完整对话历史 |
-| 项目 memory 文件 | `data/memory/user/` 和 `data/memory/group/` | 整合任务 | 用户画像、偏好、话题摘要 |
+1. 运行 `scripts/dev-stop.ps1` 清理占用 `5173` 和 `8800` 的旧进程。
+2. 启动 `uvicorn alphaclaude.app.main:app --reload`。
+3. 等待 `http://127.0.0.1:8800/health` 就绪。
+4. 启动 Vite 热重载服务。
 
-每日 3:17 和 15:17 执行整合，扫描过去 12 小时内修改的 transcript 并更新 memory 文件。新会话在首条消息时注入对应 memory。
+生产/日常 Dashboard 使用：
+
+```bash
+npm run dashboard:build
+alphaclaude app start
+```
+
+## 安全约束
+
+- `.env` 和运行数据不提交。
+- `data/output/`、`data/cache/`、`data/logs/` 和构建产物不提交。
+- `live` 模式未准入前不得用于真实下单。
+- 右侧 Agent 终端是本机 PowerShell，具备真实命令执行能力；默认只应在可信本机环境使用。
