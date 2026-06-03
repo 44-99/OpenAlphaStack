@@ -191,3 +191,22 @@ def test_workflow_artifact_rejects_path_traversal(tmp_path, monkeypatch):
 
     assert isinstance(result, JSONResponse)
     assert result.status_code == 400
+
+
+def test_ledger_filter_matches_symbol_or_code(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "ledger.jsonl").write_text(
+        "\n".join([
+            json.dumps({"symbol": "300913", "price": 10}),
+            json.dumps({"code": "300913", "price": 11}),
+            json.dumps({"symbol": "000001", "price": 12}),
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_ledger(limit=10, code="300913"))
+
+    assert [row["price"] for row in result] == [10, 11]

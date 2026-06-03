@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { api } from '../api';
 import type { WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
 export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events: WorkflowEvent[] }) {
   const [selectedNodeId, setSelectedNodeId] = useState('');
+  const [artifact, setArtifact] = useState<{ title: string; content: string } | null>(null);
   const selectedNode = useMemo(() => {
     if (!graph?.nodes.length) return undefined;
     return graph.nodes.find((node) => node.id === selectedNodeId) || graph.nodes[0];
@@ -41,9 +43,22 @@ export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events
               <strong>{event.node_name}</strong>
               <p>{event.summary || '--'}</p>
               {event.error ? <code>{event.error}</code> : null}
+              {event.artifact_dir ? (
+                <div className="artifact-actions">
+                  {['input.json', 'output.json', 'error.txt'].map((name) => (
+                    <button key={name} onClick={() => loadArtifact(event, name, setArtifact)}>{name}</button>
+                  ))}
+                </div>
+              ) : null}
             </article>
           )) : <div className="empty compact">该节点暂无事件</div>}
         </div>
+        {artifact ? (
+          <div className="artifact-viewer">
+            <header><strong>{artifact.title}</strong><button onClick={() => setArtifact(null)}>关闭</button></header>
+            <pre>{artifact.content}</pre>
+          </div>
+        ) : null}
       </aside>
     </section>
   );
@@ -57,4 +72,20 @@ function WorkflowNode({ node, active, onSelect }: { node: WorkflowGraphNode; act
       <small>{node.enabled ? '启用' : '禁用'}{node.locked ? ' / 锁定' : ''}</small>
     </button>
   );
+}
+
+async function loadArtifact(
+  event: WorkflowEvent,
+  name: string,
+  setArtifact: (artifact: { title: string; content: string }) => void,
+) {
+  try {
+    const result = await api.workflowArtifact(event.run_id || 'active', event.event_id, name);
+    setArtifact({ title: `${event.node_name} / ${name}`, content: result.content });
+  } catch (error) {
+    setArtifact({
+      title: `${event.node_name} / ${name}`,
+      content: error instanceof Error ? error.message : 'artifact 读取失败',
+    });
+  }
 }

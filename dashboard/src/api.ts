@@ -26,6 +26,8 @@ export const api = {
   state: () => getJson<DashboardState>('/api/state'),
   plan: () => getJson<PlanData>('/api/plan'),
   ledger: () => getJson<LedgerEntry[]>('/api/ledger?limit=50'),
+  ledgerForCode: (code: string, limit = 200) =>
+    getJson<LedgerEntry[]>(`/api/ledger?limit=${limit}&code=${code}`),
   engineStatus: () => getJson<EngineStatus>('/api/engine/status'),
   cacheStatus: () => getJson<CacheStatus>('/api/cache/status'),
   watchlist: () => getJson<unknown[]>('/api/watchlist'),
@@ -35,6 +37,10 @@ export const api = {
     getJson<{ run_id: string; events: WorkflowEvent[] }>(`/api/workflow/runs/${runId}/events?limit=${limit}`),
   workflowGraph: (runId = 'active') =>
     getJson<WorkflowGraph>(`/api/workflow/runs/${runId}/graph`),
+  workflowArtifact: (runId: string, eventId: string, name: string) =>
+    getJson<{ run_id: string; event_id: string; name: string; content: string }>(
+      `/api/workflow/runs/${runId}/artifacts/${eventId}/${name}`,
+    ),
   clearKlineCache: () =>
     fetch('/api/cache/kline/clear', { method: 'POST' }).then(async (response) => {
       const data = await response.json().catch(() => ({}));

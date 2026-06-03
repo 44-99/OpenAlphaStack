@@ -154,6 +154,7 @@ export default function App() {
   }, []);
 
   const cacheLayer = cache.kline_cache || cache.minute_cache;
+  const tradeRefreshKey = ledger[0]?.seq || ledger[0]?.time || ledger.length;
 
   async function clearCache() {
     if (!confirm('清空本地K线缓存？交易数据、自选股和新闻缓存不会删除。')) return;
@@ -212,7 +213,7 @@ export default function App() {
         </div>
         {mode === 'watch' && page === 'watch' ? (
           <>
-            <KlineChart code={selectedCode} period={period} overlay={overlay} />
+            <KlineChart code={selectedCode} period={period} overlay={overlay} tradeRefreshKey={tradeRefreshKey} />
             <div className="control-strip">
               {periods.map((item) => (
                 <button key={item.key} className={period === item.key ? 'active' : ''} onClick={() => setPeriod(item.key)}>

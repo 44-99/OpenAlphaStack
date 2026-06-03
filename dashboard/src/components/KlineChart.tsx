@@ -2,20 +2,23 @@ import * as echarts from 'echarts';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { buildKlineOption } from '../charts/klineOption';
-import type { KlineData, KlinePeriod, OverlayKind } from '../types';
+import type { KlineData, KlinePeriod, KlineTradeMarker, LedgerEntry, OverlayKind } from '../types';
 
 interface KlineChartProps {
   code: string;
   period: KlinePeriod;
   overlay: OverlayKind;
+  tradeRefreshKey?: string | number;
 }
 
-export function KlineChart({ code, period, overlay }: KlineChartProps) {
+export function KlineChart({ code, period, overlay, tradeRefreshKey = '' }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [source, setSource] = useState('');
+  const [klineData, setKlineData] = useState<KlineData | null>(null);
+  const [trades, setTrades] = useState<KlineTradeMarker[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -46,14 +49,12 @@ export function KlineChart({ code, period, overlay }: KlineChartProps) {
       .then((data: KlineData) => {
         if (controller.signal.aborted || !chartRef.current) return;
         setSource(data.source || '');
-        const option = buildKlineOption(data, overlay);
-        chartRef.current.clear();
-        chartRef.current.setOption(option, { notMerge: true, lazyUpdate: false });
-        chartRef.current.resize();
+        setKlineData(data);
       })
       .catch((err: Error) => {
         if (controller.signal.aborted) return;
         setError(err.message || 'K线数据加载失败');
+        setKlineData(null);
         chartRef.current?.clear();
       })
       .finally(() => {
@@ -61,7 +62,31 @@ export function KlineChart({ code, period, overlay }: KlineChartProps) {
       });
 
     return () => controller.abort();
-  }, [code, period, overlay]);
+  }, [code, period]);
+
+  useEffect(() => {
+    if (!code) return;
+    let active = true;
+    api.ledgerForCode(code, 200)
+      .then((rows) => {
+        if (!active) return;
+        setTrades(rows.map((row) => ledgerToTradeMarker(row, code)).filter((row) => row.time && row.price > 0));
+      })
+      .catch(() => {
+        if (active) setTrades([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [code, tradeRefreshKey]);
+
+  useEffect(() => {
+    if (!chartRef.current || !klineData) return;
+    const option = buildKlineOption(klineData, overlay, trades);
+    chartRef.current.clear();
+    chartRef.current.setOption(option, { notMerge: true, lazyUpdate: false });
+    chartRef.current.resize();
+  }, [klineData, overlay, trades]);
 
   return (
     <section className="kline-panel">
@@ -75,6 +100,21 @@ export function KlineChart({ code, period, overlay }: KlineChartProps) {
       {error ? <div className="chart-error">{error}</div> : null}
     </section>
   );
+}
+
+function ledgerToTradeMarker(row: LedgerEntry, fallbackCode: string): KlineTradeMarker {
+  return {
+    time: row.time || '',
+    code: row.symbol || row.code || fallbackCode,
+    action: row.decision || row.action || '',
+    price: Number(row.price || 0),
+    shares: row.shares,
+    strategy: row.strategy,
+    reasoning: row.reasoning,
+    stop_loss: row.stop_loss,
+    take_profit: row.take_profit,
+    avg_cost: row.avg_cost,
+  };
 }
 
 function createWheelZoomHandler(chart: echarts.ECharts) {

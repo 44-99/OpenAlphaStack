@@ -612,7 +612,7 @@ async def api_ledger(limit: int = 50, code: str = ""):
         return JSONResponse({"error": "No active paper run found"}, status_code=404)
     entries = _read_jsonl(os.path.join(output_dir, "ledger.jsonl"), limit=limit)
     if code:
-        entries = [e for e in entries if e.get("symbol", "") == code]
+        entries = [e for e in entries if e.get("symbol", "") == code or e.get("code", "") == code]
     return entries
 
 

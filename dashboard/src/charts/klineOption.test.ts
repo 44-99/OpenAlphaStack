@@ -73,4 +73,26 @@ describe('buildKlineOption', () => {
       padding: 0,
     });
   });
+
+  it('renders trading result markers and risk lines', () => {
+    const option = buildKlineOption(sample, 'MA', [
+      {
+        time: '2026-06-02',
+        code: '000001',
+        action: 'buy',
+        price: 12,
+        shares: 100,
+        strategy: 'test',
+        stop_loss: 10.8,
+        take_profit: 14,
+        avg_cost: 12,
+      },
+    ]);
+    const series = option.series as Array<Record<string, unknown>>;
+    const tradeSeries = series.find((item) => item.name === '交易结果') as Record<string, unknown>;
+    const candleSeries = series.find((item) => item.name === 'K线') as Record<string, unknown>;
+
+    expect(tradeSeries).toMatchObject({ type: 'scatter' });
+    expect(candleSeries.markLine).toBeTruthy();
+  });
 });

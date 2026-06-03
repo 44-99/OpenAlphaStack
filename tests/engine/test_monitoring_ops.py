@@ -245,6 +245,26 @@ def test_execution_engine_notifies_through_injected_callback(engine_parts):
     assert calls[0][1]["run_id"] == "test_run"
 
 
+def test_execute_buy_ledger_contains_chart_risk_fields(engine_parts):
+    _state, _plan, _clock, ledger, execution = engine_parts
+
+    execution.execute_buy(
+        "000002",
+        100,
+        12.34,
+        stop_loss=11.11,
+        take_profit=14.56,
+        reasoning="chart fields",
+    )
+
+    entry = ledger.append.call_args.args[0]
+    assert entry["decision"] == "open_position"
+    assert entry["symbol"] == "000002"
+    assert entry["avg_cost"] == 12.34
+    assert entry["stop_loss"] == 11.11
+    assert entry["take_profit"] == 14.56
+
+
 def test_new_buy_is_locked_until_t1_release(engine_parts):
     state, _plan, _clock, _ledger, execution = engine_parts
 

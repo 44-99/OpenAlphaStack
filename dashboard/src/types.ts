@@ -62,6 +62,9 @@ export interface LedgerEntry {
   shares?: number;
   strategy?: string;
   reasoning?: string;
+  stop_loss?: number;
+  take_profit?: number;
+  avg_cost?: number;
 }
 
 export interface CacheStatus {
@@ -94,6 +97,19 @@ export interface KlineData {
   low: number[];
   close: number[];
   volume: number[];
+}
+
+export interface KlineTradeMarker {
+  time: string;
+  code: string;
+  action: string;
+  price: number;
+  shares?: number;
+  strategy?: string;
+  reasoning?: string;
+  stop_loss?: number;
+  take_profit?: number;
+  avg_cost?: number;
 }
 
 export interface WorkflowEvent {
