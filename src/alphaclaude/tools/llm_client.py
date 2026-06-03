@@ -10,7 +10,7 @@ Note: anthropic is imported lazily to avoid stdlib signal shadowing by tools/sig
 
 from collections.abc import Callable
 
-from config import ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL
+from alphaclaude.config import ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL
 
 _client = None
 

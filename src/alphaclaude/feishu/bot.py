@@ -4,7 +4,7 @@ Feishu Bot — send messages, handle events.
 import json
 import httpx
 from alphaclaude.feishu.auth import get_tenant_token
-from config import FEISHU_API_BASE, FEISHU_BOT_NAME, FEISHU_BOT_OPEN_ID
+from alphaclaude.config import FEISHU_API_BASE, FEISHU_BOT_NAME, FEISHU_BOT_OPEN_ID
 
 
 def _headers() -> dict:

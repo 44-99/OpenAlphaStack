@@ -17,6 +17,7 @@ from alphaclaude.engine.execution import ExecutionEngine
 from alphaclaude.engine.ledger import Ledger
 from alphaclaude.engine.plan import PlanManager
 from alphaclaude.engine.state import EngineState
+from alphaclaude.engine.workflow_events import WorkflowEventStore
 
 add_legacy_paths()
 
@@ -48,6 +49,7 @@ class OvernightPipeline:
         self.execution = execution
         self.data_feed = data_feed
         self.run_id = os.path.basename(output_dir)
+        self.workflow = WorkflowEventStore(output_dir, run_id=self.run_id)
         self._last_shadow_diagnostics = ""
         try:
             from alphaclaude.tools.strategy_variants import get_active_variant
@@ -282,7 +284,7 @@ class OvernightPipeline:
         Returns {'A': summary, 'B': summary, 'C': summary}.
         """
         from alphaclaude.tools.llm_client import call_text
-        from config import QUICK_THINK_MODEL
+        from alphaclaude.config import QUICK_THINK_MODEL
 
         prompts = {
             "A": self._build_sub_agent_a_prompt(),
@@ -748,7 +750,7 @@ class OvernightPipeline:
         Returns (candidates, debate_trace). Falls back to empty on any failure.
         """
         from alphaclaude.tools.llm_client import call_with_tool_safe, TOOL_ADD_CANDIDATE
-        from config import QUICK_THINK_MODEL
+        from alphaclaude.config import QUICK_THINK_MODEL
 
         bull_prompt = self._build_bull_prompt(summaries, direction)
         bull_text = self._call_text_safe(bull_prompt, "Bull", model=QUICK_THINK_MODEL)
@@ -842,7 +844,7 @@ class OvernightPipeline:
         Returns {'action': 'maintain'|'reduce'|'reject', 'suggested_total_pct': float,
                  'rejected_codes': [...], 'reasoning': str} or None on skip/failure.
         """
-        from config import QUICK_THINK_MODEL
+        from alphaclaude.config import QUICK_THINK_MODEL
 
         # Check trigger conditions
         total_pct = sum(c.get("position_pct", 0) for c in candidates)
@@ -1194,18 +1196,78 @@ class OvernightPipeline:
     def run_full(self) -> dict:
         """Phase 0 (parallel sub-agents) → Phase 1 (merged Claude) → Phase 2 (Python risk)."""
         result = {"stages": {}}
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="market_snapshot",
+            node_name="市场快照",
+            summary="开始盘前计划生成",
+            output_refs=["market.snapshot"],
+        )
 
         try:
             summaries = self._run_sub_agents()
+            for label, node_id, node_name in (
+                ("A", "sub_agent_a", "子代理A: 市场方向"),
+                ("B", "sub_agent_b", "子代理B: 选股"),
+                ("C", "sub_agent_c", "子代理C: 复盘反馈"),
+            ):
+                self._record_workflow(
+                    "success",
+                    phase="premarket",
+                    node_id=node_id,
+                    node_name=node_name,
+                    summary=f"输出 {len(summaries.get(label, ''))} 字符",
+                    output_refs=[f"premarket.sub_agent_{label.lower()}"],
+                )
         except Exception as exc:
             print(f"[OvernightPipeline] sub-agents failed: {exc}")
+            self._record_workflow(
+                "error",
+                phase="premarket",
+                node_id="sub_agent_a",
+                node_name="盘前子代理",
+                error=str(exc),
+            )
             summaries = {"A": "", "B": "", "C": ""}
 
         # Persist shadow diagnostics if computed
         self._save_shadow_if_dirty(summaries.get("C", ""))
 
         result["stages"]["merged"] = self.run_merged_stage(summaries)
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="merge_decision",
+            node_name="合并决策",
+            summary=(
+                f"方向 {self.plan._data.get('market_bias', 'unknown')}，"
+                f"候选 {len(self.plan._data.get('buy_candidates', []))} 只"
+            ),
+            input_refs=["premarket.sub_agent_a", "premarket.sub_agent_b", "premarket.sub_agent_c"],
+            output_refs=["plan.market_bias", "plan.buy_candidates"],
+        )
         result["stages"]["risk"] = self.run_risk_validation()
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="risk_validation",
+            node_name="风控校验",
+            summary=(
+                f"通过 {self.plan._data.get('risk_report', {}).get('passed_count', 0)}，"
+                f"拒绝 {self.plan._data.get('risk_report', {}).get('rejected_count', 0)}"
+            ),
+            input_refs=["plan.buy_candidates"],
+            output_refs=["plan.risk_report"],
+        )
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="plan_writer",
+            node_name="计划写入",
+            summary="plan.json 已写入",
+            output_refs=["plan.json"],
+        )
 
         # 3.10 Risk debate: triggered only when positions are large
         passed_candidates = self.plan._data.get("buy_candidates", [])
@@ -1215,6 +1277,16 @@ class OvernightPipeline:
                 result["stages"]["risk_debate"] = debate_result
 
         return result
+
+    def _record_workflow(self, status: str, **kwargs) -> None:
+        """Record observability events without affecting trading control flow."""
+        try:
+            if status == "error":
+                self.workflow.record_node_error(**kwargs)
+            else:
+                self.workflow.record_node_finish(**kwargs)
+        except Exception as exc:
+            print(f"[Workflow] record failed: {exc}")
 
     def _save_shadow_if_dirty(self, sub_c_output: str) -> None:
         """Save shadow diagnostics if data was computed during prompt building."""

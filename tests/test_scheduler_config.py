@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import scheduler as scheduler_module
+from alphaclaude.app import scheduler as scheduler_module
 
 
 class _FakeScheduler:

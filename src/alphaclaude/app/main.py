@@ -17,18 +17,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from config import (
+from alphaclaude.config import (
     ALERT_CHAT_IDS, LOG_LEVEL, STOCK_DATA_DIR, STREAM_ENABLED, STREAM_UPDATE_MS,
     AUTO_ROTATE_ENABLED, CONTEXT_WINDOW_TOKENS, ROTATE_THRESHOLD, MAX_TURNS_BEFORE_ROTATE,
 )
 from alphaclaude.app import dashboard
+from alphaclaude.app import memory
 from alphaclaude.feishu.bot import parse_event, reply_message, send_text, update_message
 from alphaclaude.feishu.group import check_membership
 from alphaclaude.feishu.user import get_user_label
 from alphaclaude.feishu.ws import start_ws_listener
-from claude import ask_claude, ask_claude_stream
-from logging_config import setup_logging
-from scheduler import (
+from alphaclaude.claude import ask_claude, ask_claude_stream
+from alphaclaude.logging_config import setup_logging
+from alphaclaude.app.scheduler import (
     run_memory_consolidation,
     set_subscribers,
     start_scheduler,
@@ -36,7 +37,6 @@ from scheduler import (
     delete_dynamic_task,
     list_dynamic_tasks,
 )
-import memory
 from alphaclaude.engine import run_registry
 from alphaclaude.engine import cli as engine_cli
 from alphaclaude.paths import PROJECT_ROOT
@@ -198,7 +198,7 @@ def _check_context_budget(conv_id: str) -> bool:
 
     # Check token-based rotation
     try:
-        from claude import get_last_token_usage
+        from alphaclaude.claude import get_last_token_usage
         usage = get_last_token_usage()
         input_tokens = usage.get("input_tokens", 0)
         if input_tokens > 0 and input_tokens > int(CONTEXT_WINDOW_TOKENS * ROTATE_THRESHOLD):
@@ -288,7 +288,7 @@ def _extract_stock_codes(text: str) -> list[str]:
 
 
 def _fetch_stock_context(text: str) -> tuple[str, bool]:
-    from stock import get_market_overview
+    from alphaclaude.app.stock import get_market_overview
     from alphaclaude.tools.quote import get_stock_quote
     from alphaclaude.tools.technical import get_technical
 
@@ -1276,7 +1276,7 @@ async def lifespan(_: FastAPI):
     yield
     dashboard.arm_forced_exit_timer()
     dashboard.shutdown_sse()
-    from scheduler import stop_scheduler
+    from alphaclaude.app.scheduler import stop_scheduler
     stop_scheduler()
     logger.info("飞书股票机器人已停止", extra={"category": "shutdown"})
 

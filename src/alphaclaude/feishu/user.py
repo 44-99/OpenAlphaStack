@@ -3,7 +3,7 @@ Feishu user info — lookup display name by open_id, cached.
 """
 import httpx
 from alphaclaude.feishu.auth import get_tenant_token
-from config import FEISHU_API_BASE
+from alphaclaude.config import FEISHU_API_BASE
 
 _cache: dict[str, str] = {}
 

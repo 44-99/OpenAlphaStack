@@ -12,7 +12,7 @@ from datetime import datetime
 PROJECT_DIR = str(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_DIR)
 
-from config import ENGINE_CHAT_IDS  # noqa: E402
+from alphaclaude.config import ENGINE_CHAT_IDS  # noqa: E402
 from alphaclaude.feishu.bot import send_post, send_text  # noqa: E402
 
 

@@ -7,9 +7,10 @@ import os
 import re
 from collections.abc import Generator
 
-from config import CLAUDE_CMD, CLAUDE_TIMEOUT
+from alphaclaude.config import CLAUDE_CMD, CLAUDE_TIMEOUT
+from alphaclaude.paths import PROJECT_ROOT
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = str(PROJECT_ROOT)
 SESSIONS_DIR = os.path.join(
     os.path.expanduser("~"), ".claude", "projects", "E--Project-AlphaClaude"
 )

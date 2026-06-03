@@ -214,6 +214,73 @@ def test_run_paper_leaves_observation_when_trading_day_becomes_actionable(output
     assert meta["observation_reason"] == ""
 
 
+def test_run_paper_generates_late_plan_if_premarket_window_was_missed(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = SequencedClock(
+        [datetime(2026, 5, 19, 9, 35)],
+        ["morning"],
+        [True],
+    )
+    calls = []
+    engine.fast_lane = SimpleNamespace(
+        reset_day=lambda: None,
+        execute_holding_adjustments=lambda: [],
+        tick=lambda: {"events": [], "emergency": False},
+    )
+
+    def fake_morning_analysis():
+        calls.append("morning")
+        engine.plan.set_market_bias(
+            "neutral",
+            55,
+            "补跑盘前计划：当前仅观察，不主动开仓。",
+            position_cap=30,
+        )
+        return {"stages": {"merged": {}, "risk": {}}}
+
+    monkeypatch.setattr(engine, "run_morning_analysis", fake_morning_analysis)
+
+    def fake_sleep(_seconds: int) -> None:
+        engine.stop()
+
+    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
+
+    engine.run_paper()
+
+    meta = engine.state.load()["engine_meta"]
+    assert calls == ["morning"]
+    assert meta["status"] == "running"
+    assert meta["observation_mode"] is False
+    assert meta["observation_reason"] == ""
+
+
+def test_run_paper_wraps_loop_with_windows_sleep_guard(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    calls = []
+
+    class FakeSleepGuard:
+        def __init__(self, enabled: bool):
+            calls.append(("guard", enabled))
+
+        def __enter__(self):
+            calls.append(("enter", None))
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("exit", None))
+
+    monkeypatch.setattr(paper_module, "_prevent_windows_sleep", FakeSleepGuard)
+    monkeypatch.setattr(engine, "_run_paper_loop", lambda: calls.append(("loop", None)))
+
+    engine.run_paper()
+
+    assert calls == [
+        ("guard", True),
+        ("enter", None),
+        ("loop", None),
+        ("exit", None),
+    ]
+
+
 def test_fast_lane_reset_runs_once_per_trading_day(output_base):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
     calls = []

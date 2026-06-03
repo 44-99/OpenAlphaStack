@@ -6,8 +6,8 @@ import os
 import threading
 from datetime import datetime
 
-from config import STOCK_DATA_DIR
-from claude import SESSIONS_DIR, ask_claude
+from alphaclaude.config import STOCK_DATA_DIR
+from alphaclaude.claude import SESSIONS_DIR, ask_claude
 
 MEMORY_DIR = os.path.join(STOCK_DATA_DIR, "memory")
 

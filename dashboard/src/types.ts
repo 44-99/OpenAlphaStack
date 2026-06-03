@@ -1,4 +1,5 @@
 export type PageKey = 'watch' | 'holdings' | 'plan' | 'ledger' | 'logs';
+export type WorkbenchMode = 'watch' | 'workflow' | 'review';
 export type KlinePeriod = 'day' | 'week' | '1m' | '5m' | '15m' | '60m';
 export type OverlayKind = 'MA' | 'EMA' | 'BOLL';
 export type AgentProvider = 'claude' | 'codex';
@@ -93,4 +94,43 @@ export interface KlineData {
   low: number[];
   close: number[];
   volume: number[];
+}
+
+export interface WorkflowEvent {
+  event_id: string;
+  run_id: string;
+  phase: string;
+  node_id: string;
+  node_name: string;
+  status: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  input_refs?: string[];
+  output_refs?: string[];
+  summary?: string;
+  error?: string;
+  artifact_dir?: string;
+}
+
+export interface WorkflowGraphNode {
+  id: string;
+  name: string;
+  enabled: boolean;
+  locked: boolean;
+  status: string;
+  summary?: string;
+  last_event_id?: string;
+  phase?: string;
+}
+
+export interface WorkflowGraphEdge {
+  from: string;
+  to: string;
+}
+
+export interface WorkflowGraph {
+  run_id: string;
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
 }

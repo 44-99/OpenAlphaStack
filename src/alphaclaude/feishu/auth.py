@@ -3,7 +3,7 @@ Feishu authentication — tenant access token management.
 """
 import time
 import httpx
-from config import FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_API_BASE
+from alphaclaude.config import FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_API_BASE
 
 _token_cache = {"token": "", "expires_at": 0}
 

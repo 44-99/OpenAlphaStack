@@ -1,6 +1,12 @@
+import asyncio
+import base64
+import json
+
 import pandas as pd
+from fastapi.responses import JSONResponse
 
 from alphaclaude.app import dashboard as app_dashboard
+from alphaclaude.engine import run_registry
 
 
 def _isolate_kline_cache(tmp_path, monkeypatch):
@@ -12,6 +18,19 @@ def _isolate_kline_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(app_dashboard, "LEGACY_MINUTE_CACHE_DIR", str(legacy_minute_dir))
     monkeypatch.setattr(app_dashboard, "MINUTE_CACHE_DIR", str(legacy_minute_dir))
     return data_dir, kline_dir, legacy_minute_dir
+
+
+def test_agent_terminal_startup_args_hides_utf8_setup(monkeypatch):
+    monkeypatch.setattr(app_dashboard, "_agent_terminal_command", lambda _provider: "claude")
+
+    args = app_dashboard._agent_terminal_startup_args("claude")
+    encoded = args.rsplit(" ", 1)[-1]
+    script = base64.b64decode(encoded).decode("utf-16-le")
+
+    assert "-EncodedCommand" in args
+    assert "[Console]::OutputEncoding" in script
+    assert "chcp 65001 | Out-Null" in script
+    assert script.endswith("claude")
 
 
 def test_kline_cache_stats_counts_new_and_legacy_files(tmp_path, monkeypatch):
@@ -95,3 +114,80 @@ def test_minute_period_resamples_from_1m_cache(tmp_path, monkeypatch):
     assert five_minute.iloc[0]["close"] == 14.5
     assert five_minute.iloc[0]["volume"] == 500
     assert (kline_dir / "5m" / "000001.parquet").exists()
+
+
+def test_engine_status_uses_run_registry_liveness(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-02T08-00-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps({
+            "data_time": "2026-06-02 08:48:32",
+            "engine_meta": {
+                "mode": "paper",
+                "process_id": 31560,
+                "status": "running",
+                "observation_mode": False,
+                "observation_reason": "",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+    monkeypatch.setattr(run_registry, "_output_base", lambda: output)
+    monkeypatch.setattr(run_registry, "_is_pid_alive", lambda _pid: False)
+
+    result = asyncio.run(app_dashboard.api_engine_status())
+
+    assert result["run_id"] == "paper_2026-06-02T08-00-00"
+    assert result["status"] == "stopped"
+    assert result["is_alive"] is False
+    assert result["process_id"] == 31560
+
+
+def test_workflow_events_api_reads_active_run(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("{}", encoding="utf-8")
+    (run_dir / "workflow_events.jsonl").write_text(
+        (
+            '{"event_id":"wf_1","run_id":"paper_2026-06-04T09-30-00",'
+            '"phase":"premarket","node_id":"risk_validation","node_name":"风控校验",'
+            '"status":"success","started_at":"","ended_at":"","duration_ms":0,'
+            '"input_refs":[],"output_refs":[],"summary":"passed","error":"","artifact_dir":""}\n'
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_workflow_events("paper_2026-06-04T09-30-00"))
+
+    assert result["run_id"] == "paper_2026-06-04T09-30-00"
+    assert result["events"][0]["node_id"] == "risk_validation"
+
+
+def test_workflow_graph_api_returns_default_nodes(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_workflow_graph("paper_2026-06-04T09-30-00"))
+
+    assert result["run_id"] == "paper_2026-06-04T09-30-00"
+    assert any(node["id"] == "risk_validation" for node in result["nodes"])
+    assert result["edges"]
+
+
+def test_workflow_artifact_rejects_path_traversal(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_workflow_artifact("paper_2026-06-04T09-30-00", "..", "secret.txt"))
+
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 400

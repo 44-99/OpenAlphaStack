@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-import claude as claude_module
+from alphaclaude import claude as claude_module
 from alphaclaude.app import main as app_main
 
 

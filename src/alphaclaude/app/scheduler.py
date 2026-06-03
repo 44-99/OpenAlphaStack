@@ -12,11 +12,11 @@ from datetime import date, datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import STOCK_DATA_DIR
+from alphaclaude.config import STOCK_DATA_DIR
 from alphaclaude.feishu.bot import send_text
-from stock import format_market_report
-from claude import ask_claude, build_trading_prompt
-from memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
+from alphaclaude.app.stock import format_market_report
+from alphaclaude.claude import ask_claude, build_trading_prompt
+from alphaclaude.app.memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
 
 logger = logging.getLogger("scheduler")
 

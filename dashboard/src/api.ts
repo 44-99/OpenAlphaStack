@@ -8,6 +8,8 @@ import type {
   PlanData,
   WatchlistItem,
   AgentProvider,
+  WorkflowEvent,
+  WorkflowGraph,
 } from './types';
 
 async function getJson<T>(url: string): Promise<T> {
@@ -29,6 +31,10 @@ export const api = {
   watchlist: () => getJson<unknown[]>('/api/watchlist'),
   kline: (code: string, period: KlinePeriod, limit = 200) =>
     getJson<KlineData>(`/api/kline/${code}?period=${period}&limit=${limit}`),
+  workflowEvents: (runId = 'active', limit = 500) =>
+    getJson<{ run_id: string; events: WorkflowEvent[] }>(`/api/workflow/runs/${runId}/events?limit=${limit}`),
+  workflowGraph: (runId = 'active') =>
+    getJson<WorkflowGraph>(`/api/workflow/runs/${runId}/graph`),
   clearKlineCache: () =>
     fetch('/api/cache/kline/clear', { method: 'POST' }).then(async (response) => {
       const data = await response.json().catch(() => ({}));

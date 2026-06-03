@@ -499,7 +499,7 @@ def resolve_with_llm(diagnostics: dict) -> str:
 
     try:
         from alphaclaude.tools.llm_client import call_text
-        from config import QUICK_THINK_MODEL
+        from alphaclaude.config import QUICK_THINK_MODEL
         reflection = call_text(prompt, model=QUICK_THINK_MODEL, max_tokens=512)
         return reflection.strip()
     except Exception:

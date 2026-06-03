@@ -7,7 +7,7 @@ import json
 import os
 import time
 from datetime import datetime
-from config import STOCK_DATA_DIR
+from alphaclaude.config import STOCK_DATA_DIR
 
 
 def _cache_path(name: str) -> str:

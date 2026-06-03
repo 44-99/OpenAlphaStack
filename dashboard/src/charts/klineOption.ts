@@ -2,6 +2,9 @@ import type { EChartsOption } from 'echarts';
 import type { KlineData, OverlayKind } from '../types';
 import { calcBOLL, calcEMA, calcMA } from './indicators';
 
+const UP_COLOR = '#ff3b30';
+const DOWN_COLOR = '#22b573';
+
 function formatNumber(value: number) {
   return Number.isFinite(value) ? value.toFixed(2) : '--';
 }
@@ -32,10 +35,11 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
       clip: true,
       progressive: 0,
       itemStyle: {
-        color: '#f05b44',
-        color0: '#16a06b',
-        borderColor: '#f05b44',
-        borderColor0: '#16a06b',
+        color: UP_COLOR,
+        color0: DOWN_COLOR,
+        borderColor: UP_COLOR,
+        borderColor0: DOWN_COLOR,
+        borderWidth: 1.35,
       },
     },
   ];
@@ -87,7 +91,7 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
         data: boll.upper,
         smooth: true,
         symbol: 'none',
-        lineStyle: { width: 1, color: '#d85845', opacity: 0.55, type: 'dashed' },
+        lineStyle: { width: 1, color: UP_COLOR, opacity: 0.55, type: 'dashed' },
       },
       {
         name: 'LOWER',
@@ -97,7 +101,7 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
         data: boll.lower,
         smooth: true,
         symbol: 'none',
-        lineStyle: { width: 1, color: '#2aa36f', opacity: 0.55, type: 'dashed' },
+        lineStyle: { width: 1, color: DOWN_COLOR, opacity: 0.55, type: 'dotted' },
       },
     );
   }
@@ -110,8 +114,9 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
     data: data.volume.map((value, index) => ({
       value,
       itemStyle: {
-        color: Number(data.close[index]) >= Number(data.open[index]) ? '#f05b44' : '#16a06b',
-        opacity: 0.52,
+        color: Number(data.close[index]) >= Number(data.open[index]) ? UP_COLOR : DOWN_COLOR,
+        borderWidth: 0,
+        opacity: Number(data.close[index]) >= Number(data.open[index]) ? 0.68 : 0.36,
       },
     })),
     clip: true,
@@ -122,8 +127,8 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
     backgroundColor: 'transparent',
     animation: false,
     grid: [
-      { left: '5%', right: '2.5%', top: '4%', bottom: '25%' },
-      { left: '5%', right: '2.5%', top: '80%', bottom: '10%' },
+      { left: '4.2%', right: '1.6%', top: '3%', bottom: '22%' },
+      { left: '4.2%', right: '1.6%', top: '79%', bottom: '8%' },
     ],
     xAxis: [
       {
@@ -231,8 +236,9 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
         const change = close - open;
         const changePct = open ? (change / open) * 100 : 0;
         const up = change >= 0;
-        const tone = up ? '#ff6b57' : '#28d08a';
+        const tone = up ? UP_COLOR : DOWN_COLOR;
         const sign = up ? '+' : '';
+        const direction = up ? '涨' : '跌';
         return `
           <div class="kline-tooltip">
             <div class="kline-tooltip__head">
@@ -241,7 +247,7 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind): ECharts
             </div>
             <div class="kline-tooltip__price" style="color:${tone}">
               ${formatNumber(close)}
-              <small>${sign}${formatNumber(change)} / ${sign}${changePct.toFixed(2)}%</small>
+              <small>${direction} ${sign}${formatNumber(change)} / ${sign}${changePct.toFixed(2)}%</small>
             </div>
             <div class="kline-tooltip__grid">
               <span>OPEN</span><b>${formatNumber(open)}</b>

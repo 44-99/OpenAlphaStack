@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 
+from alphaclaude.paths import DATA_DIR
+
 load_dotenv()
 
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
@@ -12,7 +14,7 @@ FEISHU_BOT_OPEN_ID = os.getenv("FEISHU_BOT_OPEN_ID", "")
 FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
 
 # Stock data config
-STOCK_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+STOCK_DATA_DIR = str(DATA_DIR)
 
 # Claude CLI
 CLAUDE_CMD = os.getenv("CLAUDE_CMD", "claude")

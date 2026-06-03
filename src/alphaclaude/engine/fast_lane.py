@@ -79,7 +79,8 @@ class FastLane:
 
     def __init__(self, state: EngineState, plan: PlanManager,
                  execution: ExecutionEngine, clock: TradingClock, mode: str,
-                 universe: list[str], data_feed: BacktestDataFeed = None):
+                 universe: list[str], data_feed: BacktestDataFeed = None,
+                 workflow=None):
         self.state = state
         self.plan = plan
         self.execution = execution
@@ -87,6 +88,7 @@ class FastLane:
         self.mode = mode
         self.universe = universe or []
         self.data_feed = data_feed
+        self.workflow = workflow
         # Monitored = holdings + buy candidates only.
         # The full universe is Claude Code's selection pool (via screen.py), not scanned every tick.
         self._monitored = set()
@@ -1056,6 +1058,19 @@ class FastLane:
         # Update previous market price for next tick's emergency comparison
         if current_market_price > 0:
             self._prev_market_price = current_market_price
+
+        if self.workflow:
+            try:
+                self.workflow.record_node_finish(
+                    phase="intraday",
+                    node_id="fastlane_tick",
+                    node_name="盘中快车道",
+                    summary=f"tick 完成，监控 {len(codes)} 只，事件 {len(events)} 条",
+                    output_refs=["state.json", "ledger.jsonl"],
+                    output_payload={"events": events[:20], "codes": codes},
+                )
+            except Exception as exc:
+                print(f"[Workflow] record failed: {exc}")
 
         return {"events": events, "emergency": emergency, "trigger_reason": trigger_reason}
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 
 from alphaclaude.paths import DATA_DIR, add_legacy_paths
@@ -19,10 +20,34 @@ from alphaclaude.engine.pipeline import OvernightPipeline
 from alphaclaude.engine.session import SessionLock
 from alphaclaude.engine.state import EngineState
 from alphaclaude.engine.trading_calendar import is_trading_day, non_trading_reason
+from alphaclaude.engine.workflow_events import WorkflowEventStore
 
 add_legacy_paths()
 OUTPUT_BASE = str(DATA_DIR / "output")
 os.makedirs(OUTPUT_BASE, exist_ok=True)
+
+
+@contextmanager
+def _prevent_windows_sleep(enabled: bool = True):
+    """Keep Windows awake while a paper/live engine is expected to trade."""
+    if not enabled or os.name != "nt":
+        yield
+        return
+    try:
+        import ctypes
+
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ES_AWAYMODE_REQUIRED = 0x00000040
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        )
+        yield
+    finally:
+        try:
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        except Exception:
+            pass
 
 try:
     from alphaclaude.tools.notifier import (
@@ -92,6 +117,7 @@ class PaperEngine:
         self.plan = PlanManager(self.output_dir)
         self.ledger = Ledger(self.output_dir)
         self.lock = SessionLock(self.output_dir)
+        self.workflow = WorkflowEventStore(self.output_dir, run_id=self.run_id)
         self.execution = ExecutionEngine(
             self.state,
             self.plan,
@@ -104,6 +130,7 @@ class PaperEngine:
             self.state, self.plan, self.execution,
             self.clock, mode,
             self.universe, self.data_feed,
+            workflow=self.workflow,
         )
         self.pipeline = OvernightPipeline(
             self.state, self.plan, self.ledger,
@@ -228,6 +255,15 @@ class PaperEngine:
             return {"stages": {"stage1": "skipped", "stage2": "skipped", "stage3": "skipped"}}
         print("[Morning] Starting Claude Code pipeline...")
         result = self.pipeline.run_full()
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="plan_writer",
+            node_name="盘前计划",
+            summary="盘前计划生成完成",
+            output_refs=["plan.json"],
+            output_payload=result,
+        )
         print(f"[Morning] Complete: {result}")
         return result
 
@@ -291,10 +327,34 @@ class PaperEngine:
         print(f"[PostClose] {today_str} NAV={nav:,.0f} P&L={day_pnl:+,.0f} "
               f"Trades={report['trade_count']} WinRate={report['win_rate']}% "
               f"Return={report['total_return_pct']:+.2f}%")
+        self._record_workflow(
+            "success",
+            phase="postclose",
+            node_id="daily_report",
+            node_name="盘后日报",
+            summary=f"盘后报告完成，成交 {report['trade_count']} 笔",
+            output_refs=["daily_reports"],
+            output_payload=report,
+        )
         return report
+
+    def _record_workflow(self, status: str, **kwargs) -> None:
+        """Record observability events without affecting engine execution."""
+        try:
+            if status == "error":
+                self.workflow.record_node_error(**kwargs)
+            else:
+                self.workflow.record_node_finish(**kwargs)
+        except Exception as exc:
+            print(f"[Workflow] record failed: {exc}", flush=True)
 
     def run_paper(self) -> None:
         """Run paper/live mode: pre-market plan, intraday execution, post-close report."""
+        with _prevent_windows_sleep(self.mode in {"paper", "live"}):
+            self._run_paper_loop()
+
+    def _run_paper_loop(self) -> None:
+        """Internal paper/live loop. Wrapped by run_paper for OS wake lock handling."""
         print(f"[Engine] Mode: {self.mode.upper()} | Run ID: {self.run_id}", flush=True)
         print(f"[Engine] Output: {self.output_dir}", flush=True)
 
@@ -314,12 +374,20 @@ class PaperEngine:
 
         _last_pipeline_date = None  # date() of last pre-market plan generation
         _post_market_date = None    # date() of last post-market summary
+        _last_phase = start_phase
         tick_count = 0
 
         while not self._stop_event.is_set():
             phase = self.clock.session_phase()
             today = self.clock.now().date()
             should_idle = self._should_idle_for_calendar()
+            if phase != _last_phase:
+                print(
+                    f"[Engine] Phase transition: {_last_phase} -> {phase} "
+                    f"at {self.clock.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    flush=True,
+                )
+                _last_phase = phase
 
             # Closed-market days still get one pre-market Feishu notice.
             if self._is_non_trading_premarket_window() and _last_pipeline_date != today:
@@ -376,10 +444,38 @@ class PaperEngine:
             if self.clock.is_trading():
                 self._reset_fast_lane_for_day_once(today)
                 if not self._has_actionable_plan_for_today():
-                    self._set_observation_mode(True, "trading hours without a pre-market plan")
-                    self._heartbeat()
-                    time.sleep(1)
-                    continue
+                    if self.mode == "paper" and _last_pipeline_date != today:
+                        print(
+                            "[Engine] Missed pre-market plan. Generating a late paper plan...",
+                            flush=True,
+                        )
+                        morning_result = self.run_morning_analysis()
+                        _last_pipeline_date = today
+                        if self._has_actionable_plan_for_today():
+                            self._set_observation_mode(False)
+                            if _notify and morning_result:
+                                risk = morning_result.get("stages", {}).get("risk", {})
+                                merged = morning_result.get("stages", {}).get("merged", {})
+                                notify_overnight_complete(self.run_id, {
+                                    "bias": merged.get("bias", "neutral"),
+                                    "candidates": merged.get("candidates", 0),
+                                    "passed": risk.get("passed", 0),
+                                    "rejected": risk.get("rejected", 0),
+                                    "nav": self.state.total_value,
+                                })
+                        else:
+                            self._set_observation_mode(
+                                True,
+                                "trading hours without an actionable plan after late generation",
+                            )
+                            self._heartbeat()
+                            time.sleep(1)
+                            continue
+                    else:
+                        self._set_observation_mode(True, "trading hours without a pre-market plan")
+                        self._heartbeat()
+                        time.sleep(1)
+                        continue
 
                 # Execute holding adjustments at auction/morning open
                 if phase in ("auction", "morning"):

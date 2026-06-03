@@ -13,6 +13,8 @@ import {
 import { api, normalizeWatchlist } from './api';
 import { AgentPanel } from './components/AgentPanel';
 import { KlineChart } from './components/KlineChart';
+import { ReviewBoard } from './components/ReviewBoard';
+import { WorkflowBoard } from './components/WorkflowBoard';
 import type {
   CacheStatus,
   DashboardState,
@@ -23,6 +25,9 @@ import type {
   PageKey,
   PlanData,
   WatchlistItem,
+  WorkbenchMode,
+  WorkflowEvent,
+  WorkflowGraph,
 } from './types';
 
 const periods: Array<{ key: KlinePeriod; label: string }> = [
@@ -55,6 +60,7 @@ function pnl(value?: number, pct?: number) {
 
 export default function App() {
   const injected = window.__DATA__ || {};
+  const [mode, setMode] = useState<WorkbenchMode>('watch');
   const [page, setPage] = useState<PageKey>('watch');
   const [selectedCode, setSelectedCode] = useState('000001');
   const [period, setPeriod] = useState<KlinePeriod>('day');
@@ -72,6 +78,8 @@ export default function App() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [engine, setEngine] = useState<EngineStatus>({});
   const [cache, setCache] = useState<CacheStatus>({});
+  const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
+  const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph | undefined>();
   const [events, setEvents] = useState<string[]>(['AlphaClaude React Dashboard started']);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -105,6 +113,8 @@ export default function App() {
       api.engineStatus().then(setEngine),
       api.cacheStatus().then(setCache),
       api.watchlist().then((raw) => setWatchlist(normalizeWatchlist(raw))),
+      api.workflowEvents().then((data) => setWorkflowEvents(data.events)),
+      api.workflowGraph().then(setWorkflowGraph),
     ]);
   }, []);
 
@@ -127,6 +137,11 @@ export default function App() {
     });
     source.addEventListener('plan_updated', (event) => {
       setPlan((current) => ({ ...current, ...JSON.parse(event.data) }));
+    });
+    source.addEventListener('workflow_event', (event) => {
+      const data = JSON.parse(event.data) as WorkflowEvent;
+      setWorkflowEvents((current) => [data, ...current.filter((item) => item.event_id !== data.event_id)].slice(0, 500));
+      api.workflowGraph().then(setWorkflowGraph).catch(() => undefined);
     });
     source.addEventListener('connected', () => {
       setEvents((current) => ['SSE connected', ...current].slice(0, 100));
@@ -152,7 +167,7 @@ export default function App() {
       className={`terminal-app ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`}
       style={{
         '--left-width': `${leftCollapsed ? 64 : leftWidth}px`,
-        '--right-width': `${rightCollapsed ? 54 : rightWidth}px`,
+        '--right-width': `${rightCollapsed ? 64 : rightWidth}px`,
       } as CSSProperties}
     >
       <header className="topbar">
@@ -170,11 +185,11 @@ export default function App() {
       <aside className="sidebar">
         <button className="sidebar-toggle" onClick={() => setLeftCollapsed((value) => !value)} title={leftCollapsed ? '展开侧边栏' : '收起侧边栏'}>
           {leftCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          {!leftCollapsed ? <span>Navigator</span> : null}
+          {!leftCollapsed ? <span>收起</span> : null}
         </button>
         <nav>
           {pageItems.map((item) => (
-            <button key={item.key} className={page === item.key ? 'active' : ''} onClick={() => setPage(item.key)} title={item.label}>
+            <button key={item.key} className={page === item.key && mode === 'watch' ? 'active' : ''} onClick={() => { setMode('watch'); setPage(item.key); }} title={item.label}>
               <span className="nav-icon"><item.Icon size={18} strokeWidth={1.9} /></span>
               <span className="nav-label">{item.label}</span>
             </button>
@@ -190,7 +205,12 @@ export default function App() {
       {!leftCollapsed ? <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} /> : null}
 
       <main className="workspace">
-        {page === 'watch' ? (
+        <div className="mode-tabs">
+          <button className={mode === 'watch' ? 'active' : ''} onClick={() => setMode('watch')}>盯盘</button>
+          <button className={mode === 'workflow' ? 'active' : ''} onClick={() => setMode('workflow')}>流程</button>
+          <button className={mode === 'review' ? 'active' : ''} onClick={() => setMode('review')}>复盘</button>
+        </div>
+        {mode === 'watch' && page === 'watch' ? (
           <>
             <KlineChart code={selectedCode} period={period} overlay={overlay} />
             <div className="control-strip">
@@ -209,17 +229,16 @@ export default function App() {
             </div>
           </>
         ) : null}
-        {page === 'holdings' ? <Holdings positions={positions || {}} /> : null}
-        {page === 'plan' ? <Plan plan={plan} /> : null}
-        {page === 'ledger' ? <Ledger rows={ledger} /> : null}
-        {page === 'logs' ? <Logs rows={events} /> : null}
+        {mode === 'watch' && page === 'holdings' ? <Holdings positions={positions || {}} /> : null}
+        {mode === 'watch' && page === 'plan' ? <Plan plan={plan} /> : null}
+        {mode === 'watch' && page === 'ledger' ? <Ledger rows={ledger} /> : null}
+        {mode === 'watch' && page === 'logs' ? <Logs rows={events} /> : null}
+        {mode === 'workflow' ? <WorkflowBoard graph={workflowGraph} events={workflowEvents} /> : null}
+        {mode === 'review' ? <ReviewBoard events={workflowEvents} ledger={ledger} plan={plan} /> : null}
       </main>
       {!rightCollapsed ? <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} /> : null}
       <AgentPanel
         collapsed={rightCollapsed}
-        selectedCode={selectedCode}
-        period={period}
-        overlay={overlay}
         onToggle={() => setRightCollapsed((value) => !value)}
       />
     </div>

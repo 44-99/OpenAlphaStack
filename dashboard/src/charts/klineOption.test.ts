@@ -66,6 +66,7 @@ describe('buildKlineOption', () => {
     expect(html).toContain('000001');
     expect(html).toContain('OPEN');
     expect(html).toContain('VOL');
+    expect(html).toContain('涨 +1.00 / +10.00%');
     expect(option.tooltip).toMatchObject({
       backgroundColor: 'transparent',
       borderColor: 'transparent',

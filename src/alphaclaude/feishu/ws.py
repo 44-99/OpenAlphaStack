@@ -9,7 +9,7 @@ from datetime import datetime
 from lark_oapi.ws import Client as LarkWSClient
 from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 from lark_oapi.core.enum import LogLevel
-from config import FEISHU_APP_ID, FEISHU_APP_SECRET, STOCK_DATA_DIR
+from alphaclaude.config import FEISHU_APP_ID, FEISHU_APP_SECRET, STOCK_DATA_DIR
 
 _event_handler = None
 _debug_log = os.path.join(STOCK_DATA_DIR, "logs", "ws_debug.log")

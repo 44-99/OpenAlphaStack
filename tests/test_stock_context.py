@@ -8,7 +8,7 @@ def test_extract_stock_code_before_chinese_text():
 
 
 def test_stock_context_uses_package_tools_for_code_before_chinese(monkeypatch):
-    import stock
+    from alphaclaude.app import stock
     from alphaclaude.tools import quote, technical
 
     monkeypatch.setattr(stock, "get_market_overview", lambda: {"error": "skip"})

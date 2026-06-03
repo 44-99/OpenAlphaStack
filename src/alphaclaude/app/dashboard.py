@@ -1,5 +1,6 @@
 """Dashboard routes, SSE stream, and K-line cache helpers."""
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -11,6 +12,8 @@ from datetime import datetime
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 
+from alphaclaude.engine import run_registry
+from alphaclaude.engine.workflow_events import WorkflowEventStore
 from alphaclaude.paths import DATA_DIR, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -61,6 +64,25 @@ def _get_active_output_dir() -> str | None:
     if not paper_dirs:
         return None
     return os.path.join(OUTPUT_BASE, paper_dirs[0])
+
+
+def _get_run_output_dir(run_id: str | None = None) -> str | None:
+    """Return a safe output directory for a run id, or the active paper run."""
+    if not run_id or run_id == "active":
+        return _get_active_output_dir()
+
+    output_root = os.path.abspath(OUTPUT_BASE)
+    candidate = os.path.abspath(os.path.join(output_root, run_id))
+    if candidate != output_root and candidate.startswith(output_root + os.sep) and os.path.isdir(candidate):
+        return candidate
+    return None
+
+
+def _workflow_store_for_run(run_id: str | None = None) -> WorkflowEventStore | None:
+    output_dir = _get_run_output_dir(run_id)
+    if not output_dir:
+        return None
+    return WorkflowEventStore(output_dir, run_id=os.path.basename(output_dir))
 
 
 def _read_jsonl(path: str, limit: int = 100) -> list[dict]:
@@ -477,6 +499,7 @@ async def _sse_event_generator(request: Request):
         _sse_queues.append(q)
 
     last_data_time = ""
+    last_workflow_event_id = ""
     try:
         # Send initial state snapshot
         output_dir = _get_active_output_dir()
@@ -511,6 +534,16 @@ async def _sse_event_generator(request: Request):
                     if dt and dt != last_data_time:
                         last_data_time = dt
                         yield _build_nav_sse(state)
+            if output_dir:
+                workflow_store = _workflow_store_for_run(os.path.basename(output_dir))
+                if workflow_store:
+                    workflow_events = workflow_store.read_events(limit=1)
+                    if workflow_events:
+                        latest = workflow_events[-1]
+                        event_id = latest.get("event_id", "")
+                        if event_id and event_id != last_workflow_event_id:
+                            last_workflow_event_id = event_id
+                            yield f"event: workflow_event\ndata: {json.dumps(latest, ensure_ascii=False)}\n\n"
     finally:
         with _sse_lock:
             if q in _sse_queues:
@@ -667,17 +700,92 @@ async def api_cache_minute_clear():
 
 @router.get("/api/engine/status")
 async def api_engine_status():
-    output_dir = _get_active_output_dir()
-    run_id = os.path.basename(output_dir) if output_dir else None
+    records = run_registry.list_runs("paper")
+    record = records[0] if records else None
+    output_dir = record.run_dir if record else _get_active_output_dir()
+    run_id = record.run_id if record else (os.path.basename(output_dir) if output_dir else None)
     state = _read_json(os.path.join(output_dir, "state.json")) if output_dir else None
-    engine_meta = state.get("engine_meta", {}) if state else {}
+    engine_meta = record.engine_meta if record else (state.get("engine_meta", {}) if state else {})
     return {
         "run_id": run_id,
-        "status": engine_meta.get("status", "unknown"),
-        "observation_mode": engine_meta.get("observation_mode", False),
+        "status": record.status if record else engine_meta.get("status", "unknown"),
+        "is_alive": record.is_alive if record else False,
+        "process_id": record.process_id if record else None,
+        "observation_mode": record.observation_mode if record else engine_meta.get("observation_mode", False),
         "observation_reason": engine_meta.get("observation_reason", ""),
         "data_time": state.get("data_time", "") if state else "",
         "has_plan": os.path.exists(os.path.join(output_dir, "plan.json")) if output_dir else False,
+    }
+
+
+@router.get("/api/workflow/runs/{run_id}/events")
+async def api_workflow_events(run_id: str, limit: int = 500):
+    store = _workflow_store_for_run(run_id)
+    if not store:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+    safe_limit = max(1, min(int(limit), 2000))
+    return {"run_id": store.run_id, "events": store.read_events(limit=safe_limit)}
+
+
+@router.get("/api/workflow/runs/{run_id}/graph")
+async def api_workflow_graph(run_id: str):
+    store = _workflow_store_for_run(run_id)
+    if not store:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+    return store.build_graph()
+
+
+@router.get("/api/workflow/runs/{run_id}/config")
+async def api_workflow_config(run_id: str):
+    store = _workflow_store_for_run(run_id)
+    if not store:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+    return store.read_config()
+
+
+@router.post("/api/workflow/runs/{run_id}/config")
+async def api_workflow_config_update(run_id: str, request: Request):
+    store = _workflow_store_for_run(run_id)
+    if not store:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+    payload = await request.json()
+    config = store.write_config(payload)
+    _broadcast_sse("workflow_config_updated", {"run_id": store.run_id, "config": config})
+    return config
+
+
+@router.post("/api/workflow/runs/{run_id}/nodes/{node_id}/rerun")
+async def api_workflow_node_rerun(run_id: str, node_id: str):
+    return JSONResponse(
+        {"error": f"节点重跑尚未开放: {run_id}/{node_id}. 第一版只做可观测。"},
+        status_code=409,
+    )
+
+
+@router.get("/api/workflow/runs/{run_id}/artifacts/{event_id}/{name}")
+async def api_workflow_artifact(run_id: str, event_id: str, name: str):
+    output_dir = _get_run_output_dir(run_id)
+    if not output_dir:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+
+    allowed_names = {"input.json", "output.json", "prompt.txt", "response.txt", "error.txt"}
+    if event_id in {"", ".", ".."} or "/" in event_id or "\\" in event_id or name not in allowed_names:
+        return JSONResponse({"error": "Invalid artifact path"}, status_code=400)
+
+    artifact_root = os.path.abspath(os.path.join(output_dir, "workflow_artifacts"))
+    artifact_path = os.path.abspath(os.path.join(artifact_root, event_id, name))
+    if not artifact_path.startswith(artifact_root + os.sep):
+        return JSONResponse({"error": "Invalid artifact path"}, status_code=400)
+    if not os.path.exists(artifact_path):
+        return JSONResponse({"error": "Artifact not found"}, status_code=404)
+
+    with open(artifact_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return {
+        "run_id": os.path.basename(output_dir),
+        "event_id": event_id,
+        "name": name,
+        "content": content,
     }
 
 
@@ -692,7 +800,7 @@ async def api_terminal_send(request: Request):
             return JSONResponse({"error": "Empty message"}, status_code=400)
 
         # Route to Claude Code for processing
-        from claude import ask_claude
+        from alphaclaude.claude import ask_claude
         response = ask_claude(message, session_id=session_id)
         return {"response": response, "session_id": session_id}
     except Exception as e:
@@ -727,7 +835,7 @@ def _build_agent_prompt(message: str, context: dict, provider: str = "claude") -
 
 def _stream_claude_agent(prompt: str, session_id: str):
     """Yield text chunks from Claude Code."""
-    from claude import ask_claude_stream
+    from alphaclaude.claude import ask_claude_stream
 
     emitted = False
     for chunk in ask_claude_stream(prompt, session_id=session_id):
@@ -884,6 +992,22 @@ def _agent_terminal_command(provider: str) -> str:
     return "claude"
 
 
+def _agent_terminal_startup_args(provider: str) -> str:
+    """Build a PowerShell command line that configures UTF-8 without echoing setup text."""
+    script = "\n".join(
+        [
+            "$OutputEncoding=[System.Text.UTF8Encoding]::new()",
+            "[Console]::InputEncoding=[System.Text.UTF8Encoding]::new()",
+            "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new()",
+            "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force",
+            "chcp 65001 | Out-Null",
+            _agent_terminal_command(provider),
+        ]
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return f"-NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -EncodedCommand {encoded}"
+
+
 @router.websocket("/api/agent/terminal/{provider}")
 async def api_agent_terminal(websocket: WebSocket, provider: str):
     """Attach a browser terminal to local PowerShell and auto-start an agent CLI."""
@@ -910,10 +1034,11 @@ async def api_agent_terminal(websocket: WebSocket, provider: str):
         pass
 
     pty = winpty.PTY(cols, rows)
+    startup_args = _agent_terminal_startup_args(provider)
     try:
-        pty.spawn("pwsh.exe -NoLogo")
+        pty.spawn(f"pwsh.exe {startup_args}")
     except Exception:
-        pty.spawn("powershell.exe -NoLogo")
+        pty.spawn(f"powershell.exe {startup_args}")
 
     loop = asyncio.get_running_loop()
     output_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -934,15 +1059,6 @@ async def api_agent_terminal(websocket: WebSocket, provider: str):
 
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
-
-    def write_line(line: str) -> None:
-        try:
-            pty.write(line + "\r")
-        except Exception:
-            pass
-
-    write_line("$OutputEncoding=[System.Text.UTF8Encoding]::new(); [Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; chcp 65001 | Out-Null")
-    write_line(_agent_terminal_command(provider))
 
     async def sender() -> None:
         while True:

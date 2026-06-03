@@ -47,7 +47,7 @@ def test_lifespan_resets_sse_shutdown_and_arms_forced_exit(monkeypatch):
     monkeypatch.setattr(app_main, "start_ws_listener", lambda _handler: object())
     monkeypatch.setattr(app_dashboard, "shutdown_sse", lambda: shutdown_calls.append("shutdown"))
     monkeypatch.setattr(app_dashboard, "arm_forced_exit_timer", lambda timeout_seconds=3.0: force_calls.append(timeout_seconds))
-    monkeypatch.setattr("scheduler.stop_scheduler", lambda: stop_calls.append("stop"))
+    monkeypatch.setattr("alphaclaude.app.scheduler.stop_scheduler", lambda: stop_calls.append("stop"))
 
     app_dashboard._sse_shutdown = True
 

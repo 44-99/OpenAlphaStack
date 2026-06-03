@@ -3,7 +3,7 @@ Feishu group chat operations — membership check.
 """
 import httpx
 from alphaclaude.feishu.auth import get_tenant_token
-from config import FEISHU_API_BASE
+from alphaclaude.config import FEISHU_API_BASE
 
 
 def check_membership(chat_id: str, open_id: str) -> bool:
