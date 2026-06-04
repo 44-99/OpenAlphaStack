@@ -7,13 +7,13 @@ import os
 import shutil
 import subprocess
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 
 from alphaclaude.engine import run_registry
-from alphaclaude.engine.workflow_events import WorkflowEventStore
+from alphaclaude.engine.workflow_events import WorkflowEventStore, default_workflow_config, default_workflow_edges
 from alphaclaude.paths import DATA_DIR, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,22 @@ MINUTE_CACHE_DIR = LEGACY_MINUTE_CACHE_DIR
 KLINE_PERIODS = {"day", "week", "month", "1m", "5m", "15m", "60m"}
 MINUTE_PERIODS = {"1m", "5m", "15m", "60m"}
 RESAMPLE_RULES = {"5m": "5min", "15m": "15min", "60m": "60min"}
+DEMO_RUN_ID = "demo_run"
+RERUN_REQUESTS_FILE = "workflow_rerun_requests.jsonl"
+SAFE_RERUN_NODES = {
+    "market_snapshot",
+    "sub_agent_a",
+    "sub_agent_b",
+    "sub_agent_c",
+    "merge_decision",
+    "bull_bear_debate",
+    "risk_validation",
+    "plan_writer",
+    "daily_report",
+    "ledger_pairing",
+    "agent_reflection",
+}
+BLOCKED_RERUN_NODES = {"state_watcher", "fastlane_tick", "signal_scan", "execution_check", "order_simulator", "ledger_writer", "alert_router"}
 
 # SSE event queues: one per connected client
 _sse_queues: list[asyncio.Queue] = []
@@ -101,6 +117,12 @@ def _read_jsonl(path: str, limit: int = 100) -> list[dict]:
     return lines[-limit:]
 
 
+def _append_jsonl(path: str, row: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def _read_json(path: str) -> dict | None:
     """Read a JSON file, return None if missing or unparseable."""
     if not os.path.exists(path):
@@ -121,6 +143,269 @@ def _read_json_any(path: str):
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _demo_state() -> dict:
+    return {
+        "run_id": DEMO_RUN_ID,
+        "total_asset": 103280.0,
+        "cash": 72180.0,
+        "position_value": 31100.0,
+        "day_pnl": 3280.0,
+        "day_return_pct": 3.28,
+        "trade_count": 3,
+        "win_count": 2,
+        "positions": {
+            "300913": {
+                "shares": 1000,
+                "avg_cost": 30.8,
+                "current_price": 31.1,
+                "stop_loss": 29.4,
+                "strategy": "AI计划突破",
+                "unrealized_pnl": 300.0,
+            },
+        },
+        "engine_meta": {"mode": "demo", "status": "demo"},
+        "data_time": "2026-06-04 10:30:00",
+    }
+
+
+def _demo_plan() -> dict:
+    return {
+        "updated": "2026-06-04T08:45:00",
+        "updated_by": "demo",
+        "market_bias": "谨慎偏多",
+        "bias_confidence": 68,
+        "bias_reasoning": "指数在关键均线附近企稳，优先选择有量能确认的弹性标的。",
+        "buy_candidates": [
+            {
+                "code": "300913",
+                "strategy_type": "突破回踩",
+                "entry_min": 30.2,
+                "entry_max": 31.2,
+                "stop_loss": 29.4,
+                "take_profit": 34.6,
+                "valid_until": "2026-06-04",
+                "position_pct": 20,
+                "reasoning": "计划等待回踩不破入场区间，上沿突破后由成交量确认。",
+            },
+            {
+                "code": "000001",
+                "strategy_type": "指数观察",
+                "entry_min": 10.4,
+                "entry_max": 10.8,
+                "stop_loss": 10.1,
+                "take_profit": 11.5,
+                "valid_until": "2026-06-04",
+                "position_pct": 10,
+                "reasoning": "作为大盘联动观察样例，不代表真实交易建议。",
+            },
+        ],
+        "rules": {
+            "max_single_position_pct": 25,
+            "max_total_position_pct": 80,
+            "stop_loss_mode": "hard",
+        },
+    }
+
+
+def _demo_ledger(limit: int = 50, code: str = "") -> list[dict]:
+    rows = [
+        {
+            "seq": 3,
+            "time": "2026-06-04 10:12:00",
+            "decision": "buy",
+            "symbol": "300913",
+            "price": 31.1,
+            "shares": 1000,
+            "strategy": "突破回踩",
+            "reasoning": "回踩计划区间后放量重新站上分时均线。",
+            "stop_loss": 29.4,
+            "take_profit": 34.6,
+            "avg_cost": 30.8,
+        },
+        {
+            "seq": 2,
+            "time": "2026-06-04 09:48:00",
+            "decision": "sell",
+            "symbol": "300913",
+            "price": 32.2,
+            "shares": 500,
+            "strategy": "T+0降成本",
+            "reasoning": "冲高接近分时压力，先兑现一半日内仓。",
+            "stop_loss": 29.4,
+            "take_profit": 34.6,
+            "avg_cost": 30.8,
+        },
+        {
+            "seq": 1,
+            "time": "2026-06-04 09:35:00",
+            "decision": "buy",
+            "symbol": "300913",
+            "price": 30.8,
+            "shares": 1500,
+            "strategy": "计划入场",
+            "reasoning": "价格进入计划区间，风控校验通过。",
+            "stop_loss": 29.4,
+            "take_profit": 34.6,
+            "avg_cost": 30.8,
+        },
+    ]
+    if code:
+        rows = [row for row in rows if row.get("symbol") == code or row.get("code") == code]
+    return rows[:limit]
+
+
+def _demo_workflow_events(limit: int = 500) -> list[dict]:
+    rows = [
+        {
+            "event_id": "demo_wf_001",
+            "run_id": DEMO_RUN_ID,
+            "phase": "premarket",
+            "node_id": "market_snapshot",
+            "node_name": "市场快照",
+            "status": "success",
+            "started_at": "2026-06-04T08:40:00",
+            "ended_at": "2026-06-04T08:40:08",
+            "duration_ms": 8000,
+            "input_refs": ["quote.market"],
+            "output_refs": ["market.bias"],
+            "summary": "指数弱修复，量能温和，适合小仓试错。",
+            "error": "",
+            "artifact_dir": "demo",
+        },
+        {
+            "event_id": "demo_wf_002",
+            "run_id": DEMO_RUN_ID,
+            "phase": "premarket",
+            "node_id": "risk_validation",
+            "node_name": "风控校验",
+            "status": "success",
+            "started_at": "2026-06-04T08:46:00",
+            "ended_at": "2026-06-04T08:46:05",
+            "duration_ms": 5000,
+            "input_refs": ["plan.buy_candidates"],
+            "output_refs": ["plan.risk_report"],
+            "summary": "2 个候选通过，单票仓位未超过 25%。",
+            "error": "",
+            "artifact_dir": "demo",
+        },
+        {
+            "event_id": "demo_wf_003",
+            "run_id": DEMO_RUN_ID,
+            "phase": "intraday",
+            "node_id": "ledger_writer",
+            "node_name": "账本写入",
+            "status": "success",
+            "started_at": "2026-06-04T10:12:00",
+            "ended_at": "2026-06-04T10:12:01",
+            "duration_ms": 1000,
+            "input_refs": ["execution.fill"],
+            "output_refs": ["ledger.jsonl"],
+            "summary": "写入 300913 buy 1000 股，成本线刷新。",
+            "error": "",
+            "artifact_dir": "demo",
+        },
+    ]
+    return rows[-limit:]
+
+
+def _demo_workflow_graph() -> dict:
+    config = default_workflow_config()
+    latest_by_node = {event["node_id"]: event for event in _demo_workflow_events(limit=2000)}
+    nodes = []
+    for node_id, node in config["nodes"].items():
+        latest = latest_by_node.get(node_id, {})
+        nodes.append({
+            "id": node_id,
+            "name": latest.get("node_name") or node_id,
+            "enabled": node.get("enabled", True),
+            "locked": node.get("locked", False),
+            "status": latest.get("status", "idle"),
+            "summary": latest.get("summary", ""),
+            "last_event_id": latest.get("event_id", ""),
+            "phase": latest.get("phase", ""),
+        })
+    return {"run_id": DEMO_RUN_ID, "nodes": nodes, "edges": default_workflow_edges()}
+
+
+def _demo_kline_payload(code: str, period: str, limit: int) -> dict:
+    total = max(80, min(limit, 260))
+    minute = period in MINUTE_PERIODS
+    start = datetime(2026, 6, 4, 9, 30) if minute else datetime(2026, 2, 3)
+    step = timedelta(minutes=1 if period == "1m" else int(period[:-1]) if minute else 1)
+    dates = []
+    opens = []
+    highs = []
+    lows = []
+    closes = []
+    volumes = []
+    price = 29.6 if code == "300913" else 10.2
+    for index in range(total):
+        current = start + (step * index if minute else timedelta(days=index))
+        drift = 0.018 * index
+        wave = ((index % 12) - 6) * 0.045
+        open_price = price + drift + wave
+        close_price = open_price + (0.16 if index % 5 in {1, 2, 3} else -0.08)
+        high = max(open_price, close_price) + 0.18
+        low = min(open_price, close_price) - 0.16
+        dates.append(current.strftime("%Y-%m-%d %H:%M") if minute else current.strftime("%Y-%m-%d"))
+        opens.append(round(open_price, 2))
+        highs.append(round(high, 2))
+        lows.append(round(low, 2))
+        closes.append(round(close_price, 2))
+        volumes.append(150000 + (index % 18) * 12000 + (90000 if index in {45, 46, 47} else 0))
+    return {
+        "code": code,
+        "source": f"{period}_demo",
+        "dates": dates,
+        "open": opens,
+        "high": highs,
+        "low": lows,
+        "close": closes,
+        "volume": volumes,
+    }
+
+
+def _demo_annotations(code: str, period: str) -> list[dict]:
+    payload = _demo_kline_payload(code, period, 120)
+    dates = payload["dates"]
+    return [
+        {
+            "id": "demo_support",
+            "code": code,
+            "period": "all",
+            "kind": "level",
+            "label": "Demo支撑",
+            "tone": "up",
+            "price": 29.4 if code == "300913" else 10.1,
+            "source": {"event_id": "demo_wf_002", "node_id": "risk_validation", "skill": "pivot", "confidence": 76, "summary": "由最近低点聚类生成的支撑位。"},
+        },
+        {
+            "id": "demo_range",
+            "code": code,
+            "period": "all",
+            "kind": "range",
+            "label": "Demo入场区间",
+            "tone": "warning",
+            "price_min": 30.2 if code == "300913" else 10.4,
+            "price_max": 31.2 if code == "300913" else 10.8,
+            "source": {"event_id": "demo_wf_002", "node_id": "risk_validation", "skill": "plan", "confidence": 68, "summary": "计划候选的入场区间。"},
+        },
+        {
+            "id": "demo_trend",
+            "code": code,
+            "period": "all",
+            "kind": "trendline",
+            "label": "Demo上升趋势线",
+            "tone": "neutral",
+            "points": [
+                {"time": dates[-70], "price": 29.2 if code == "300913" else 10.0},
+                {"time": dates[-10], "price": 31.0 if code == "300913" else 10.8},
+            ],
+            "source": {"event_id": "demo_wf_001", "node_id": "market_snapshot", "skill": "trend", "confidence": 71, "summary": "趋势线仅用于演示结构图层。"},
+        },
+    ]
 
 
 def _as_float(value):
@@ -237,6 +522,147 @@ def _load_kline_annotations(code: str, period: str) -> list[dict]:
             if item:
                 normalized.append(item)
     return normalized
+
+
+def _write_kline_annotations(output_dir: str, code: str, annotations: list[dict]) -> None:
+    annotation_dir = os.path.join(output_dir, "kline_annotations")
+    os.makedirs(annotation_dir, exist_ok=True)
+    path = os.path.join(annotation_dir, f"{code}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"code": code, "annotations": annotations}, f, ensure_ascii=False, indent=2)
+
+
+def _generate_kline_annotations_from_tools(code: str, period: str) -> list[dict]:
+    """Generate structure annotations from local rule/skill tools."""
+    try:
+        from alphaclaude.tools.pivot import cluster_levels, find_box_range, find_pivots, find_zhongshu
+    except Exception as e:
+        logger.warning("Pivot tools unavailable for annotations: %s", e)
+        return []
+
+    try:
+        df = _load_day_kline_df(code, 160)
+    except Exception as e:
+        logger.warning("Annotation K-line load failed: %s %s", code, e)
+        return []
+    if df is None or df.empty or len(df) < 30:
+        return []
+
+    dates = df.sort_values("time")["time"].dt.strftime("%Y-%m-%d").tolist()
+    highs = df["high"].astype(float).tolist()
+    lows = df["low"].astype(float).tolist()
+    closes = df["close"].astype(float).tolist()
+    current = closes[-1]
+    annotations: list[dict] = []
+
+    pivots = find_pivots(highs, lows, window=5)
+    support_clusters = cluster_levels(pivots.get("pivot_lows", []), tolerance_pct=3.0)
+    resistance_clusters = cluster_levels(pivots.get("pivot_highs", []), tolerance_pct=3.0)
+    for cluster in support_clusters[:2]:
+        annotations.append({
+            "id": f"{code}_support_{len(annotations)}",
+            "code": code,
+            "period": "all",
+            "kind": "level",
+            "label": f"支撑 {cluster.get('touches', 1)}触",
+            "tone": "up",
+            "price": cluster.get("price"),
+            "source": {
+                "node_id": "signal_scan",
+                "skill": "pivot",
+                "confidence": min(92, 55 + int(cluster.get("touches", 1)) * 8),
+                "summary": "由 pivot 低点聚类自动生成。",
+            },
+        })
+    for cluster in resistance_clusters[:2]:
+        annotations.append({
+            "id": f"{code}_resistance_{len(annotations)}",
+            "code": code,
+            "period": "all",
+            "kind": "level",
+            "label": f"压力 {cluster.get('touches', 1)}触",
+            "tone": "down",
+            "price": cluster.get("price"),
+            "source": {
+                "node_id": "signal_scan",
+                "skill": "pivot",
+                "confidence": min(92, 55 + int(cluster.get("touches", 1)) * 8),
+                "summary": "由 pivot 高点聚类自动生成。",
+            },
+        })
+
+    box = find_box_range(df)
+    if box.get("signal") == "box_identified":
+        annotations.append({
+            "id": f"{code}_box_range",
+            "code": code,
+            "period": "all",
+            "kind": "range",
+            "label": "箱体区间",
+            "tone": "warning",
+            "price_min": box.get("box_bottom"),
+            "price_max": box.get("box_top"),
+            "source": {
+                "node_id": "signal_scan",
+                "skill": "pivot.box",
+                "confidence": 70,
+                "summary": f"{box.get('zone', '')}，当前箱体位置 {box.get('position_in_box_pct', '--')}%。",
+            },
+        })
+
+    zhongshu = find_zhongshu(df)
+    if zhongshu.get("signal") == "zhongshu_identified":
+        annotations.append({
+            "id": f"{code}_zhongshu",
+            "code": code,
+            "period": "all",
+            "kind": "range",
+            "label": "中枢区间",
+            "tone": "neutral",
+            "price_min": zhongshu.get("zhongshu_bottom"),
+            "price_max": zhongshu.get("zhongshu_top"),
+            "source": {
+                "node_id": "signal_scan",
+                "skill": "pivot.zhongshu",
+                "confidence": 64,
+                "summary": f"{zhongshu.get('direction', '')}，{zhongshu.get('buy_point_type', '')}。",
+            },
+        })
+
+    low_points = pivots.get("pivot_lows", [])[-2:]
+    if len(low_points) == 2:
+        annotations.append({
+            "id": f"{code}_trendline",
+            "code": code,
+            "period": "all",
+            "kind": "trendline",
+            "label": "低点趋势线",
+            "tone": "up" if current >= low_points[-1]["price"] else "warning",
+            "points": [
+                {"time": dates[low_points[0]["index"]], "price": low_points[0]["price"]},
+                {"time": dates[low_points[1]["index"]], "price": low_points[1]["price"]},
+            ],
+            "source": {
+                "node_id": "signal_scan",
+                "skill": "trend",
+                "confidence": 62,
+                "summary": "由最近两个 pivot low 连接生成，作为趋势结构参考。",
+            },
+        })
+    return annotations
+
+
+def _ensure_generated_kline_annotations(code: str, period: str) -> list[dict]:
+    output_dir = _get_active_output_dir()
+    if not output_dir:
+        return []
+    existing = _load_kline_annotations(code, period)
+    if existing:
+        return existing
+    generated = _generate_kline_annotations_from_tools(code, period)
+    if generated:
+        _write_kline_annotations(output_dir, code, generated)
+    return _load_kline_annotations(code, period)
 
 
 def _cache_tree_stats(path: str) -> dict:
@@ -711,7 +1137,7 @@ async def dashboard_sse(request: Request):
 async def api_state():
     output_dir = _get_active_output_dir()
     if not output_dir:
-        return JSONResponse({"error": "No active paper run found"}, status_code=404)
+        return _demo_state()
     state = _read_json(os.path.join(output_dir, "state.json"))
     if not state:
         return JSONResponse({"error": "state.json not found"}, status_code=404)
@@ -742,7 +1168,7 @@ async def api_state():
 async def api_plan():
     output_dir = _get_active_output_dir()
     if not output_dir:
-        return JSONResponse({"error": "No active paper run found"}, status_code=404)
+        return _demo_plan()
     plan = _read_json(os.path.join(output_dir, "plan.json"))
     if not plan:
         return JSONResponse({"error": "plan.json not found"}, status_code=404)
@@ -753,7 +1179,7 @@ async def api_plan():
 async def api_ledger(limit: int = 50, code: str = ""):
     output_dir = _get_active_output_dir()
     if not output_dir:
-        return JSONResponse({"error": "No active paper run found"}, status_code=404)
+        return _demo_ledger(limit=limit, code=code)
     entries = _read_jsonl(os.path.join(output_dir, "ledger.jsonl"), limit=limit)
     if code:
         entries = [e for e in entries if e.get("symbol", "") == code or e.get("code", "") == code]
@@ -784,6 +1210,8 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
     limit = max(1, min(int(limit), 2000))
     if period not in KLINE_PERIODS:
         return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
+    if not _get_active_output_dir():
+        return _demo_kline_payload(code, period, limit)
 
     try:
         if period == "day":
@@ -799,6 +1227,8 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
         df = None
 
     if df is None or df.empty:
+        if not _get_active_output_dir():
+            return _demo_kline_payload(code, period, limit)
         return JSONResponse({"error": f"No K-line data for {code} {period}"}, status_code=404)
 
     return _df_to_kline_payload(code, df, f"{period}_cache_chain")
@@ -810,7 +1240,23 @@ async def api_kline_annotations(code: str, period: str = "day"):
     period = period.lower()
     if period not in KLINE_PERIODS:
         return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
-    return {"code": code, "period": period, "annotations": _load_kline_annotations(code, period)}
+    if not _get_active_output_dir():
+        return {"code": code, "period": period, "annotations": _demo_annotations(code, period)}
+    return {"code": code, "period": period, "annotations": _ensure_generated_kline_annotations(code, period)}
+
+
+@router.post("/api/kline/{code}/annotations/generate")
+async def api_kline_annotations_generate(code: str, period: str = "day"):
+    """Regenerate local skill-derived K-line structure annotations for the active run."""
+    period = period.lower()
+    if period not in KLINE_PERIODS:
+        return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
+    output_dir = _get_active_output_dir()
+    if not output_dir:
+        return {"code": code, "period": period, "annotations": _demo_annotations(code, period), "demo": True}
+    generated = _generate_kline_annotations_from_tools(code, period)
+    _write_kline_annotations(output_dir, code, generated)
+    return {"code": code, "period": period, "annotations": _load_kline_annotations(code, period), "generated": len(generated)}
 
 
 @router.get("/api/technical/{code}")
@@ -830,6 +1276,8 @@ async def api_watchlist():
         if os.path.exists(pf_path):
             with open(pf_path, "r", encoding="utf-8") as f:
                 return json.load(f)
+        if not _get_active_output_dir():
+            return [{"code": "300913", "source": "demo"}, {"code": "000001", "source": "demo"}]
         return []
     except Exception:
         return []
@@ -861,6 +1309,17 @@ async def api_engine_status():
     run_id = record.run_id if record else (os.path.basename(output_dir) if output_dir else None)
     state = _read_json(os.path.join(output_dir, "state.json")) if output_dir else None
     engine_meta = record.engine_meta if record else (state.get("engine_meta", {}) if state else {})
+    if not output_dir and not record:
+        return {
+            "run_id": DEMO_RUN_ID,
+            "status": "demo",
+            "is_alive": False,
+            "process_id": None,
+            "observation_mode": True,
+            "observation_reason": "当前没有真实模拟盘，Dashboard 使用只读 Demo 数据。",
+            "data_time": _demo_state()["data_time"],
+            "has_plan": True,
+        }
     return {
         "run_id": run_id,
         "status": record.status if record else engine_meta.get("status", "unknown"),
@@ -875,6 +1334,9 @@ async def api_engine_status():
 
 @router.get("/api/workflow/runs/{run_id}/events")
 async def api_workflow_events(run_id: str, limit: int = 500):
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        safe_limit = max(1, min(int(limit), 2000))
+        return {"run_id": DEMO_RUN_ID, "events": _demo_workflow_events(limit=safe_limit)}
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
@@ -884,6 +1346,8 @@ async def api_workflow_events(run_id: str, limit: int = 500):
 
 @router.get("/api/workflow/runs/{run_id}/graph")
 async def api_workflow_graph(run_id: str):
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return _demo_workflow_graph()
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
@@ -892,6 +1356,8 @@ async def api_workflow_graph(run_id: str):
 
 @router.get("/api/workflow/runs/{run_id}/config")
 async def api_workflow_config(run_id: str):
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return default_workflow_config()
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
@@ -900,6 +1366,8 @@ async def api_workflow_config(run_id: str):
 
 @router.post("/api/workflow/runs/{run_id}/config")
 async def api_workflow_config_update(run_id: str, request: Request):
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return JSONResponse({"error": "Demo 模式不保存流程配置"}, status_code=409)
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
@@ -914,14 +1382,53 @@ async def api_workflow_config_update(run_id: str, request: Request):
 
 @router.post("/api/workflow/runs/{run_id}/nodes/{node_id}/rerun")
 async def api_workflow_node_rerun(run_id: str, node_id: str):
-    return JSONResponse(
-        {"error": f"节点重跑尚未开放: {run_id}/{node_id}. 第一版只做可观测。"},
-        status_code=409,
+    if node_id in BLOCKED_RERUN_NODES or node_id not in SAFE_RERUN_NODES:
+        return JSONResponse(
+            {"error": f"节点不允许从 Dashboard 重跑: {node_id}. 盘中执行、订单、账本相关节点必须保持幂等后才能开放。"},
+            status_code=409,
+        )
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return JSONResponse({"error": "Demo 模式不登记重跑请求"}, status_code=409)
+    store = _workflow_store_for_run(run_id)
+    output_dir = _get_run_output_dir(run_id)
+    if not store or not output_dir:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+
+    request_row = {
+        "request_id": f"rerun_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{node_id}",
+        "run_id": store.run_id,
+        "node_id": node_id,
+        "status": "queued",
+        "requested_at": datetime.now().isoformat(timespec="seconds"),
+        "policy": "safe_premarket_postclose_only",
+    }
+    _append_jsonl(os.path.join(output_dir, RERUN_REQUESTS_FILE), request_row)
+    event = store.record_node_finish(
+        phase="system",
+        node_id=node_id,
+        node_name=f"重跑请求/{node_id}",
+        summary=f"已登记安全重跑请求: {node_id}。当前版本只入队，不直接执行订单或账本节点。",
+        output_refs=[RERUN_REQUESTS_FILE],
+        output_payload=request_row,
     )
+    _broadcast_sse("workflow_event", event)
+    return JSONResponse({"run_id": store.run_id, "request": request_row, "event": event}, status_code=202)
 
 
 @router.get("/api/workflow/runs/{run_id}/artifacts/{event_id}/{name}")
 async def api_workflow_artifact(run_id: str, event_id: str, name: str):
+    if run_id in {"active", DEMO_RUN_ID} and event_id.startswith("demo_wf_") and not _get_active_output_dir():
+        demo_content = {
+            "input.json": {"event_id": event_id, "demo": True, "input": ["market", "plan", "risk"]},
+            "output.json": {"event_id": event_id, "demo": True, "summary": "这是 Demo artifact，用于展示流程可追踪能力。"},
+            "error.txt": "",
+            "prompt.txt": "Demo 模式未调用真实 Agent。",
+            "response.txt": "Demo 模式返回固定样例。",
+        }.get(name)
+        if demo_content is None:
+            return JSONResponse({"error": "Invalid artifact path"}, status_code=400)
+        content = demo_content if isinstance(demo_content, str) else json.dumps(demo_content, ensure_ascii=False, indent=2)
+        return {"run_id": DEMO_RUN_ID, "event_id": event_id, "name": name, "content": content}
     output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
@@ -1301,6 +1808,16 @@ async def dashboard_page():
                     "candidates": len(plan.get("buy_candidates", [])) if plan else 0,
                 } if plan else {},
             }
+    else:
+        demo_state = _demo_state()
+        initial_data = {
+            "has_active_run": False,
+            "run_id": DEMO_RUN_ID,
+            "state": demo_state,
+            "plan_summary": _demo_plan(),
+            "data_time": demo_state["data_time"],
+            "demo": True,
+        }
     html = html.replace(
         "window.__DATA__ = {};",
         f"window.__DATA__ = {json.dumps(initial_data, ensure_ascii=False)};",

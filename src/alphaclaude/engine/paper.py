@@ -254,6 +254,14 @@ class PaperEngine:
             print("[Engine] Dry-run: skipping morning Claude Code pipeline")
             return {"stages": {"stage1": "skipped", "stage2": "skipped", "stage3": "skipped"}}
         print("[Morning] Starting Claude Code pipeline...")
+        self._record_workflow(
+            "running",
+            phase="premarket",
+            node_id="plan_writer",
+            node_name="盘前计划",
+            summary="Claude Code 盘前计划生成中",
+            input_refs=["state.json", "watchlist", "market.snapshot"],
+        )
         result = self.pipeline.run_full()
         self._record_workflow(
             "success",
@@ -341,7 +349,9 @@ class PaperEngine:
     def _record_workflow(self, status: str, **kwargs) -> None:
         """Record observability events without affecting engine execution."""
         try:
-            if status == "error":
+            if status == "running":
+                self.workflow.record_node_start(**kwargs)
+            elif status == "error":
                 self.workflow.record_node_error(**kwargs)
             else:
                 self.workflow.record_node_finish(**kwargs)

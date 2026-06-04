@@ -4,6 +4,8 @@ import { calcBOLL, calcEMA, calcMA } from './indicators';
 
 const UP_COLOR = '#ff3b30';
 const DOWN_COLOR = '#22b573';
+const TRADE_COST_COLOR = '#f0b84a';
+const PLAN_UPPER_COLOR = '#41e0c9';
 
 function formatNumber(value: number) {
   return Number.isFinite(value) ? value.toFixed(2) : '--';
@@ -101,7 +103,7 @@ export function buildKlineOption(
         lineStyle: { width: 1, opacity: 0.75, type: 'dashed' },
       });
     });
-  } else {
+  } else if (overlay === 'BOLL') {
     const boll = calcBOLL(closes, 20);
     series.push(
       {
@@ -167,7 +169,7 @@ export function buildKlineOption(
         symbol: 'none',
         silent: true,
         data: allLines,
-        lineStyle: { width: 1.2, type: 'dashed', opacity: 0.82 },
+        lineStyle: { width: 1.2, opacity: 0.82 },
         label: {
           color: '#d8e0ea',
           backgroundColor: 'rgba(8, 13, 20, 0.82)',
@@ -494,13 +496,13 @@ function collectRiskLines(trades: KlineTradeMarker[]) {
   if (!latest) return [];
   const lines = [];
   if (latest.avg_cost) {
-    lines.push({ yAxis: Number(latest.avg_cost), name: `交易成本 ${formatNumber(Number(latest.avg_cost))}`, lineStyle: { color: '#d6a13b' } });
+    lines.push({ yAxis: Number(latest.avg_cost), name: `交易成本 ${formatNumber(Number(latest.avg_cost))}`, lineStyle: { color: TRADE_COST_COLOR, type: 'solid', width: 1.6 } });
   }
   if (latest.stop_loss) {
-    lines.push({ yAxis: Number(latest.stop_loss), name: `交易止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: { color: DOWN_COLOR } });
+    lines.push({ yAxis: Number(latest.stop_loss), name: `交易止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: { color: DOWN_COLOR, type: 'solid', width: 1.6 } });
   }
   if (latest.take_profit) {
-    lines.push({ yAxis: Number(latest.take_profit), name: `交易止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: { color: UP_COLOR } });
+    lines.push({ yAxis: Number(latest.take_profit), name: `交易止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: { color: UP_COLOR, type: 'solid', width: 1.6 } });
   }
   return lines;
 }
@@ -510,20 +512,16 @@ function collectPlanLines(plans: KlinePlanAnnotation[]) {
   if (!latest) return [];
   const lines = [];
   const staleStyle = latest.is_stale ? { color: '#708099', opacity: 0.58, type: 'dotted' } : null;
-  const planColor = latest.is_stale ? '#708099' : '#d6a13b';
-  const planLight = latest.is_stale ? '#708099' : '#ffd37a';
+  const planLight = latest.is_stale ? '#708099' : PLAN_UPPER_COLOR;
   const prefix = latest.is_stale ? '旧计划' : '计划';
-  if (latest.entry_min) {
-    lines.push({ yAxis: Number(latest.entry_min), name: `${prefix}下沿 ${formatNumber(Number(latest.entry_min))}`, lineStyle: staleStyle || { color: planColor } });
-  }
   if (latest.entry_max) {
-    lines.push({ yAxis: Number(latest.entry_max), name: `${prefix}上沿 ${formatNumber(Number(latest.entry_max))}`, lineStyle: staleStyle || { color: planLight } });
+    lines.push({ yAxis: Number(latest.entry_max), name: `${prefix}上沿 ${formatNumber(Number(latest.entry_max))}`, lineStyle: staleStyle || { color: planLight, type: 'dashed', width: 1.35 } });
   }
   if (latest.stop_loss) {
-    lines.push({ yAxis: Number(latest.stop_loss), name: `${prefix}止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: staleStyle || { color: DOWN_COLOR } });
+    lines.push({ yAxis: Number(latest.stop_loss), name: `${prefix}止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: staleStyle || { color: DOWN_COLOR, type: 'dashed', width: 1.35 } });
   }
   if (latest.take_profit) {
-    lines.push({ yAxis: Number(latest.take_profit), name: `${prefix}止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: staleStyle || { color: UP_COLOR } });
+    lines.push({ yAxis: Number(latest.take_profit), name: `${prefix}止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: staleStyle || { color: UP_COLOR, type: 'dashed', width: 1.35 } });
   }
   return lines;
 }

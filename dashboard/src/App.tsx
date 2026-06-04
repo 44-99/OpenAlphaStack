@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, type CSSProperties, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   BookOpenCheck,
@@ -11,10 +11,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, normalizeWatchlist } from './api';
-import { AgentPanel } from './components/AgentPanel';
-import { KlineChart } from './components/KlineChart';
-import { ReviewBoard } from './components/ReviewBoard';
-import { WorkflowBoard } from './components/WorkflowBoard';
 import type {
   CacheStatus,
   DashboardState,
@@ -31,6 +27,11 @@ import type {
   WorkflowGraph,
 } from './types';
 
+const AgentPanel = lazy(() => import('./components/AgentPanel').then((module) => ({ default: module.AgentPanel })));
+const KlineChart = lazy(() => import('./components/KlineChart').then((module) => ({ default: module.KlineChart })));
+const ReviewBoard = lazy(() => import('./components/ReviewBoard').then((module) => ({ default: module.ReviewBoard })));
+const WorkflowBoard = lazy(() => import('./components/WorkflowBoard').then((module) => ({ default: module.WorkflowBoard })));
+
 const periods: Array<{ key: KlinePeriod; label: string }> = [
   { key: '1m', label: '1分' },
   { key: '5m', label: '5分' },
@@ -41,8 +42,9 @@ const periods: Array<{ key: KlinePeriod; label: string }> = [
   { key: 'month', label: '月线' },
 ];
 
-const overlays: OverlayKind[] = ['MA', 'EMA', 'BOLL'];
+const overlays: OverlayKind[] = ['NONE', 'MA', 'EMA', 'BOLL'];
 const overlayLabels: Record<OverlayKind, string> = {
+  NONE: '无',
   MA: '均线',
   EMA: 'EMA',
   BOLL: '布林',
@@ -77,7 +79,7 @@ export default function App() {
   const [page, setPage] = useState<PageKey>('watch');
   const [selectedCode, setSelectedCode] = useState('000001');
   const [period, setPeriod] = useState<KlinePeriod>('1m');
-  const [overlay, setOverlay] = useState<OverlayKind>('MA');
+  const [overlay, setOverlay] = useState<OverlayKind>('NONE');
   const [klineLayers, setKlineLayers] = useState<KlineLayerKey[]>(['trades']);
   const [state, setState] = useState<DashboardState>({
     total_asset: injected.state?.total_asset || 0,
@@ -228,7 +230,9 @@ export default function App() {
         </div>
         {mode === 'watch' && page === 'watch' ? (
           <>
-            <KlineChart code={selectedCode} period={period} overlay={overlay} tradeRefreshKey={tradeRefreshKey} layers={klineLayers} plan={plan} />
+            <Suspense fallback={<div className="empty compact">K线加载中</div>}>
+              <KlineChart code={selectedCode} period={period} overlay={overlay} tradeRefreshKey={tradeRefreshKey} layers={klineLayers} plan={plan} />
+            </Suspense>
             <div className="control-strip">
               {periods.map((item) => (
                 <button key={item.key} className={period === item.key ? 'active' : ''} onClick={() => setPeriod(item.key)}>
@@ -242,7 +246,7 @@ export default function App() {
                   {overlayLabels[item]}
                 </button>
               ))}
-              <button className="active" disabled>成交量</button>
+              <span className="subchart-label">副图: 成交量</span>
               <span className="divider" />
               {klineLayerItems.map((item) => (
                 <button
@@ -263,23 +267,31 @@ export default function App() {
         {mode === 'watch' && page === 'ledger' ? <Ledger rows={ledger} /> : null}
         {mode === 'watch' && page === 'logs' ? <Logs rows={events} /> : null}
         {mode === 'workflow' ? (
-          <WorkflowBoard
-            graph={workflowGraph}
-            events={workflowEvents}
-            onSendToAgent={(text) => {
-              setRightCollapsed(false);
-              setAgentInjection({ id: Date.now(), text });
-            }}
-          />
+          <Suspense fallback={<div className="empty compact">流程加载中</div>}>
+            <WorkflowBoard
+              graph={workflowGraph}
+              events={workflowEvents}
+              onSendToAgent={(text) => {
+                setRightCollapsed(false);
+                setAgentInjection({ id: Date.now(), text });
+              }}
+            />
+          </Suspense>
         ) : null}
-        {mode === 'review' ? <ReviewBoard events={workflowEvents} ledger={ledger} plan={plan} /> : null}
+        {mode === 'review' ? (
+          <Suspense fallback={<div className="empty compact">复盘加载中</div>}>
+            <ReviewBoard events={workflowEvents} ledger={ledger} plan={plan} />
+          </Suspense>
+        ) : null}
       </main>
       {!rightCollapsed ? <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} /> : null}
-      <AgentPanel
-        collapsed={rightCollapsed}
-        onToggle={() => setRightCollapsed((value) => !value)}
-        injection={agentInjection}
-      />
+      <Suspense fallback={<aside className={`agent-panel ${rightCollapsed ? 'collapsed' : ''}`} />}>
+        <AgentPanel
+          collapsed={rightCollapsed}
+          onToggle={() => setRightCollapsed((value) => !value)}
+          injection={agentInjection}
+        />
+      </Suspense>
     </div>
   );
 }

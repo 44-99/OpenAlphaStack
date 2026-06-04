@@ -38,6 +38,14 @@ const signalSample: KlineData = {
 };
 
 describe('buildKlineOption', () => {
+  it('does not render auxiliary overlays when overlay is NONE', () => {
+    const option = buildKlineOption(sample, 'NONE');
+    const series = option.series as Array<Record<string, unknown>>;
+
+    expect(series.some((item) => String(item.name).startsWith('MA'))).toBe(false);
+    expect(series.some((item) => item.name === 'MID' || item.name === 'UPPER' || item.name === 'LOWER')).toBe(false);
+  });
+
   it('binds dataZoom to both price and volume x axes', () => {
     const option = buildKlineOption(sample, 'MA');
     const dataZoom = option.dataZoom as Array<Record<string, unknown>>;
@@ -119,6 +127,9 @@ describe('buildKlineOption', () => {
 
     expect(tradeSeries).toMatchObject({ type: 'scatter' });
     expect(candleSeries.markLine).toBeTruthy();
+    const markLine = candleSeries.markLine as { data: Array<{ name: string; lineStyle: { type: string; color: string } }> };
+    expect(markLine.data.find((item) => item.name.startsWith('交易止盈'))?.lineStyle).toMatchObject({ type: 'solid', color: '#ff3b30' });
+    expect(markLine.data.find((item) => item.name.startsWith('交易止损'))?.lineStyle).toMatchObject({ type: 'solid', color: '#22b573' });
   });
 
   it('renders plan execution layer when plan annotations are provided', () => {
@@ -141,6 +152,10 @@ describe('buildKlineOption', () => {
     expect(planSeries).toMatchObject({ type: 'scatter' });
     expect(candleSeries.markLine).toBeTruthy();
     expect(candleSeries.markArea).toBeTruthy();
+    const markLine = candleSeries.markLine as { data: Array<{ name: string; lineStyle: { type: string; color: string } }> };
+    expect(markLine.data.some((item) => item.name.startsWith('计划下沿'))).toBe(false);
+    expect(markLine.data.find((item) => item.name.startsWith('计划止盈'))?.lineStyle).toMatchObject({ type: 'dashed', color: '#ff3b30' });
+    expect(markLine.data.find((item) => item.name.startsWith('计划止损'))?.lineStyle).toMatchObject({ type: 'dashed', color: '#22b573' });
   });
 
   it('marks stale plan lines as old plan labels', () => {

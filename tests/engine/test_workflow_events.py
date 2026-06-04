@@ -76,6 +76,27 @@ def test_build_graph_uses_latest_event_status(tmp_path):
     assert graph["edges"]
 
 
+def test_record_node_start_marks_graph_node_running(tmp_path):
+    store = WorkflowEventStore(tmp_path, run_id="paper_test")
+    event = store.record_node_start(
+        phase="premarket",
+        node_id="sub_agent_a",
+        node_name="子代理A",
+        summary="正在分析候选池",
+        input_refs=["market.snapshot"],
+        input_payload={"market": "snapshot"},
+    )
+
+    graph = store.build_graph()
+    node = next(item for item in graph["nodes"] if item["id"] == "sub_agent_a")
+
+    assert event["status"] == "running"
+    assert event["ended_at"] == ""
+    assert node["status"] == "running"
+    assert node["input_refs"] == ["market.snapshot"]
+    assert node["artifact_dir"] == f"workflow_artifacts/{event['event_id']}"
+
+
 def test_config_update_records_audit_event(tmp_path):
     store = WorkflowEventStore(tmp_path, run_id="paper_test")
     config = store.write_config({

@@ -54,27 +54,27 @@ def default_workflow_config() -> dict[str, Any]:
 
 
 def default_workflow_edges() -> list[dict[str, str]]:
-    chain = [
-        "market_snapshot",
-        "sub_agent_a",
-        "sub_agent_b",
-        "sub_agent_c",
-        "merge_decision",
-        "bull_bear_debate",
-        "risk_validation",
-        "plan_writer",
-        "state_watcher",
-        "fastlane_tick",
-        "signal_scan",
-        "execution_check",
-        "order_simulator",
-        "ledger_writer",
-        "alert_router",
-        "daily_report",
-        "ledger_pairing",
-        "agent_reflection",
+    return [
+        {"from": "market_snapshot", "to": "sub_agent_a"},
+        {"from": "market_snapshot", "to": "sub_agent_b"},
+        {"from": "market_snapshot", "to": "sub_agent_c"},
+        {"from": "sub_agent_a", "to": "merge_decision"},
+        {"from": "sub_agent_b", "to": "merge_decision"},
+        {"from": "sub_agent_c", "to": "merge_decision"},
+        {"from": "merge_decision", "to": "bull_bear_debate"},
+        {"from": "bull_bear_debate", "to": "risk_validation"},
+        {"from": "risk_validation", "to": "plan_writer"},
+        {"from": "plan_writer", "to": "state_watcher"},
+        {"from": "state_watcher", "to": "fastlane_tick"},
+        {"from": "fastlane_tick", "to": "signal_scan"},
+        {"from": "signal_scan", "to": "execution_check"},
+        {"from": "execution_check", "to": "order_simulator"},
+        {"from": "order_simulator", "to": "ledger_writer"},
+        {"from": "ledger_writer", "to": "alert_router"},
+        {"from": "alert_router", "to": "daily_report"},
+        {"from": "daily_report", "to": "ledger_pairing"},
+        {"from": "ledger_pairing", "to": "agent_reflection"},
     ]
-    return [{"from": left, "to": right} for left, right in zip(chain, chain[1:])]
 
 
 class WorkflowEventStore:
@@ -113,6 +113,34 @@ class WorkflowEventStore:
             duration_ms=0,
             input_refs=input_refs or [],
             output_refs=output_refs or [],
+            summary=summary,
+            artifact_dir=artifact_dir,
+        )
+
+    def record_node_start(
+        self,
+        *,
+        phase: str,
+        node_id: str,
+        node_name: str,
+        summary: str = "",
+        input_refs: list[str] | None = None,
+        input_payload: Any = None,
+    ) -> dict[str, Any]:
+        """Record a live node start event so the UI can show the current step."""
+        event_id = _new_event_id()
+        artifact_dir = self._write_artifacts(event_id, input_payload=input_payload)
+        return self._append_event(
+            event_id=event_id,
+            phase=phase,
+            node_id=node_id,
+            node_name=node_name,
+            status="running",
+            started_at=_now_iso(),
+            ended_at="",
+            duration_ms=0,
+            input_refs=input_refs or [],
+            output_refs=[],
             summary=summary,
             artifact_dir=artifact_dir,
         )
@@ -246,6 +274,12 @@ class WorkflowEventStore:
                 "summary": latest.get("summary", ""),
                 "last_event_id": latest.get("event_id", ""),
                 "phase": latest.get("phase", ""),
+                "started_at": latest.get("started_at", ""),
+                "ended_at": latest.get("ended_at", ""),
+                "duration_ms": latest.get("duration_ms", 0),
+                "input_refs": latest.get("input_refs", []),
+                "output_refs": latest.get("output_refs", []),
+                "artifact_dir": latest.get("artifact_dir", ""),
             })
         return {"run_id": self.run_id, "nodes": nodes, "edges": default_workflow_edges()}
 

@@ -1197,15 +1197,37 @@ class OvernightPipeline:
         """Phase 0 (parallel sub-agents) → Phase 1 (merged Claude) → Phase 2 (Python risk)."""
         result = {"stages": {}}
         self._record_workflow(
-            "success",
+            "running",
             phase="premarket",
             node_id="market_snapshot",
             node_name="市场快照",
             summary="开始盘前计划生成",
+            input_refs=["quote.market", "watchlist", "state.json"],
+        )
+        self._record_workflow(
+            "success",
+            phase="premarket",
+            node_id="market_snapshot",
+            node_name="市场快照",
+            summary="盘前市场快照已生成",
+            input_refs=["quote.market", "watchlist", "state.json"],
             output_refs=["market.snapshot"],
         )
 
         try:
+            for label, node_id, node_name in (
+                ("A", "sub_agent_a", "子代理A: 市场方向"),
+                ("B", "sub_agent_b", "子代理B: 选股"),
+                ("C", "sub_agent_c", "子代理C: 复盘反馈"),
+            ):
+                self._record_workflow(
+                    "running",
+                    phase="premarket",
+                    node_id=node_id,
+                    node_name=node_name,
+                    summary=f"正在运行盘前子代理 {label}",
+                    input_refs=["market.snapshot", "skills", "memory"],
+                )
             summaries = self._run_sub_agents()
             for label, node_id, node_name in (
                 ("A", "sub_agent_a", "子代理A: 市场方向"),
@@ -1234,6 +1256,14 @@ class OvernightPipeline:
         # Persist shadow diagnostics if computed
         self._save_shadow_if_dirty(summaries.get("C", ""))
 
+        self._record_workflow(
+            "running",
+            phase="premarket",
+            node_id="merge_decision",
+            node_name="合并决策",
+            summary="正在合并子代理结论",
+            input_refs=["premarket.sub_agent_a", "premarket.sub_agent_b", "premarket.sub_agent_c"],
+        )
         result["stages"]["merged"] = self.run_merged_stage(summaries)
         self._record_workflow(
             "success",
@@ -1246,6 +1276,14 @@ class OvernightPipeline:
             ),
             input_refs=["premarket.sub_agent_a", "premarket.sub_agent_b", "premarket.sub_agent_c"],
             output_refs=["plan.market_bias", "plan.buy_candidates"],
+        )
+        self._record_workflow(
+            "running",
+            phase="premarket",
+            node_id="risk_validation",
+            node_name="风控校验",
+            summary="正在执行仓位、波动率和回撤校验",
+            input_refs=["plan.buy_candidates"],
         )
         result["stages"]["risk"] = self.run_risk_validation()
         self._record_workflow(
@@ -1261,11 +1299,20 @@ class OvernightPipeline:
             output_refs=["plan.risk_report"],
         )
         self._record_workflow(
+            "running",
+            phase="premarket",
+            node_id="plan_writer",
+            node_name="计划写入",
+            summary="正在落盘 plan.json",
+            input_refs=["plan.market_bias", "plan.buy_candidates", "plan.risk_report"],
+        )
+        self._record_workflow(
             "success",
             phase="premarket",
             node_id="plan_writer",
             node_name="计划写入",
             summary="plan.json 已写入",
+            input_refs=["plan.market_bias", "plan.buy_candidates", "plan.risk_report"],
             output_refs=["plan.json"],
         )
 
@@ -1281,7 +1328,9 @@ class OvernightPipeline:
     def _record_workflow(self, status: str, **kwargs) -> None:
         """Record observability events without affecting trading control flow."""
         try:
-            if status == "error":
+            if status == "running":
+                self.workflow.record_node_start(**kwargs)
+            elif status == "error":
                 self.workflow.record_node_error(**kwargs)
             else:
                 self.workflow.record_node_finish(**kwargs)

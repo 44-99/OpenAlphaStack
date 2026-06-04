@@ -1,7 +1,7 @@
 export type PageKey = 'watch' | 'holdings' | 'plan' | 'ledger' | 'logs';
 export type WorkbenchMode = 'watch' | 'workflow' | 'review';
 export type KlinePeriod = '1m' | '5m' | '15m' | '60m' | 'day' | 'week' | 'month';
-export type OverlayKind = 'MA' | 'EMA' | 'BOLL';
+export type OverlayKind = 'NONE' | 'MA' | 'EMA' | 'BOLL';
 export type AgentProvider = 'claude' | 'codex';
 export type KlineLayerKey = 'trades' | 'plan' | 'signals' | 'structures';
 
@@ -194,11 +194,19 @@ export interface WorkflowGraphNode {
   summary?: string;
   last_event_id?: string;
   phase?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  input_refs?: string[];
+  output_refs?: string[];
+  artifact_dir?: string;
 }
 
 export interface WorkflowGraphEdge {
   from: string;
   to: string;
+  label?: string;
+  refs?: string[];
 }
 
 export interface WorkflowGraph {

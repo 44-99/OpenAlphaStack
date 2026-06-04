@@ -206,6 +206,26 @@ def test_workflow_graph_api_returns_default_nodes(tmp_path, monkeypatch):
     assert result["edges"]
 
 
+def test_dashboard_demo_mode_returns_onboarding_data(tmp_path, monkeypatch):
+    output = tmp_path / "empty_output"
+    output.mkdir()
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    state = asyncio.run(app_dashboard.api_state())
+    plan = asyncio.run(app_dashboard.api_plan())
+    ledger = asyncio.run(app_dashboard.api_ledger(limit=10, code="300913"))
+    graph = asyncio.run(app_dashboard.api_workflow_graph("active"))
+    kline = asyncio.run(app_dashboard.api_kline("300913", period="1m", limit=90))
+    annotations = asyncio.run(app_dashboard.api_kline_annotations("300913", period="1m"))
+
+    assert state["run_id"] == app_dashboard.DEMO_RUN_ID
+    assert plan["buy_candidates"]
+    assert ledger and ledger[0]["symbol"] == "300913"
+    assert graph["run_id"] == app_dashboard.DEMO_RUN_ID
+    assert kline["source"] == "1m_demo"
+    assert annotations["annotations"]
+
+
 def test_kline_annotations_api_filters_and_normalizes_active_run(tmp_path, monkeypatch):
     output = tmp_path / "output"
     run_dir = output / "paper_2026-06-04T09-30-00"
@@ -236,6 +256,36 @@ def test_kline_annotations_api_filters_and_normalizes_active_run(tmp_path, monke
     assert result["annotations"][0]["label"] == "关键支撑"
     assert result["annotations"][0]["price"] == 10.5
     assert result["annotations"][0]["source"]["confidence"] == 72
+
+
+def test_kline_annotations_api_generates_when_missing(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+    monkeypatch.setattr(app_dashboard, "_generate_kline_annotations_from_tools", lambda code, period: [
+        {"id": "gen_1", "code": code, "period": "all", "kind": "level", "label": "自动支撑", "tone": "up", "price": 10.5}
+    ])
+
+    result = asyncio.run(app_dashboard.api_kline_annotations("300913", "day"))
+
+    assert result["annotations"][0]["label"] == "自动支撑"
+    assert (run_dir / "kline_annotations" / "300913.json").exists()
+
+
+def test_workflow_node_rerun_queues_only_safe_nodes(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    accepted = asyncio.run(app_dashboard.api_workflow_node_rerun("paper_2026-06-04T09-30-00", "market_snapshot"))
+    blocked = asyncio.run(app_dashboard.api_workflow_node_rerun("paper_2026-06-04T09-30-00", "ledger_writer"))
+
+    assert accepted.status_code == 202
+    assert (run_dir / app_dashboard.RERUN_REQUESTS_FILE).exists()
+    assert isinstance(blocked, JSONResponse)
+    assert blocked.status_code == 409
 
 
 def test_workflow_artifact_rejects_path_traversal(tmp_path, monkeypatch):

@@ -55,6 +55,12 @@ export const api = {
       if (!response.ok) throw new Error(data?.error || `${response.status}`);
       return data as WorkflowConfig;
     }),
+  workflowNodeRerun: (runId: string, nodeId: string) =>
+    fetch(`/api/workflow/runs/${runId}/nodes/${nodeId}/rerun`, { method: 'POST' }).then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || `${response.status}`);
+      return data as { run_id: string; request: Record<string, unknown>; event: WorkflowEvent };
+    }),
   workflowArtifact: (runId: string, eventId: string, name: string) =>
     getJson<{ run_id: string; event_id: string; name: string; content: string }>(
       `/api/workflow/runs/${runId}/artifacts/${eventId}/${name}`,

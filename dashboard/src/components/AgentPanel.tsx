@@ -177,9 +177,10 @@ function AgentTerminalPane({ active, provider, command, injection }: {
   }, [active]);
 
   useEffect(() => {
-    if (!active || !injection || injection.id === lastInjectionIdRef.current) return;
+    if (!shouldApplyTerminalInjection(active, injection?.id, lastInjectionIdRef.current)) return;
     const socket = socketRef.current;
     const term = termRef.current;
+    if (!injection) return;
     if (!socket || socket.readyState !== WebSocket.OPEN || !term) return;
     lastInjectionIdRef.current = injection.id;
     term.focus();
@@ -187,4 +188,8 @@ function AgentTerminalPane({ active, provider, command, injection }: {
   }, [active, injection]);
 
   return <div className={`agent-terminal-pane ${active ? 'active' : ''}`} ref={hostRef} />;
+}
+
+export function shouldApplyTerminalInjection(active: boolean, injectionId: number | undefined, lastInjectionId: number) {
+  return active && typeof injectionId === 'number' && injectionId !== lastInjectionId;
 }
