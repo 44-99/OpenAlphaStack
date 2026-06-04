@@ -1,5 +1,5 @@
 import type { EChartsOption } from 'echarts';
-import type { KlineData, KlinePlanAnnotation, KlineTechnicalSignal, KlineTradeMarker, OverlayKind } from '../types';
+import type { KlineData, KlinePlanAnnotation, KlineStructureAnnotation, KlineTechnicalSignal, KlineTradeMarker, OverlayKind } from '../types';
 import { calcBOLL, calcEMA, calcMA } from './indicators';
 
 const UP_COLOR = '#ff3b30';
@@ -40,6 +40,7 @@ export function buildKlineOption(
   trades: KlineTradeMarker[] = [],
   plans: KlinePlanAnnotation[] = [],
   showSignals = false,
+  structures: KlineStructureAnnotation[] = [],
 ): EChartsOption {
   const dates = data.dates;
   const closes = data.close.map(Number);
@@ -49,7 +50,7 @@ export function buildKlineOption(
     Number(data.low[index]),
     Number(data.high[index]),
   ]);
-  const series: NonNullable<EChartsOption['series']> = [
+  const series: Array<Record<string, unknown>> = [
     {
       name: 'K线',
       type: 'candlestick',
@@ -70,6 +71,8 @@ export function buildKlineOption(
   const riskLines = collectRiskLines(trades);
   const planLines = collectPlanLines(plans);
   const planAreas = collectPlanAreas(plans);
+  const structureLines = collectStructureLines(structures);
+  const structureAreas = collectStructureAreas(structures);
   const technicalSignals = showSignals ? detectTechnicalSignals(data) : [];
 
   if (overlay === 'MA') {
@@ -155,8 +158,9 @@ export function buildKlineOption(
     })
     .filter(Boolean);
 
-  const allLines = [...riskLines, ...planLines];
-  if (allLines.length || planAreas.length) {
+  const allLines = [...riskLines, ...planLines, ...structureLines];
+  const allAreas = [...planAreas, ...structureAreas];
+  if (allLines.length || allAreas.length) {
     series[0] = {
       ...(series[0] as object),
       ...(allLines.length ? { markLine: {
@@ -176,9 +180,9 @@ export function buildKlineOption(
           formatter: '{b}',
         },
       } } : {}),
-      ...(planAreas.length ? { markArea: {
+      ...(allAreas.length ? { markArea: {
         silent: true,
-        data: planAreas,
+        data: allAreas,
         itemStyle: { color: 'rgba(214, 161, 59, 0.08)' },
         label: { color: '#ffd37a', fontSize: 10 },
       } } : {}),
@@ -240,6 +244,8 @@ export function buildKlineOption(
       tooltip: { show: true },
     });
   }
+
+  collectStructureSeries(structures).forEach((item) => series.push(item));
 
   if (tradePoints.length) {
     series.push({
@@ -439,6 +445,10 @@ export function buildKlineOption(
             </div>
           `;
         }
+        const structurePoint = rows.find((row) => row.seriesName === '结构点' || row.seriesName === '结构线') as { data?: { structure?: KlineStructureAnnotation } } | undefined;
+        if (structurePoint?.data?.structure) {
+          return structureTooltip(data.code, structurePoint.data.structure);
+        }
         const candle = rows.find((row) => row.seriesType === 'candlestick');
         if (!candle || !Array.isArray(candle.value)) return '';
         const [open, close, low, high] = candle.value as number[];
@@ -525,6 +535,143 @@ function collectPlanAreas(plans: KlinePlanAnnotation[]): Array<[{ name: string; 
       { name: plan.is_stale ? '旧计划入场区间' : '计划入场区间', yAxis: Number(plan.entry_min) },
       { yAxis: Number(plan.entry_max) },
     ] as [{ name: string; yAxis: number }, { yAxis: number }]);
+}
+
+function collectStructureLines(structures: KlineStructureAnnotation[]) {
+  return structures
+    .filter((item) => item.kind === 'level' && Number.isFinite(Number(item.price)))
+    .map((item) => ({
+      yAxis: Number(item.price),
+      name: `${item.label} ${formatNumber(Number(item.price))}`,
+      lineStyle: {
+        color: structureColor(item.tone),
+        type: item.tone === 'warning' ? 'dashed' : 'solid',
+        width: 1.1,
+        opacity: 0.78,
+      },
+      structure: item,
+    }));
+}
+
+function collectStructureAreas(structures: KlineStructureAnnotation[]) {
+  return structures
+    .filter((item) => item.kind === 'range' && Number.isFinite(Number(item.price_min)) && Number.isFinite(Number(item.price_max)))
+    .map((item) => [
+      {
+        name: item.label,
+        yAxis: Number(item.price_min),
+        itemStyle: { color: structureAreaColor(item.tone) },
+      },
+      { yAxis: Number(item.price_max) },
+    ]);
+}
+
+function collectStructureSeries(structures: KlineStructureAnnotation[]): Array<Record<string, unknown>> {
+  const series: Array<Record<string, unknown>> = [];
+  const lineItems = structures.filter((item) => ['trendline', 'segment', 'wave'].includes(item.kind) && (item.points || []).length >= 2);
+  lineItems.forEach((item) => {
+    series.push({
+      name: '结构线',
+      type: 'line',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      data: (item.points || []).map((point) => ({
+        value: [point.time, point.price],
+        structure: item,
+      })),
+      symbol: item.kind === 'wave' ? 'circle' : 'none',
+      symbolSize: item.kind === 'wave' ? 7 : 0,
+      lineStyle: {
+        color: structureColor(item.tone),
+        width: item.kind === 'wave' ? 1.7 : 1.4,
+        type: item.kind === 'segment' ? 'dashed' : 'solid',
+        opacity: 0.86,
+      },
+      label: {
+        show: item.kind === 'wave',
+        formatter: (params: { dataIndex?: number }) => item.points?.[Number(params.dataIndex)]?.label || '',
+        color: '#dffbf7',
+        fontSize: 10,
+      },
+      z: 15,
+      tooltip: { show: true },
+    });
+  });
+
+  const points = structures.filter((item) => item.kind === 'point');
+  if (points.length) {
+    series.push({
+      name: '结构点',
+      type: 'scatter',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      symbol: 'triangle',
+      symbolSize: 16,
+      data: points.flatMap((item) => {
+        const rawPoints = item.points?.length ? item.points : [{ time: item.start_time || item.end_time || '', price: Number(item.price), label: item.label }];
+        return rawPoints
+          .filter((point) => point.time && Number.isFinite(Number(point.price)))
+          .map((point) => ({
+            name: point.label || item.label,
+            value: [point.time, Number(point.price)],
+            structure: item,
+            itemStyle: { color: structureColor(item.tone), borderColor: '#081018', borderWidth: 1 },
+            label: {
+              show: true,
+              formatter: point.label || item.label,
+              color: '#081018',
+              fontSize: 9,
+              fontWeight: 800,
+            },
+          }));
+      }),
+      z: 17,
+      tooltip: { show: true },
+    });
+  }
+  return series;
+}
+
+function structureColor(tone: KlineStructureAnnotation['tone']) {
+  if (tone === 'up') return UP_COLOR;
+  if (tone === 'down') return DOWN_COLOR;
+  if (tone === 'warning') return '#d6a13b';
+  return '#41e0c9';
+}
+
+function structureAreaColor(tone: KlineStructureAnnotation['tone']) {
+  if (tone === 'up') return 'rgba(255, 59, 48, 0.08)';
+  if (tone === 'down') return 'rgba(34, 181, 115, 0.08)';
+  if (tone === 'warning') return 'rgba(214, 161, 59, 0.10)';
+  return 'rgba(65, 224, 201, 0.08)';
+}
+
+function structureTooltip(code: string, structure: KlineStructureAnnotation) {
+  const source = structure.source || {};
+  const confidence = Number.isFinite(Number(source.confidence)) ? `${Number(source.confidence).toFixed(0)}%` : '--';
+  const priceText = structure.kind === 'range'
+    ? `${formatNumber(Number(structure.price_min))} - ${formatNumber(Number(structure.price_max))}`
+    : Number.isFinite(Number(structure.price))
+      ? formatNumber(Number(structure.price))
+      : '--';
+  return `
+    <div class="kline-tooltip kline-tooltip--structure">
+      <div class="kline-tooltip__head">
+        <span class="kline-tooltip__code">${code}</span>
+        <span class="kline-tooltip__date">${structure.kind}</span>
+      </div>
+      <div class="kline-tooltip__price" style="color:${structureColor(structure.tone)}">
+        ${structure.label}
+        <small>${priceText}</small>
+      </div>
+      <div class="kline-tooltip__grid">
+        <span>SKILL</span><b>${source.skill || '--'}</b>
+        <span>NODE</span><b>${source.node_id || '--'}</b>
+        <span>CONF</span><b>${confidence}</b>
+      </div>
+      ${source.summary ? `<p class="kline-tooltip__reason">${source.summary}</p>` : ''}
+    </div>
+  `;
 }
 
 function midpoint(min?: number, max?: number) {

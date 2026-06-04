@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import type { WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
+import type { WorkflowConfig, WorkflowConfigNode, WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
 export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events: WorkflowEvent[] }) {
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [artifact, setArtifact] = useState<{ title: string; content: string } | null>(null);
+  const [config, setConfig] = useState<WorkflowConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [configMessage, setConfigMessage] = useState('');
   const selectedNode = useMemo(() => {
     if (!graph?.nodes.length) return undefined;
     return graph.nodes.find((node) => node.id === selectedNodeId) || graph.nodes[0];
@@ -13,8 +16,63 @@ export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events
     if (!selectedNode) return events;
     return events.filter((event) => event.node_id === selectedNode.id);
   }, [events, selectedNode]);
+  const selectedConfig = selectedNode ? config?.nodes?.[selectedNode.id] : undefined;
+
+  useEffect(() => {
+    if (!graph?.run_id) return;
+    let active = true;
+    api.workflowConfig(graph.run_id)
+      .then((data) => {
+        if (active) setConfig(data);
+      })
+      .catch((error: Error) => {
+        if (active) setConfigMessage(error.message || '配置读取失败');
+      });
+    return () => {
+      active = false;
+    };
+  }, [graph?.run_id]);
 
   if (!graph) return <div className="empty">暂无工作流数据</div>;
+
+  async function saveConfig() {
+    if (!graph?.run_id || !config) return;
+    setSaving(true);
+    setConfigMessage('');
+    try {
+      const next = await api.saveWorkflowConfig(graph.run_id, config);
+      setConfig(next);
+      setConfigMessage('配置已保存，并写入审计事件');
+    } catch (error) {
+      setConfigMessage(error instanceof Error ? error.message : '配置保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateSelectedNode(patch: Partial<WorkflowConfigNode>) {
+    if (!selectedNode || !config) return;
+    setConfig({
+      ...config,
+      nodes: {
+        ...config.nodes,
+        [selectedNode.id]: {
+          ...config.nodes[selectedNode.id],
+          ...patch,
+        },
+      },
+    });
+  }
+
+  function updateParam(key: string, value: string) {
+    if (!selectedConfig) return;
+    updateSelectedNode({
+      params: {
+        ...selectedConfig.params,
+        [key]: parseParamValue(value),
+      },
+    });
+  }
 
   return (
     <section className="workflow-board">
@@ -35,6 +93,34 @@ export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events
           {selectedNode?.locked ? <span className="lock-pill">锁定</span> : null}
         </header>
         <p>{selectedNode?.summary || '暂无摘要'}</p>
+        {selectedNode && selectedConfig ? (
+          <section className="workflow-config-editor">
+            <div className="config-row">
+              <span>节点开关</span>
+              <button
+                className={selectedConfig.enabled ? 'active' : ''}
+                disabled={selectedConfig.locked}
+                onClick={() => updateSelectedNode({ enabled: !selectedConfig.enabled })}
+                title={selectedConfig.locked ? '风控、计划写入、执行和账本节点必须保持启用' : undefined}
+              >
+                {selectedConfig.enabled ? '启用' : '禁用'}{selectedConfig.locked ? ' / 锁定' : ''}
+              </button>
+            </div>
+            <div className="config-params">
+              <strong>安全参数</strong>
+              {Object.keys(selectedConfig.params || {}).length ? Object.entries(selectedConfig.params).map(([key, value]) => (
+                <label key={key}>
+                  <span>{key}</span>
+                  <input value={String(value)} onChange={(event) => updateParam(key, event.target.value)} disabled={selectedConfig.locked && key === 'enabled'} />
+                </label>
+              )) : <small>该节点暂无可调参数</small>}
+            </div>
+            <div className="config-actions">
+              <button onClick={saveConfig} disabled={saving}>{saving ? '保存中' : '保存配置'}</button>
+              {configMessage ? <span>{configMessage}</span> : null}
+            </div>
+          </section>
+        ) : null}
         <h4>事件时间线</h4>
         <div className="workflow-events">
           {selectedEvents.length ? selectedEvents.map((event) => (
@@ -62,6 +148,14 @@ export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events
       </aside>
     </section>
   );
+}
+
+function parseParamValue(value: string) {
+  const trimmed = value.trim();
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (trimmed !== '' && Number.isFinite(Number(trimmed))) return Number(trimmed);
+  return value;
 }
 
 function WorkflowNode({ node, active, onSelect }: { node: WorkflowGraphNode; active: boolean; onSelect: () => void }) {

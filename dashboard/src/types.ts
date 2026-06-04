@@ -143,6 +143,31 @@ export interface KlineTechnicalSignal {
   tone: 'up' | 'down' | 'neutral';
 }
 
+export type KlineStructureKind = 'level' | 'range' | 'trendline' | 'segment' | 'wave' | 'point';
+export type KlineStructureTone = 'up' | 'down' | 'neutral' | 'warning';
+
+export interface KlineStructureAnnotation {
+  id: string;
+  code: string;
+  period?: KlinePeriod | 'all';
+  kind: KlineStructureKind;
+  label: string;
+  tone: KlineStructureTone;
+  price?: number;
+  price_min?: number;
+  price_max?: number;
+  start_time?: string;
+  end_time?: string;
+  points?: Array<{ time: string; price: number; label?: string }>;
+  source?: {
+    event_id?: string;
+    node_id?: string;
+    skill?: string;
+    confidence?: number;
+    summary?: string;
+  };
+}
+
 export interface WorkflowEvent {
   event_id: string;
   run_id: string;
@@ -180,4 +205,16 @@ export interface WorkflowGraph {
   run_id: string;
   nodes: WorkflowGraphNode[];
   edges: WorkflowGraphEdge[];
+}
+
+export interface WorkflowConfigNode {
+  enabled: boolean;
+  locked: boolean;
+  params: Record<string, number | string | boolean>;
+}
+
+export interface WorkflowConfig {
+  version: number;
+  nodes: Record<string, WorkflowConfigNode>;
+  updated_at?: string;
 }

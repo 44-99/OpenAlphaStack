@@ -170,4 +170,38 @@ describe('buildKlineOption', () => {
     expect(signalSeries).toMatchObject({ type: 'scatter' });
     expect(signalSeries.data).toBeTruthy();
   });
+
+  it('renders structured annotation layer from agent outputs', () => {
+    const option = buildKlineOption(sample, 'MA', [], [], false, [
+      {
+        id: 'support-1',
+        code: '000001',
+        period: 'day',
+        kind: 'level',
+        label: '中枢支撑',
+        tone: 'up',
+        price: 10.5,
+        source: { skill: 'pivot', confidence: 76, summary: '支撑聚类' },
+      },
+      {
+        id: 'trend-1',
+        code: '000001',
+        period: 'day',
+        kind: 'trendline',
+        label: '上升趋势线',
+        tone: 'neutral',
+        points: [
+          { time: '2026-06-01', price: 9.5 },
+          { time: '2026-06-03', price: 11.2 },
+        ],
+      },
+    ]);
+    const series = option.series as Array<Record<string, unknown>>;
+    const candleSeries = series.find((item) => item.name === 'K线') as Record<string, unknown>;
+    const structureSeries = series.find((item) => item.name === '结构线') as Record<string, unknown>;
+    const markLine = candleSeries.markLine as { data: Array<{ name: string }> };
+
+    expect(markLine.data.some((item) => item.name.includes('中枢支撑'))).toBe(true);
+    expect(structureSeries).toMatchObject({ type: 'line' });
+  });
 });

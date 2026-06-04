@@ -51,7 +51,7 @@ const klineLayerItems: Array<{ key: KlineLayerKey; label: string; enabled: boole
   { key: 'trades', label: '交易', enabled: true },
   { key: 'plan', label: '计划', enabled: true },
   { key: 'signals', label: '信号', enabled: true },
-  { key: 'structures', label: '结构', enabled: false },
+  { key: 'structures', label: '结构', enabled: true },
 ];
 const pageItems: Array<{ key: PageKey; label: string; Icon: LucideIcon }> = [
   { key: 'watch', label: '盯盘', Icon: Radar },
@@ -249,7 +249,7 @@ export default function App() {
                   className={klineLayers.includes(item.key) ? 'active' : ''}
                   disabled={!item.enabled}
                   onClick={() => setKlineLayers((current) => toggleLayer(current, item.key))}
-                  title={!item.enabled ? '后续接入结构化数据后开放' : undefined}
+                  title={item.key === 'structures' ? '显示 Agent / skill 输出的结构化画线' : undefined}
                 >
                   {item.label}
                 </button>

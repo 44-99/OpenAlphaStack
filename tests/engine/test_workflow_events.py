@@ -74,3 +74,23 @@ def test_build_graph_uses_latest_event_status(tmp_path):
     assert node["status"] == "success"
     assert node["summary"] == "passed"
     assert graph["edges"]
+
+
+def test_config_update_records_audit_event(tmp_path):
+    store = WorkflowEventStore(tmp_path, run_id="paper_test")
+    config = store.write_config({
+        "nodes": {
+            "sub_agent_a": {"enabled": False, "params": {"lookback": 20}},
+            "risk_validation": {"enabled": False, "params": {"max_single_position_pct": 15}},
+        },
+    })
+    event = store.record_config_update(summary="配置更新", config=config)
+    events = store.read_events()
+
+    assert config["nodes"]["sub_agent_a"]["enabled"] is False
+    assert config["nodes"]["risk_validation"]["enabled"] is True
+    assert config["nodes"]["risk_validation"]["params"]["max_single_position_pct"] == 15
+    assert config["updated_at"]
+    assert event["node_id"] == "workflow_config"
+    assert events[-1]["summary"] == "配置更新"
+    assert (tmp_path / events[-1]["artifact_dir"] / "output.json").exists()

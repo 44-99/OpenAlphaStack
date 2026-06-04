@@ -206,6 +206,38 @@ def test_workflow_graph_api_returns_default_nodes(tmp_path, monkeypatch):
     assert result["edges"]
 
 
+def test_kline_annotations_api_filters_and_normalizes_active_run(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "paper_2026-06-04T09-30-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "kline_annotations.json").write_text(
+        json.dumps({
+            "annotations": [
+                {
+                    "code": "300913",
+                    "period": "day",
+                    "kind": "level",
+                    "label": "关键支撑",
+                    "price": "10.5",
+                    "source": {"skill": "pivot", "confidence": "72"},
+                },
+                {"code": "300913", "period": "week", "kind": "level", "label": "周线压力", "price": 12},
+                {"code": "000001", "period": "day", "kind": "level", "label": "其他股票", "price": 9},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_kline_annotations("300913", "day"))
+
+    assert result["code"] == "300913"
+    assert len(result["annotations"]) == 1
+    assert result["annotations"][0]["label"] == "关键支撑"
+    assert result["annotations"][0]["price"] == 10.5
+    assert result["annotations"][0]["source"]["confidence"] == 72
+
+
 def test_workflow_artifact_rejects_path_traversal(tmp_path, monkeypatch):
     output = tmp_path / "output"
     run_dir = output / "paper_2026-06-04T09-30-00"

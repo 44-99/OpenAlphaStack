@@ -2,7 +2,7 @@ import * as echarts from 'echarts';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { buildKlineOption } from '../charts/klineOption';
-import type { KlineData, KlineLayerKey, KlinePeriod, KlinePlanAnnotation, KlineTradeMarker, LedgerEntry, OverlayKind, PlanData } from '../types';
+import type { KlineData, KlineLayerKey, KlinePeriod, KlinePlanAnnotation, KlineStructureAnnotation, KlineTradeMarker, LedgerEntry, OverlayKind, PlanData } from '../types';
 
 interface KlineChartProps {
   code: string;
@@ -21,6 +21,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
   const [source, setSource] = useState('');
   const [klineData, setKlineData] = useState<KlineData | null>(null);
   const [trades, setTrades] = useState<KlineTradeMarker[]>([]);
+  const [structures, setStructures] = useState<KlineStructureAnnotation[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -83,6 +84,24 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
   }, [code, tradeRefreshKey]);
 
   useEffect(() => {
+    if (!code || !layers.includes('structures')) {
+      setStructures([]);
+      return;
+    }
+    let active = true;
+    api.klineAnnotations(code, period)
+      .then((data) => {
+        if (active) setStructures(data.annotations || []);
+      })
+      .catch(() => {
+        if (active) setStructures([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [code, period, layers]);
+
+  useEffect(() => {
     if (!chartRef.current || !klineData) return;
     const option = buildKlineOption(
       klineData,
@@ -90,11 +109,12 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
       layers.includes('trades') ? trades : [],
       layers.includes('plan') ? planToAnnotations(plan, code) : [],
       layers.includes('signals'),
+      layers.includes('structures') ? structures : [],
     );
     chartRef.current.clear();
     chartRef.current.setOption(option, { notMerge: true, lazyUpdate: false });
     chartRef.current.resize();
-  }, [klineData, overlay, trades, layers, plan, code]);
+  }, [klineData, overlay, trades, layers, plan, code, structures]);
 
   return (
     <section className="kline-panel">

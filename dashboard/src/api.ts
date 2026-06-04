@@ -4,10 +4,12 @@ import type {
   EngineStatus,
   KlineData,
   KlinePeriod,
+  KlineStructureAnnotation,
   LedgerEntry,
   PlanData,
   WatchlistItem,
   AgentProvider,
+  WorkflowConfig,
   WorkflowEvent,
   WorkflowGraph,
 } from './types';
@@ -33,10 +35,26 @@ export const api = {
   watchlist: () => getJson<unknown[]>('/api/watchlist'),
   kline: (code: string, period: KlinePeriod, limit = 200) =>
     getJson<KlineData>(`/api/kline/${code}?period=${period}&limit=${limit}`),
+  klineAnnotations: (code: string, period: KlinePeriod) =>
+    getJson<{ code: string; period: KlinePeriod; annotations: KlineStructureAnnotation[] }>(
+      `/api/kline/${code}/annotations?period=${period}`,
+    ),
   workflowEvents: (runId = 'active', limit = 500) =>
     getJson<{ run_id: string; events: WorkflowEvent[] }>(`/api/workflow/runs/${runId}/events?limit=${limit}`),
   workflowGraph: (runId = 'active') =>
     getJson<WorkflowGraph>(`/api/workflow/runs/${runId}/graph`),
+  workflowConfig: (runId = 'active') =>
+    getJson<WorkflowConfig>(`/api/workflow/runs/${runId}/config`),
+  saveWorkflowConfig: (runId: string, config: WorkflowConfig) =>
+    fetch(`/api/workflow/runs/${runId}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }).then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || `${response.status}`);
+      return data as WorkflowConfig;
+    }),
   workflowArtifact: (runId: string, eventId: string, name: string) =>
     getJson<{ run_id: string; event_id: string; name: string; content: string }>(
       `/api/workflow/runs/${runId}/artifacts/${eventId}/${name}`,

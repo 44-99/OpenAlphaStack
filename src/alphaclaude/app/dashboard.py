@@ -112,6 +112,133 @@ def _read_json(path: str) -> dict | None:
         return None
 
 
+def _read_json_any(path: str):
+    """Read JSON data of any shape, return None if missing or unparseable."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _as_float(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def _normalize_annotation_points(points) -> list[dict]:
+    if not isinstance(points, list):
+        return []
+    normalized = []
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        time = str(point.get("time") or point.get("date") or "").strip()
+        price = _as_float(point.get("price"))
+        if not time or price is None:
+            continue
+        normalized.append({
+            "time": time,
+            "price": price,
+            "label": str(point.get("label", "")).strip(),
+        })
+    return normalized
+
+
+def _normalize_kline_annotation(raw, *, code: str, period: str, index: int) -> dict | None:
+    """Normalize a persisted structure annotation for safe frontend rendering."""
+    if not isinstance(raw, dict):
+        return None
+    item_code = str(raw.get("code") or code).strip()
+    item_period = str(raw.get("period") or "all").strip().lower()
+    if item_code != code or item_period not in {"all", period}:
+        return None
+
+    kind = str(raw.get("kind") or raw.get("type") or "").strip().lower()
+    if kind not in {"level", "range", "trendline", "segment", "wave", "point"}:
+        return None
+
+    points = _normalize_annotation_points(raw.get("points"))
+    price = _as_float(raw.get("price"))
+    price_min = _as_float(raw.get("price_min") if "price_min" in raw else raw.get("low"))
+    price_max = _as_float(raw.get("price_max") if "price_max" in raw else raw.get("high"))
+    start_time = str(raw.get("start_time") or raw.get("start") or "").strip()
+    end_time = str(raw.get("end_time") or raw.get("end") or "").strip()
+
+    if kind == "level" and price is None:
+        return None
+    if kind == "range" and (price_min is None or price_max is None):
+        return None
+    if kind in {"trendline", "segment", "wave"} and len(points) < 2:
+        return None
+    if kind == "point" and price is None and not points:
+        return None
+
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    return {
+        "id": str(raw.get("id") or f"{code}_{period}_{index}"),
+        "code": item_code,
+        "period": item_period,
+        "kind": kind,
+        "label": str(raw.get("label") or raw.get("name") or kind).strip(),
+        "tone": str(raw.get("tone") or "neutral").strip().lower()
+        if str(raw.get("tone") or "neutral").strip().lower() in {"up", "down", "neutral", "warning"}
+        else "neutral",
+        "price": price,
+        "price_min": price_min,
+        "price_max": price_max,
+        "start_time": start_time,
+        "end_time": end_time,
+        "points": points,
+        "source": {
+            "event_id": str(source.get("event_id", "")).strip(),
+            "node_id": str(source.get("node_id", "")).strip(),
+            "skill": str(source.get("skill", "")).strip(),
+            "confidence": _as_float(source.get("confidence")),
+            "summary": str(source.get("summary", "")).strip(),
+        },
+    }
+
+
+def _extract_annotations_from_json(payload, *, code: str) -> list:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    by_code = payload.get(code)
+    if isinstance(by_code, list):
+        return by_code
+    annotations = payload.get("annotations")
+    return annotations if isinstance(annotations, list) else []
+
+
+def _load_kline_annotations(code: str, period: str) -> list[dict]:
+    """Load structured K-line annotations from the active run output directory."""
+    output_dir = _get_active_output_dir()
+    if not output_dir:
+        return []
+
+    candidates = [
+        os.path.join(output_dir, "kline_annotations", f"{code}.json"),
+        os.path.join(output_dir, "kline_annotations.json"),
+    ]
+    normalized: list[dict] = []
+    for path in candidates:
+        payload = _read_json_any(path)
+        for raw in _extract_annotations_from_json(payload, code=code):
+            item = _normalize_kline_annotation(raw, code=code, period=period, index=len(normalized))
+            if item:
+                normalized.append(item)
+    return normalized
+
+
 def _cache_tree_stats(path: str) -> dict:
     """Return recursive size and file count for a cache tree."""
     total_bytes = 0
@@ -677,6 +804,15 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
     return _df_to_kline_payload(code, df, f"{period}_cache_chain")
 
 
+@router.get("/api/kline/{code}/annotations")
+async def api_kline_annotations(code: str, period: str = "day"):
+    """Return Agent-produced structured K-line annotations for optional chart layers."""
+    period = period.lower()
+    if period not in KLINE_PERIODS:
+        return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
+    return {"code": code, "period": period, "annotations": _load_kline_annotations(code, period)}
+
+
 @router.get("/api/technical/{code}")
 async def api_technical(code: str, indicator: str = "all"):
     try:
@@ -769,6 +905,9 @@ async def api_workflow_config_update(run_id: str, request: Request):
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
     payload = await request.json()
     config = store.write_config(payload)
+    enabled = sum(1 for node in config.get("nodes", {}).values() if node.get("enabled"))
+    total = len(config.get("nodes", {}))
+    store.record_config_update(summary=f"流程配置已更新: {enabled}/{total} 个节点启用", config=config)
     _broadcast_sse("workflow_config_updated", {"run_id": store.run_id, "config": config})
     return config
 

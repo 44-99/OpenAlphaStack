@@ -154,6 +154,22 @@ class WorkflowEventStore:
             summary=summary,
         )
 
+    def record_config_update(self, *, summary: str, config: dict[str, Any]) -> dict[str, Any]:
+        event_id = _new_event_id()
+        artifact_dir = self._write_artifacts(event_id, output_payload=config)
+        return self._append_event(
+            event_id=event_id,
+            phase="system",
+            node_id="workflow_config",
+            node_name="流程配置",
+            status="success",
+            started_at=_now_iso(),
+            ended_at=_now_iso(),
+            duration_ms=0,
+            summary=summary,
+            artifact_dir=artifact_dir,
+        )
+
     def read_events(self, limit: int = 500) -> list[dict[str, Any]]:
         if not self.events_path.exists():
             return []
@@ -205,6 +221,7 @@ class WorkflowEventStore:
             node["params"].update(incoming_params)
             node["enabled"] = True if node.get("locked") else bool(incoming.get("enabled", node["enabled"]))
 
+        merged["updated_at"] = _now_iso()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         return merged
