@@ -116,6 +116,31 @@ def test_minute_period_resamples_from_1m_cache(tmp_path, monkeypatch):
     assert (kline_dir / "5m" / "000001.parquet").exists()
 
 
+def test_month_period_resamples_from_day_cache(tmp_path, monkeypatch):
+    _, kline_dir, _ = _isolate_kline_cache(tmp_path, monkeypatch)
+    day_df = pd.DataFrame({
+        "time": pd.to_datetime(["2026-01-02", "2026-01-30", "2026-02-02", "2026-02-27"]),
+        "open": [10, 11, 12, 13],
+        "high": [12, 13, 14, 15],
+        "low": [9, 10, 11, 12],
+        "close": [11, 12, 13, 14],
+        "volume": [100, 200, 300, 400],
+    })
+    day_path = kline_dir / "day" / "000001.json"
+    app_dashboard._write_kline_json(str(day_path), day_df)
+    monkeypatch.setattr(app_dashboard, "_fetch_tencent_day_df", lambda _code, _limit: pd.DataFrame())
+
+    month = app_dashboard._load_month_kline_df("000001", 10)
+
+    assert len(month) == 2
+    assert month.iloc[0]["open"] == 10
+    assert month.iloc[0]["high"] == 13
+    assert month.iloc[0]["low"] == 9
+    assert month.iloc[0]["close"] == 12
+    assert month.iloc[0]["volume"] == 300
+    assert (kline_dir / "month" / "000001.json").exists()
+
+
 def test_engine_status_uses_run_registry_liveness(tmp_path, monkeypatch):
     output = tmp_path / "output"
     run_dir = output / "paper_2026-06-02T08-00-00"

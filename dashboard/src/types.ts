@@ -1,8 +1,9 @@
 export type PageKey = 'watch' | 'holdings' | 'plan' | 'ledger' | 'logs';
 export type WorkbenchMode = 'watch' | 'workflow' | 'review';
-export type KlinePeriod = 'day' | 'week' | '1m' | '5m' | '15m' | '60m';
+export type KlinePeriod = '1m' | '5m' | '15m' | '60m' | 'day' | 'week' | 'month';
 export type OverlayKind = 'MA' | 'EMA' | 'BOLL';
 export type AgentProvider = 'claude' | 'codex';
+export type KlineLayerKey = 'trades' | 'plan' | 'signals' | 'structures';
 
 export interface DashboardState {
   total_asset: number;
@@ -30,9 +31,15 @@ export interface PlanCandidate {
   entry_max?: number;
   stop_loss?: number;
   take_profit?: number;
+  valid_until?: string;
+  position_pct?: number;
+  reason?: string;
+  reasoning?: string;
 }
 
 export interface PlanData {
+  updated?: string;
+  updated_by?: string;
   market_bias?: string;
   bias_confidence?: number;
   bias_reasoning?: string;
@@ -110,6 +117,30 @@ export interface KlineTradeMarker {
   stop_loss?: number;
   take_profit?: number;
   avg_cost?: number;
+}
+
+export interface KlinePlanAnnotation {
+  code: string;
+  entry_min?: number;
+  entry_max?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  valid_until?: string;
+  position_pct?: number;
+  strategy?: string;
+  reasoning?: string;
+  plan_updated?: string;
+  stale_reason?: string;
+  is_stale?: boolean;
+}
+
+export interface KlineTechnicalSignal {
+  time: string;
+  price: number;
+  kind: 'ma_golden_cross' | 'ma_death_cross' | 'volume_breakout' | 'boll_upper_touch' | 'boll_lower_touch';
+  label: string;
+  detail: string;
+  tone: 'up' | 'down' | 'neutral';
 }
 
 export interface WorkflowEvent {

@@ -2,16 +2,18 @@ import * as echarts from 'echarts';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { buildKlineOption } from '../charts/klineOption';
-import type { KlineData, KlinePeriod, KlineTradeMarker, LedgerEntry, OverlayKind } from '../types';
+import type { KlineData, KlineLayerKey, KlinePeriod, KlinePlanAnnotation, KlineTradeMarker, LedgerEntry, OverlayKind, PlanData } from '../types';
 
 interface KlineChartProps {
   code: string;
   period: KlinePeriod;
   overlay: OverlayKind;
   tradeRefreshKey?: string | number;
+  layers?: KlineLayerKey[];
+  plan?: PlanData;
 }
 
-export function KlineChart({ code, period, overlay, tradeRefreshKey = '' }: KlineChartProps) {
+export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers = ['trades'], plan = {} }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,11 +84,17 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '' }: Klin
 
   useEffect(() => {
     if (!chartRef.current || !klineData) return;
-    const option = buildKlineOption(klineData, overlay, trades);
+    const option = buildKlineOption(
+      klineData,
+      overlay,
+      layers.includes('trades') ? trades : [],
+      layers.includes('plan') ? planToAnnotations(plan, code) : [],
+      layers.includes('signals'),
+    );
     chartRef.current.clear();
     chartRef.current.setOption(option, { notMerge: true, lazyUpdate: false });
     chartRef.current.resize();
-  }, [klineData, overlay, trades]);
+  }, [klineData, overlay, trades, layers, plan, code]);
 
   return (
     <section className="kline-panel">
@@ -100,6 +108,37 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '' }: Klin
       {error ? <div className="chart-error">{error}</div> : null}
     </section>
   );
+}
+
+function planToAnnotations(plan: PlanData, code: string): KlinePlanAnnotation[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const planDate = (plan.updated || '').slice(0, 10);
+  return (plan.buy_candidates || [])
+    .filter((candidate) => candidate.code === code)
+    .map((candidate) => ({
+      code: candidate.code,
+      entry_min: candidate.entry_min,
+      entry_max: candidate.entry_max,
+      stop_loss: candidate.stop_loss,
+      take_profit: candidate.take_profit,
+      valid_until: candidate.valid_until,
+      position_pct: candidate.position_pct,
+      strategy: candidate.strategy_type,
+      reasoning: candidate.reasoning || candidate.reason,
+      plan_updated: plan.updated,
+      is_stale: isPlanStale(planDate, candidate.valid_until, today),
+      stale_reason: planStaleReason(planDate, candidate.valid_until, today),
+    }));
+}
+
+function isPlanStale(planDate: string, validUntil = '', today: string) {
+  return Boolean((validUntil && validUntil < today) || (planDate && planDate !== today));
+}
+
+function planStaleReason(planDate: string, validUntil = '', today: string) {
+  if (validUntil && validUntil < today) return `已过期: ${validUntil}`;
+  if (planDate && planDate !== today) return `旧计划: ${planDate}`;
+  return '';
 }
 
 function ledgerToTradeMarker(row: LedgerEntry, fallbackCode: string): KlineTradeMarker {

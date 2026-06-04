@@ -19,6 +19,7 @@ import type {
   CacheStatus,
   DashboardState,
   EngineStatus,
+  KlineLayerKey,
   KlinePeriod,
   LedgerEntry,
   OverlayKind,
@@ -31,15 +32,27 @@ import type {
 } from './types';
 
 const periods: Array<{ key: KlinePeriod; label: string }> = [
-  { key: 'day', label: '日K' },
-  { key: 'week', label: '周K' },
   { key: '1m', label: '1分' },
   { key: '5m', label: '5分' },
   { key: '15m', label: '15分' },
   { key: '60m', label: '60分' },
+  { key: 'day', label: '日线' },
+  { key: 'week', label: '周线' },
+  { key: 'month', label: '月线' },
 ];
 
 const overlays: OverlayKind[] = ['MA', 'EMA', 'BOLL'];
+const overlayLabels: Record<OverlayKind, string> = {
+  MA: '均线',
+  EMA: 'EMA',
+  BOLL: '布林',
+};
+const klineLayerItems: Array<{ key: KlineLayerKey; label: string; enabled: boolean }> = [
+  { key: 'trades', label: '交易', enabled: true },
+  { key: 'plan', label: '计划', enabled: true },
+  { key: 'signals', label: '信号', enabled: true },
+  { key: 'structures', label: '结构', enabled: false },
+];
 const pageItems: Array<{ key: PageKey; label: string; Icon: LucideIcon }> = [
   { key: 'watch', label: '盯盘', Icon: Radar },
   { key: 'holdings', label: '持仓', Icon: BriefcaseBusiness },
@@ -63,8 +76,9 @@ export default function App() {
   const [mode, setMode] = useState<WorkbenchMode>('watch');
   const [page, setPage] = useState<PageKey>('watch');
   const [selectedCode, setSelectedCode] = useState('000001');
-  const [period, setPeriod] = useState<KlinePeriod>('day');
+  const [period, setPeriod] = useState<KlinePeriod>('1m');
   const [overlay, setOverlay] = useState<OverlayKind>('MA');
+  const [klineLayers, setKlineLayers] = useState<KlineLayerKey[]>(['trades']);
   const [state, setState] = useState<DashboardState>({
     total_asset: injected.state?.total_asset || 0,
     cash: injected.state?.cash || 0,
@@ -213,7 +227,7 @@ export default function App() {
         </div>
         {mode === 'watch' && page === 'watch' ? (
           <>
-            <KlineChart code={selectedCode} period={period} overlay={overlay} tradeRefreshKey={tradeRefreshKey} />
+            <KlineChart code={selectedCode} period={period} overlay={overlay} tradeRefreshKey={tradeRefreshKey} layers={klineLayers} plan={plan} />
             <div className="control-strip">
               {periods.map((item) => (
                 <button key={item.key} className={period === item.key ? 'active' : ''} onClick={() => setPeriod(item.key)}>
@@ -221,12 +235,25 @@ export default function App() {
                 </button>
               ))}
               <span className="divider" />
+              <span className="control-label">辅助</span>
               {overlays.map((item) => (
                 <button key={item} className={overlay === item ? 'active' : ''} onClick={() => setOverlay(item)}>
-                  {item}
+                  {overlayLabels[item]}
                 </button>
               ))}
-              <button className="active" disabled>VOL</button>
+              <button className="active" disabled>成交量</button>
+              <span className="divider" />
+              {klineLayerItems.map((item) => (
+                <button
+                  key={item.key}
+                  className={klineLayers.includes(item.key) ? 'active' : ''}
+                  disabled={!item.enabled}
+                  onClick={() => setKlineLayers((current) => toggleLayer(current, item.key))}
+                  title={!item.enabled ? '后续接入结构化数据后开放' : undefined}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
           </>
         ) : null}
@@ -244,6 +271,10 @@ export default function App() {
       />
     </div>
   );
+}
+
+function toggleLayer(current: KlineLayerKey[], key: KlineLayerKey) {
+  return current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {

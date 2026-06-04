@@ -1,5 +1,5 @@
 import type { EChartsOption } from 'echarts';
-import type { KlineData, KlineTradeMarker, OverlayKind } from '../types';
+import type { KlineData, KlinePlanAnnotation, KlineTechnicalSignal, KlineTradeMarker, OverlayKind } from '../types';
 import { calcBOLL, calcEMA, calcMA } from './indicators';
 
 const UP_COLOR = '#ff3b30';
@@ -34,7 +34,13 @@ function resolveTradeCategory(time: string, dates: string[]) {
   return '';
 }
 
-export function buildKlineOption(data: KlineData, overlay: OverlayKind, trades: KlineTradeMarker[] = []): EChartsOption {
+export function buildKlineOption(
+  data: KlineData,
+  overlay: OverlayKind,
+  trades: KlineTradeMarker[] = [],
+  plans: KlinePlanAnnotation[] = [],
+  showSignals = false,
+): EChartsOption {
   const dates = data.dates;
   const closes = data.close.map(Number);
   const ohlc = dates.map((_, index) => [
@@ -62,6 +68,9 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind, trades: 
     },
   ];
   const riskLines = collectRiskLines(trades);
+  const planLines = collectPlanLines(plans);
+  const planAreas = collectPlanAreas(plans);
+  const technicalSignals = showSignals ? detectTechnicalSignals(data) : [];
 
   if (overlay === 'MA') {
     [5, 10, 20, 60].forEach((period) => {
@@ -146,13 +155,14 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind, trades: 
     })
     .filter(Boolean);
 
-  if (riskLines.length) {
+  const allLines = [...riskLines, ...planLines];
+  if (allLines.length || planAreas.length) {
     series[0] = {
       ...(series[0] as object),
-      markLine: {
+      ...(allLines.length ? { markLine: {
         symbol: 'none',
         silent: true,
-        data: riskLines,
+        data: allLines,
         lineStyle: { width: 1.2, type: 'dashed', opacity: 0.82 },
         label: {
           color: '#d8e0ea',
@@ -161,10 +171,74 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind, trades: 
           borderWidth: 1,
           borderRadius: 4,
           padding: [3, 5],
+          position: 'insideStartTop',
+          distance: [-6, 0],
           formatter: '{b}',
         },
-      },
+      } } : {}),
+      ...(planAreas.length ? { markArea: {
+        silent: true,
+        data: planAreas,
+        itemStyle: { color: 'rgba(214, 161, 59, 0.08)' },
+        label: { color: '#ffd37a', fontSize: 10 },
+      } } : {}),
     };
+  }
+
+  if (plans.length) {
+    const lastDate = dates[dates.length - 1];
+    series.push({
+      name: '计划执行',
+      type: 'scatter',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      symbol: 'diamond',
+      symbolSize: 18,
+      data: plans
+        .map((plan) => {
+          const entry = midpoint(plan.entry_min, plan.entry_max);
+          if (!lastDate || !Number.isFinite(entry)) return null;
+          return {
+            name: '计划',
+            value: [lastDate, entry],
+            plan,
+            itemStyle: { color: plan.is_stale ? '#708099' : '#d6a13b', borderColor: '#081018', borderWidth: 1 },
+          };
+        })
+        .filter(Boolean),
+      z: 18,
+      tooltip: { show: true },
+    });
+  }
+
+  if (technicalSignals.length) {
+    series.push({
+      name: '技术信号',
+      type: 'scatter',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      symbol: 'roundRect',
+      symbolSize: 18,
+      data: technicalSignals.map((signal) => ({
+        name: signal.label,
+        value: [signal.time, signal.price],
+        signal,
+        itemStyle: {
+          color: signal.tone === 'up' ? UP_COLOR : signal.tone === 'down' ? DOWN_COLOR : '#d6a13b',
+          borderColor: '#081018',
+          borderWidth: 1,
+        },
+        label: {
+          show: true,
+          formatter: signal.label,
+          color: '#081018',
+          fontSize: 9,
+          fontWeight: 800,
+        },
+      })),
+      z: 16,
+      tooltip: { show: true },
+    });
   }
 
   if (tradePoints.length) {
@@ -302,6 +376,46 @@ export function buildKlineOption(data: KlineData, overlay: OverlayKind, trades: 
       },
       formatter(params) {
         const rows = Array.isArray(params) ? params : [params];
+        const signalPoint = rows.find((row) => row.seriesName === '技术信号') as { data?: { signal?: KlineTechnicalSignal } } | undefined;
+        if (signalPoint?.data?.signal) {
+          const signal = signalPoint.data.signal;
+          const tone = signal.tone === 'up' ? UP_COLOR : signal.tone === 'down' ? DOWN_COLOR : '#d6a13b';
+          return `
+            <div class="kline-tooltip kline-tooltip--signal">
+              <div class="kline-tooltip__head">
+                <span class="kline-tooltip__code">${data.code}</span>
+                <span class="kline-tooltip__date">${signal.time}</span>
+              </div>
+              <div class="kline-tooltip__price" style="color:${tone}">
+                ${signal.label} ${formatNumber(signal.price)}
+                <small>${signal.kind}</small>
+              </div>
+              <p class="kline-tooltip__reason">${signal.detail}</p>
+            </div>
+          `;
+        }
+        const planPoint = rows.find((row) => row.seriesName === '计划执行') as { data?: { plan?: KlinePlanAnnotation } } | undefined;
+        if (planPoint?.data?.plan) {
+          const plan = planPoint.data.plan;
+          return `
+            <div class="kline-tooltip kline-tooltip--plan">
+              <div class="kline-tooltip__head">
+                <span class="kline-tooltip__code">${plan.code}</span>
+                <span class="kline-tooltip__date">${plan.is_stale ? plan.stale_reason || '旧计划' : plan.valid_until ? `有效至 ${plan.valid_until}` : '计划候选'}</span>
+              </div>
+              <div class="kline-tooltip__price" style="color:${plan.is_stale ? '#708099' : '#d6a13b'}">
+                入场 ${formatNumber(Number(plan.entry_min || NaN))} - ${formatNumber(Number(plan.entry_max || NaN))}
+                <small>${plan.position_pct || 0}% / ${plan.strategy || '--'}</small>
+              </div>
+              <div class="kline-tooltip__grid">
+                <span>STOP</span><b>${formatNumber(Number(plan.stop_loss || NaN))}</b>
+                <span>TAKE</span><b>${formatNumber(Number(plan.take_profit || NaN))}</b>
+                <span>VALID</span><b>${plan.valid_until || '--'}</b>
+              </div>
+              ${plan.reasoning ? `<p class="kline-tooltip__reason">${plan.reasoning}</p>` : ''}
+            </div>
+          `;
+        }
         const tradePoint = rows.find((row) => row.seriesName === '交易结果') as { data?: { trade?: KlineTradeMarker } } | undefined;
         if (tradePoint?.data?.trade) {
           const trade = tradePoint.data.trade;
@@ -370,13 +484,137 @@ function collectRiskLines(trades: KlineTradeMarker[]) {
   if (!latest) return [];
   const lines = [];
   if (latest.avg_cost) {
-    lines.push({ yAxis: Number(latest.avg_cost), name: `成本 ${formatNumber(Number(latest.avg_cost))}`, lineStyle: { color: '#d6a13b' } });
+    lines.push({ yAxis: Number(latest.avg_cost), name: `交易成本 ${formatNumber(Number(latest.avg_cost))}`, lineStyle: { color: '#d6a13b' } });
   }
   if (latest.stop_loss) {
-    lines.push({ yAxis: Number(latest.stop_loss), name: `止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: { color: DOWN_COLOR } });
+    lines.push({ yAxis: Number(latest.stop_loss), name: `交易止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: { color: DOWN_COLOR } });
   }
   if (latest.take_profit) {
-    lines.push({ yAxis: Number(latest.take_profit), name: `止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: { color: UP_COLOR } });
+    lines.push({ yAxis: Number(latest.take_profit), name: `交易止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: { color: UP_COLOR } });
   }
   return lines;
+}
+
+function collectPlanLines(plans: KlinePlanAnnotation[]) {
+  const latest = plans[0];
+  if (!latest) return [];
+  const lines = [];
+  const staleStyle = latest.is_stale ? { color: '#708099', opacity: 0.58, type: 'dotted' } : null;
+  const planColor = latest.is_stale ? '#708099' : '#d6a13b';
+  const planLight = latest.is_stale ? '#708099' : '#ffd37a';
+  const prefix = latest.is_stale ? '旧计划' : '计划';
+  if (latest.entry_min) {
+    lines.push({ yAxis: Number(latest.entry_min), name: `${prefix}下沿 ${formatNumber(Number(latest.entry_min))}`, lineStyle: staleStyle || { color: planColor } });
+  }
+  if (latest.entry_max) {
+    lines.push({ yAxis: Number(latest.entry_max), name: `${prefix}上沿 ${formatNumber(Number(latest.entry_max))}`, lineStyle: staleStyle || { color: planLight } });
+  }
+  if (latest.stop_loss) {
+    lines.push({ yAxis: Number(latest.stop_loss), name: `${prefix}止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: staleStyle || { color: DOWN_COLOR } });
+  }
+  if (latest.take_profit) {
+    lines.push({ yAxis: Number(latest.take_profit), name: `${prefix}止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: staleStyle || { color: UP_COLOR } });
+  }
+  return lines;
+}
+
+function collectPlanAreas(plans: KlinePlanAnnotation[]): Array<[{ name: string; yAxis: number }, { yAxis: number }]> {
+  return plans
+    .filter((plan) => Number.isFinite(Number(plan.entry_min)) && Number.isFinite(Number(plan.entry_max)))
+    .map((plan) => [
+      { name: plan.is_stale ? '旧计划入场区间' : '计划入场区间', yAxis: Number(plan.entry_min) },
+      { yAxis: Number(plan.entry_max) },
+    ] as [{ name: string; yAxis: number }, { yAxis: number }]);
+}
+
+function midpoint(min?: number, max?: number) {
+  const low = Number(min);
+  const high = Number(max);
+  if (Number.isFinite(low) && Number.isFinite(high)) return (low + high) / 2;
+  if (Number.isFinite(low)) return low;
+  if (Number.isFinite(high)) return high;
+  return NaN;
+}
+
+function detectTechnicalSignals(data: KlineData): KlineTechnicalSignal[] {
+  const closes = data.close.map(Number);
+  const highs = data.high.map(Number);
+  const lows = data.low.map(Number);
+  const volumes = data.volume.map(Number);
+  const ma5 = calcMA(closes, 5);
+  const ma10 = calcMA(closes, 10);
+  const boll = calcBOLL(closes, 20);
+  const signals: KlineTechnicalSignal[] = [];
+
+  for (let index = 1; index < data.dates.length; index += 1) {
+    const prev5 = ma5[index - 1];
+    const prev10 = ma10[index - 1];
+    const cur5 = ma5[index];
+    const cur10 = ma10[index];
+    if (prev5 != null && prev10 != null && cur5 != null && cur10 != null) {
+      if (prev5 <= prev10 && cur5 > cur10) {
+        signals.push({
+          time: data.dates[index],
+          price: lows[index],
+          kind: 'ma_golden_cross',
+          label: '金叉',
+          detail: `MA5 ${formatNumber(cur5)} 上穿 MA10 ${formatNumber(cur10)}`,
+          tone: 'up',
+        });
+      } else if (prev5 >= prev10 && cur5 < cur10) {
+        signals.push({
+          time: data.dates[index],
+          price: highs[index],
+          kind: 'ma_death_cross',
+          label: '死叉',
+          detail: `MA5 ${formatNumber(cur5)} 下穿 MA10 ${formatNumber(cur10)}`,
+          tone: 'down',
+        });
+      }
+    }
+
+    const avgVol = average(volumes.slice(Math.max(0, index - 5), index));
+    const changePct = closes[index - 1] ? ((closes[index] - closes[index - 1]) / closes[index - 1]) * 100 : 0;
+    if (avgVol > 0 && volumes[index] > avgVol * 1.8 && changePct > 1.5) {
+      signals.push({
+        time: data.dates[index],
+        price: highs[index],
+        kind: 'volume_breakout',
+        label: '放量',
+        detail: `成交量为近5根均量 ${formatNumber(volumes[index] / avgVol)} 倍，涨幅 ${changePct.toFixed(2)}%`,
+        tone: 'up',
+      });
+    }
+
+    const upper = boll.upper[index];
+    const lower = boll.lower[index];
+    if (upper != null && highs[index] >= upper) {
+      signals.push({
+        time: data.dates[index],
+        price: highs[index],
+        kind: 'boll_upper_touch',
+        label: '上轨',
+        detail: `触及 BOLL 上轨 ${formatNumber(upper)}`,
+        tone: 'neutral',
+      });
+    }
+    if (lower != null && lows[index] <= lower) {
+      signals.push({
+        time: data.dates[index],
+        price: lows[index],
+        kind: 'boll_lower_touch',
+        label: '下轨',
+        detail: `触及 BOLL 下轨 ${formatNumber(lower)}`,
+        tone: 'neutral',
+      });
+    }
+  }
+
+  return signals.slice(-24);
+}
+
+function average(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (!valid.length) return 0;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
 }

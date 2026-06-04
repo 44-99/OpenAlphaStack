@@ -787,6 +787,12 @@ button {
   margin: 0 2px;
 }
 
+.control-label {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0 2px;
+}
+
 .card-grid,
 .plan-board,
 .review-board {

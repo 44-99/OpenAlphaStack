@@ -27,7 +27,7 @@ DASHBOARD_ASSETS_DIR = str(PROJECT_ROOT / "dashboard" / "dist" / "assets")
 KLINE_CACHE_DIR = str(DATA_DIR / "cache" / "kline")
 LEGACY_MINUTE_CACHE_DIR = str(DATA_DIR / "cache" / "minute")
 MINUTE_CACHE_DIR = LEGACY_MINUTE_CACHE_DIR
-KLINE_PERIODS = {"day", "week", "1m", "5m", "15m", "60m"}
+KLINE_PERIODS = {"day", "week", "month", "1m", "5m", "15m", "60m"}
 MINUTE_PERIODS = {"1m", "5m", "15m", "60m"}
 RESAMPLE_RULES = {"5m": "5min", "15m": "15min", "60m": "60min"}
 
@@ -212,7 +212,7 @@ def _stock_prefix(code: str) -> str:
 
 
 def _kline_cache_path(period: str, code: str) -> str:
-    suffix = "json" if period in ("day", "week") else "parquet"
+    suffix = "json" if period in ("day", "week", "month") else "parquet"
     return os.path.join(KLINE_CACHE_DIR, period, f"{code}.{suffix}")
 
 
@@ -398,6 +398,23 @@ def _load_week_kline_df(code: str, limit: int):
         df = _resample_ohlcv(day_df, "W")
         if not df.empty:
             _write_kline_json(path, df)
+    elif not os.path.exists(path) and df is not None and not df.empty:
+        _write_kline_json(path, df)
+    return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
+
+
+def _load_month_kline_df(code: str, limit: int):
+    path = _kline_cache_path("month", code)
+    df = _read_kline_json(path)
+    if df is None or len(df) < min(limit, 12):
+        day_df = _load_day_kline_df(code, max(limit * 31, 520))
+        if day_df is None or day_df.empty:
+            return None
+        df = _resample_ohlcv(day_df, "ME")
+        if not df.empty:
+            _write_kline_json(path, df)
+    elif not os.path.exists(path) and df is not None and not df.empty:
+        _write_kline_json(path, df)
     return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
 
 
@@ -632,7 +649,7 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
 
     Periods:
       - day: cache-first Tencent daily K-line
-      - week: resampled from day K-line
+      - week/month: resampled from day K-line
       - 1m: cache-first Tencent minute K-line / legacy parquet fallback
       - 5m/15m/60m: resampled from 1m K-line
     """
@@ -646,6 +663,8 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
             df = _load_day_kline_df(code, limit)
         elif period == "week":
             df = _load_week_kline_df(code, limit)
+        elif period == "month":
+            df = _load_month_kline_df(code, limit)
         else:
             df = _load_minute_kline_df(code, period, limit)
     except Exception as e:
