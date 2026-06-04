@@ -899,6 +899,24 @@ button {
   font-size: 12px;
 }
 
+.workflow-inspector-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workflow-inspector-actions button {
+  border: 1px solid rgba(65, 224, 201, 0.32);
+  border-radius: 999px;
+  color: var(--cyan);
+  background: rgba(65, 224, 201, 0.08);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 4px 8px;
+}
+
 .workflow-node-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

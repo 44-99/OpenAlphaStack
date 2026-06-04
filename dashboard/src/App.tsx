@@ -99,6 +99,7 @@ export default function App() {
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [leftWidth, setLeftWidth] = useState(190);
   const [rightWidth, setRightWidth] = useState(380);
+  const [agentInjection, setAgentInjection] = useState<{ id: number; text: string } | undefined>();
 
   const aiWatchlist = useMemo(() => {
     const map = new Map<string, WatchlistItem>();
@@ -261,13 +262,23 @@ export default function App() {
         {mode === 'watch' && page === 'plan' ? <Plan plan={plan} /> : null}
         {mode === 'watch' && page === 'ledger' ? <Ledger rows={ledger} /> : null}
         {mode === 'watch' && page === 'logs' ? <Logs rows={events} /> : null}
-        {mode === 'workflow' ? <WorkflowBoard graph={workflowGraph} events={workflowEvents} /> : null}
+        {mode === 'workflow' ? (
+          <WorkflowBoard
+            graph={workflowGraph}
+            events={workflowEvents}
+            onSendToAgent={(text) => {
+              setRightCollapsed(false);
+              setAgentInjection({ id: Date.now(), text });
+            }}
+          />
+        ) : null}
         {mode === 'review' ? <ReviewBoard events={workflowEvents} ledger={ledger} plan={plan} /> : null}
       </main>
       {!rightCollapsed ? <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} /> : null}
       <AgentPanel
         collapsed={rightCollapsed}
         onToggle={() => setRightCollapsed((value) => !value)}
+        injection={agentInjection}
       />
     </div>
   );

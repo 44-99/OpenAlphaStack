@@ -8,6 +8,7 @@ import type { AgentProvider } from '../types';
 interface AgentPanelProps {
   collapsed: boolean;
   onToggle: () => void;
+  injection?: { id: number; text: string };
 }
 
 const providers: Array<{ key: AgentProvider; label: string; command: string }> = [
@@ -15,7 +16,7 @@ const providers: Array<{ key: AgentProvider; label: string; command: string }> =
   { key: 'codex', label: 'Codex CLI', command: 'codex --no-alt-screen' },
 ];
 
-export function AgentPanel({ collapsed, onToggle }: AgentPanelProps) {
+export function AgentPanel({ collapsed, onToggle, injection }: AgentPanelProps) {
   const [provider, setProvider] = useState<AgentProvider>('claude');
   const [started, setStarted] = useState<Set<AgentProvider>>(() => new Set(['claude']));
 
@@ -66,6 +67,7 @@ export function AgentPanel({ collapsed, onToggle }: AgentPanelProps) {
             active={provider === item.key}
             provider={item.key}
             command={item.command}
+            injection={provider === item.key ? injection : undefined}
           />
         ) : null)}
       </div>
@@ -73,14 +75,17 @@ export function AgentPanel({ collapsed, onToggle }: AgentPanelProps) {
   );
 }
 
-function AgentTerminalPane({ active, provider, command }: {
+function AgentTerminalPane({ active, provider, command, injection }: {
   active: boolean;
   provider: AgentProvider;
   command: string;
+  injection?: { id: number; text: string };
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const lastInjectionIdRef = useRef(0);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -126,6 +131,7 @@ function AgentTerminalPane({ active, provider, command }: {
     const socket = new WebSocket(`${protocol}://${window.location.host}/api/agent/terminal/${provider}?cols=${term.cols}&rows=${term.rows}`);
     termRef.current = term;
     fitRef.current = fit;
+    socketRef.current = socket;
 
     socket.addEventListener('open', () => {
       socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -160,6 +166,7 @@ function AgentTerminalPane({ active, provider, command }: {
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      socketRef.current = null;
     };
   }, [command, provider]);
 
@@ -168,6 +175,16 @@ function AgentTerminalPane({ active, provider, command }: {
     fitRef.current?.fit();
     termRef.current?.focus();
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !injection || injection.id === lastInjectionIdRef.current) return;
+    const socket = socketRef.current;
+    const term = termRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !term) return;
+    lastInjectionIdRef.current = injection.id;
+    term.focus();
+    socket.send(JSON.stringify({ type: 'input', data: injection.text }));
+  }, [active, injection]);
 
   return <div className={`agent-terminal-pane ${active ? 'active' : ''}`} ref={hostRef} />;
 }

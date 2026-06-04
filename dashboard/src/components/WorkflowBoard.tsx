@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type { WorkflowConfig, WorkflowConfigNode, WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
-export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events: WorkflowEvent[] }) {
+export function WorkflowBoard({ graph, events, onSendToAgent }: {
+  graph?: WorkflowGraph;
+  events: WorkflowEvent[];
+  onSendToAgent?: (text: string) => void;
+}) {
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [artifact, setArtifact] = useState<{ title: string; content: string } | null>(null);
   const [config, setConfig] = useState<WorkflowConfig | null>(null);
@@ -90,7 +94,12 @@ export function WorkflowBoard({ graph, events }: { graph?: WorkflowGraph; events
       <aside className="workflow-inspector">
         <header>
           <strong>{selectedNode?.name || '节点详情'}</strong>
-          {selectedNode?.locked ? <span className="lock-pill">锁定</span> : null}
+          <span className="workflow-inspector-actions">
+            {selectedNode && onSendToAgent ? (
+              <button onClick={() => onSendToAgent(buildNodeAgentPrompt(selectedNode, selectedEvents))}>发送到 Agent</button>
+            ) : null}
+            {selectedNode?.locked ? <span className="lock-pill">锁定</span> : null}
+          </span>
         </header>
         <p>{selectedNode?.summary || '暂无摘要'}</p>
         {selectedNode && selectedConfig ? (
@@ -156,6 +165,13 @@ function parseParamValue(value: string) {
   if (trimmed === 'false') return false;
   if (trimmed !== '' && Number.isFinite(Number(trimmed))) return Number(trimmed);
   return value;
+}
+
+function buildNodeAgentPrompt(node: WorkflowGraphNode, events: WorkflowEvent[]) {
+  const recent = events.slice(0, 3).map((event) => (
+    `${event.status}/${event.phase || '--'}: ${event.summary || event.error || '--'}`
+  )).join('；');
+  return `请结合 AlphaClaude 当前流程节点分析：节点=${node.name}(${node.id})；状态=${node.status}；启用=${node.enabled}；锁定=${node.locked}；摘要=${node.summary || '--'}；最近事件=${recent || '暂无'}。`;
 }
 
 function WorkflowNode({ node, active, onSelect }: { node: WorkflowGraphNode; active: boolean; onSelect: () => void }) {
