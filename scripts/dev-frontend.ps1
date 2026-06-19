@@ -37,4 +37,10 @@ if (-not (Test-Path $vite)) {
   exit 1
 }
 
+$viteCache = Join-Path $root "node_modules\.vite"
+if (Test-Path $viteCache) {
+  Write-Host "Clearing Vite dependency cache: $viteCache"
+  Remove-Item -LiteralPath $viteCache -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 & $vite --config dashboard/vite.config.ts

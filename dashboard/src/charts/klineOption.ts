@@ -6,6 +6,8 @@ const UP_COLOR = '#ff3b30';
 const DOWN_COLOR = '#22b573';
 const TRADE_COST_COLOR = '#f0b84a';
 const PLAN_UPPER_COLOR = '#41e0c9';
+const PLAN_DASH = [16, 10];
+const TRADE_PIN_BORDER = '#07131c';
 
 function formatNumber(value: number) {
   return Number.isFinite(value) ? value.toFixed(2) : '--';
@@ -33,7 +35,48 @@ function resolveTradeCategory(time: string, dates: string[]) {
   if (dates.includes(minute)) return minute;
   const day = time.slice(0, 10);
   if (dates.includes(day)) return day;
+  const bucket = resolveTradeBucket(time, dates);
+  if (bucket) return bucket;
   return '';
+}
+
+function resolveTradeBucket(time: string, dates: string[]) {
+  const tradeMs = parseDateMs(time);
+  if (!Number.isFinite(tradeMs)) return '';
+  const buckets = dates
+    .map((date) => ({ date, ms: parseDateMs(date) }))
+    .filter((item) => Number.isFinite(item.ms))
+    .sort((left, right) => left.ms - right.ms);
+  if (!buckets.length) return '';
+
+  const fallbackSpan = inferBucketSpanMs(buckets.map((item) => item.ms));
+  for (let index = 0; index < buckets.length; index += 1) {
+    const start = buckets[index].ms;
+    const end = buckets[index + 1]?.ms ?? start + fallbackSpan;
+    if (tradeMs >= start && tradeMs < end) return buckets[index].date;
+  }
+  return '';
+}
+
+function inferBucketSpanMs(values: number[]) {
+  const spans = values
+    .slice(1)
+    .map((value, index) => value - values[index])
+    .filter((value) => value > 0)
+    .sort((left, right) => left - right);
+  if (!spans.length) return 24 * 60 * 60 * 1000;
+  return spans[Math.floor(spans.length / 2)];
+}
+
+function parseDateMs(value: string) {
+  if (!value) return NaN;
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const ms = new Date(normalized).getTime();
+  if (Number.isFinite(ms)) return ms;
+  const compact = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}))?/);
+  if (!compact) return NaN;
+  const [, year, month, day, hour = '00', minute = '00'] = compact;
+  return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)).getTime();
 }
 
 export function buildKlineOption(
@@ -148,11 +191,28 @@ export function buildKlineOption(
         name: action.label,
         value: [category, Number(trade.price), action.label],
         trade,
-        itemStyle: { color: action.tone, borderColor: '#081018', borderWidth: 1 },
+        symbol: action.label === '买' ? 'triangle' : 'path://M0,10 L10,0 L20,10 Z',
+        symbolRotate: action.label === '买' ? 0 : 180,
+        symbolSize: action.label === '买' || action.label === '卖' ? 24 : 28,
+        symbolOffset: [0, action.label === '买' ? 12 : -12],
+        itemStyle: {
+          color: action.tone,
+          borderColor: TRADE_PIN_BORDER,
+          borderWidth: 2,
+          shadowBlur: 8,
+          shadowColor: `${action.tone}70`,
+        },
         label: {
           show: true,
           formatter: action.label,
-          color: '#081018',
+          position: action.label === '买' ? 'bottom' : 'top',
+          distance: 5,
+          color: '#f4f7fb',
+          backgroundColor: 'rgba(7, 13, 20, 0.86)',
+          borderColor: `${action.tone}99`,
+          borderWidth: 1,
+          borderRadius: 4,
+          padding: [2, 4],
           fontSize: 10,
           fontWeight: 800,
         },
@@ -255,8 +315,6 @@ export function buildKlineOption(
       type: 'scatter',
       xAxisIndex: 0,
       yAxisIndex: 0,
-      symbol: 'pin',
-      symbolSize: 34,
       data: tradePoints,
       z: 20,
       tooltip: { show: true },
@@ -515,15 +573,25 @@ function collectPlanLines(plans: KlinePlanAnnotation[]) {
   const planLight = latest.is_stale ? '#708099' : PLAN_UPPER_COLOR;
   const prefix = latest.is_stale ? '旧计划' : '计划';
   if (latest.entry_max) {
-    lines.push({ yAxis: Number(latest.entry_max), name: `${prefix}上沿 ${formatNumber(Number(latest.entry_max))}`, lineStyle: staleStyle || { color: planLight, type: 'dashed', width: 1.35 } });
+    lines.push({ yAxis: Number(latest.entry_max), name: `${prefix}上沿 ${formatNumber(Number(latest.entry_max))}`, lineStyle: staleStyle || planLineStyle(planLight) });
   }
   if (latest.stop_loss) {
-    lines.push({ yAxis: Number(latest.stop_loss), name: `${prefix}止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: staleStyle || { color: DOWN_COLOR, type: 'dashed', width: 1.35 } });
+    lines.push({ yAxis: Number(latest.stop_loss), name: `${prefix}止损 ${formatNumber(Number(latest.stop_loss))}`, lineStyle: staleStyle || planLineStyle(DOWN_COLOR) });
   }
   if (latest.take_profit) {
-    lines.push({ yAxis: Number(latest.take_profit), name: `${prefix}止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: staleStyle || { color: UP_COLOR, type: 'dashed', width: 1.35 } });
+    lines.push({ yAxis: Number(latest.take_profit), name: `${prefix}止盈 ${formatNumber(Number(latest.take_profit))}`, lineStyle: staleStyle || planLineStyle(UP_COLOR) });
   }
   return lines;
+}
+
+function planLineStyle(color: string) {
+  return {
+    color,
+    type: PLAN_DASH,
+    width: 1.9,
+    opacity: 0.94,
+    cap: 'round',
+  };
 }
 
 function collectPlanAreas(plans: KlinePlanAnnotation[]): Array<[{ name: string; yAxis: number }, { yAxis: number }]> {

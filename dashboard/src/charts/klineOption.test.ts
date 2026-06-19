@@ -126,10 +126,42 @@ describe('buildKlineOption', () => {
     const candleSeries = series.find((item) => item.name === 'K线') as Record<string, unknown>;
 
     expect(tradeSeries).toMatchObject({ type: 'scatter' });
+    expect(tradeSeries.data).toMatchObject([
+      {
+        value: ['2026-06-02', 12, '买'],
+        symbol: 'triangle',
+        symbolOffset: [0, 12],
+      },
+    ]);
     expect(candleSeries.markLine).toBeTruthy();
     const markLine = candleSeries.markLine as { data: Array<{ name: string; lineStyle: { type: string; color: string } }> };
     expect(markLine.data.find((item) => item.name.startsWith('交易止盈'))?.lineStyle).toMatchObject({ type: 'solid', color: '#ff3b30' });
     expect(markLine.data.find((item) => item.name.startsWith('交易止损'))?.lineStyle).toMatchObject({ type: 'solid', color: '#22b573' });
+  });
+
+  it('places intrabar trades on their containing K-line candle', () => {
+    const option = buildKlineOption({
+      ...sample,
+      dates: ['2026-06-01 09:30', '2026-06-01 09:35', '2026-06-01 09:40'],
+    }, 'NONE', [
+      {
+        time: '2026-06-01 09:37:12',
+        code: '000001',
+        action: 'sell',
+        price: 12.5,
+        shares: 100,
+      },
+    ]);
+    const series = option.series as Array<Record<string, unknown>>;
+    const tradeSeries = series.find((item) => item.name === '交易结果') as Record<string, unknown>;
+
+    expect(tradeSeries.data).toMatchObject([
+      {
+        value: ['2026-06-01 09:35', 12.5, '卖'],
+        symbolRotate: 180,
+        symbolOffset: [0, -12],
+      },
+    ]);
   });
 
   it('renders plan execution layer when plan annotations are provided', () => {
@@ -154,8 +186,9 @@ describe('buildKlineOption', () => {
     expect(candleSeries.markArea).toBeTruthy();
     const markLine = candleSeries.markLine as { data: Array<{ name: string; lineStyle: { type: string; color: string } }> };
     expect(markLine.data.some((item) => item.name.startsWith('计划下沿'))).toBe(false);
-    expect(markLine.data.find((item) => item.name.startsWith('计划止盈'))?.lineStyle).toMatchObject({ type: 'dashed', color: '#ff3b30' });
-    expect(markLine.data.find((item) => item.name.startsWith('计划止损'))?.lineStyle).toMatchObject({ type: 'dashed', color: '#22b573' });
+    expect(markLine.data.find((item) => item.name.startsWith('计划上沿'))?.lineStyle).toMatchObject({ type: [16, 10], width: 1.9, color: '#41e0c9' });
+    expect(markLine.data.find((item) => item.name.startsWith('计划止盈'))?.lineStyle).toMatchObject({ type: [16, 10], width: 1.9, color: '#ff3b30' });
+    expect(markLine.data.find((item) => item.name.startsWith('计划止损'))?.lineStyle).toMatchObject({ type: [16, 10], width: 1.9, color: '#22b573' });
   });
 
   it('marks stale plan lines as old plan labels', () => {

@@ -26,6 +26,9 @@ add_legacy_paths()
 OUTPUT_BASE = str(DATA_DIR / "output")
 os.makedirs(OUTPUT_BASE, exist_ok=True)
 
+PLAN_GENERATION_PHASES = {"pre_market", "auction", "pre_open", "morning", "lunch", "afternoon"}
+PLAN_RETRY_INTERVAL_SEC = int(os.getenv("PLAN_RETRY_INTERVAL_SEC", "300"))
+
 
 @contextmanager
 def _prevent_windows_sleep(enabled: bool = True):
@@ -155,14 +158,14 @@ class PaperEngine:
 
     def _has_actionable_plan_for_today(self) -> bool:
         """Return whether paper/live can trade without generating a new plan."""
-        if self.state.holdings:
-            return True
-
         plan = self.plan.load()
         if plan.get("updated_by") == "init":
             return False
 
         today = self.clock.now().strftime("%Y-%m-%d")
+        if plan.get("plan_date") != today:
+            return False
+
         valid_candidates = [
             c for c in plan.get("buy_candidates", [])
             if c.get("valid_until", today) >= today
@@ -172,6 +175,52 @@ class PaperEngine:
             or plan.get("holding_adjustments")
             or plan.get("bias_reasoning")
         )
+
+    def _can_generate_plan_now(self, phase: str) -> bool:
+        """Return whether a missing daily plan can be generated in the current phase."""
+        now = self.clock.now()
+        return is_trading_day(now.date()) and phase in PLAN_GENERATION_PHASES
+
+    @staticmethod
+    def _morning_result_has_llm_plan(morning_result: dict | None) -> bool:
+        """Return whether the generated plan came from at least one successful LLM stage."""
+        if not morning_result:
+            return False
+        merged = morning_result.get("stages", {}).get("merged", {})
+        if isinstance(merged, dict) and "llm_used" in merged:
+            return bool(merged["llm_used"])
+        return True
+
+    def _generate_plan_for_today(self, phase: str) -> dict | None:
+        """Generate and mark today's plan, including catch-up after a late resume."""
+        if phase == "pre_market":
+            print("[Engine] Pre-market. Generating today's plan...")
+        else:
+            print(f"[Engine] Missing today's plan during {phase}. Generating catch-up plan...")
+        morning_result = self.run_morning_analysis()
+        if self._morning_result_has_llm_plan(morning_result):
+            self.plan.mark_premarket_plan_generated(self.clock.now())
+            self._set_observation_mode(False)
+            print("[Engine] Plan ready. Python execution will follow plan.json.")
+        else:
+            reason = "LLM 连接失败，今日盘前计划未生成；稍后自动重试"
+            self._set_observation_mode(True, reason)
+            print(f"[Engine] Plan generation failed: {reason}", flush=True)
+        return morning_result
+
+    def _notify_plan_ready(self, morning_result: dict | None) -> None:
+        """Push pre-market completion summary when notifications are enabled."""
+        if not (_notify and morning_result):
+            return
+        risk = morning_result.get("stages", {}).get("risk", {})
+        merged = morning_result.get("stages", {}).get("merged", {})
+        notify_overnight_complete(self.run_id, {
+            "bias": merged.get("bias", "neutral"),
+            "candidates": merged.get("candidates", 0),
+            "passed": risk.get("passed", 0),
+            "rejected": risk.get("rejected", 0),
+            "nav": self.state.total_value,
+        })
 
     def _set_observation_mode(self, enabled: bool, reason: str = "") -> None:
         """Persist whether the engine is observing instead of actively trading."""
@@ -203,6 +252,8 @@ class PaperEngine:
         phase = self.clock.session_phase()
         if phase == "closed":
             return "交易日前等待盘前时段"
+        if phase in {"auction", "morning", "afternoon"}:
+            return "盘中启动且缺少今日盘前计划；仅观察，等待下一次盘前计划窗口"
         if phase in {"post_market", "lunch", "pre_open"}:
             return f"{phase}; waiting for next actionable session"
         return "等待下一个可执行时段"
@@ -260,7 +311,7 @@ class PaperEngine:
             node_id="plan_writer",
             node_name="盘前计划",
             summary="Claude Code 盘前计划生成中",
-            input_refs=["state.json", "watchlist", "market.snapshot"],
+            input_refs=["account.state", "source.watchlist", "artifact.market.snapshot"],
         )
         result = self.pipeline.run_full()
         self._record_workflow(
@@ -269,7 +320,7 @@ class PaperEngine:
             node_id="plan_writer",
             node_name="盘前计划",
             summary="盘前计划生成完成",
-            output_refs=["plan.json"],
+            output_refs=["artifact.plan.json"],
             output_payload=result,
         )
         print(f"[Morning] Complete: {result}")
@@ -341,7 +392,7 @@ class PaperEngine:
             node_id="daily_report",
             node_name="盘后日报",
             summary=f"盘后报告完成，成交 {report['trade_count']} 笔",
-            output_refs=["daily_reports"],
+            output_refs=["review.daily_report"],
             output_payload=report,
         )
         return report
@@ -370,10 +421,7 @@ class PaperEngine:
 
         start_phase = self.clock.session_phase()
         if start_phase != "pre_market" and not self._has_actionable_plan_for_today():
-            reason = (
-                f"started during {start_phase} without a pre-market plan; "
-                "observing until next pre-market planning window"
-            )
+            reason = self._observation_reason_for_current_time()
             self._set_observation_mode(True, reason)
             print(f"[Engine] Observation mode: {reason}", flush=True)
         else:
@@ -383,6 +431,7 @@ class PaperEngine:
             notify_engine_start(self.mode, self.state.initial_capital)
 
         _last_pipeline_date = None  # date() of last pre-market plan generation
+        _last_plan_attempt_ts = 0.0
         _post_market_date = None    # date() of last post-market summary
         _last_phase = start_phase
         tick_count = 0
@@ -416,24 +465,22 @@ class PaperEngine:
                 time.sleep(1)
                 continue
 
-            # Pre-market (8:00-9:15): generate today's plan once, before auction.
-            if phase == "pre_market" and _last_pipeline_date != today:
-                print("[Engine] Pre-market. Generating today's plan...")
-                morning_result = self.run_morning_analysis()
-                _last_pipeline_date = today
-                self._set_observation_mode(False)
-                print("[Engine] Plan ready. Python execution will follow plan.json.")
-
-                if _notify and morning_result:
-                    risk = morning_result.get("stages", {}).get("risk", {})
-                    merged = morning_result.get("stages", {}).get("merged", {})
-                    notify_overnight_complete(self.run_id, {
-                        "bias": merged.get("bias", "neutral"),
-                        "candidates": merged.get("candidates", 0),
-                        "passed": risk.get("passed", 0),
-                        "rejected": risk.get("rejected", 0),
-                        "nav": self.state.total_value,
-                    })
+            # Generate today's plan once. Normal path is pre-market; late resumes
+            # catch up before allowing the fast lane to trade on stale inputs.
+            if (
+                self._can_generate_plan_now(phase)
+                and _last_pipeline_date != today
+                and not self._has_actionable_plan_for_today()
+                and (
+                    _last_plan_attempt_ts == 0.0
+                    or time.monotonic() - _last_plan_attempt_ts >= PLAN_RETRY_INTERVAL_SEC
+                )
+            ):
+                _last_plan_attempt_ts = time.monotonic()
+                morning_result = self._generate_plan_for_today(phase)
+                if self._morning_result_has_llm_plan(morning_result):
+                    _last_pipeline_date = today
+                    self._notify_plan_ready(morning_result)
 
             # Post-market: Python-only daily summary and T+1 lock release. No plan generation here.
             if phase == "post_market" and _post_market_date != today:
@@ -454,38 +501,19 @@ class PaperEngine:
             if self.clock.is_trading():
                 self._reset_fast_lane_for_day_once(today)
                 if not self._has_actionable_plan_for_today():
-                    if self.mode == "paper" and _last_pipeline_date != today:
-                        print(
-                            "[Engine] Missed pre-market plan. Generating a late paper plan...",
-                            flush=True,
-                        )
-                        morning_result = self.run_morning_analysis()
-                        _last_pipeline_date = today
-                        if self._has_actionable_plan_for_today():
-                            self._set_observation_mode(False)
-                            if _notify and morning_result:
-                                risk = morning_result.get("stages", {}).get("risk", {})
-                                merged = morning_result.get("stages", {}).get("merged", {})
-                                notify_overnight_complete(self.run_id, {
-                                    "bias": merged.get("bias", "neutral"),
-                                    "candidates": merged.get("candidates", 0),
-                                    "passed": risk.get("passed", 0),
-                                    "rejected": risk.get("rejected", 0),
-                                    "nav": self.state.total_value,
-                                })
-                        else:
-                            self._set_observation_mode(
-                                True,
-                                "trading hours without an actionable plan after late generation",
-                            )
-                            self._heartbeat()
-                            time.sleep(1)
-                            continue
-                    else:
-                        self._set_observation_mode(True, "trading hours without a pre-market plan")
-                        self._heartbeat()
-                        time.sleep(1)
-                        continue
+                    meta = self.state.load().get("engine_meta", {})
+                    reason = (
+                        meta.get("observation_reason")
+                        if meta.get("observation_mode")
+                        else ""
+                    )
+                    self._set_observation_mode(
+                        True,
+                        reason or self._observation_reason_for_current_time(),
+                    )
+                    self._heartbeat()
+                    time.sleep(1)
+                    continue
 
                 # Execute holding adjustments at auction/morning open
                 if phase in ("auction", "morning"):

@@ -8,11 +8,39 @@ Sub-agents and Feishu chat still use claude.py → claude -p (full Claude Code c
 Note: anthropic is imported lazily to avoid stdlib signal shadowing by tools/signal.py.
 """
 
+import os
+import time
 from collections.abc import Callable
 
 from alphaclaude.config import ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL
 
 _client = None
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+LLM_RETRY_ATTEMPTS = max(1, _env_int("LLM_RETRY_ATTEMPTS", 3))
+LLM_RETRY_BASE_DELAY_SEC = max(0.0, _env_float("LLM_RETRY_BASE_DELAY_SEC", 2.0))
+LLM_RETRY_MAX_DELAY_SEC = max(0.0, _env_float("LLM_RETRY_MAX_DELAY_SEC", 20.0))
+RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+RETRYABLE_EXCEPTION_NAMES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "RateLimitError",
+    "InternalServerError",
+}
 
 
 def _get_client():
@@ -35,10 +63,49 @@ def _get_client():
         _client = _anthropic.Anthropic(
             base_url=ANTHROPIC_BASE_URL,
             api_key=ANTHROPIC_AUTH_TOKEN,
-            max_retries=1,
+            max_retries=0,
             timeout=120,
         )
     return _client
+
+
+def _is_retryable_exception(exc: Exception) -> bool:
+    if type(exc).__name__ in RETRYABLE_EXCEPTION_NAMES:
+        return True
+    status_code = getattr(exc, "status_code", None)
+    if status_code in RETRYABLE_STATUS_CODES:
+        return True
+    message = str(exc).lower()
+    return (
+        "connection error" in message
+        or "connection reset" in message
+        or "timeout" in message
+        or "timed out" in message
+    )
+
+
+def _retry_delay(attempt_index: int) -> float:
+    delay = LLM_RETRY_BASE_DELAY_SEC * (2 ** attempt_index)
+    return min(delay, LLM_RETRY_MAX_DELAY_SEC)
+
+
+def _create_message_with_retry(**kwargs):
+    client = _get_client()
+    for attempt in range(LLM_RETRY_ATTEMPTS):
+        try:
+            return client.messages.create(**kwargs)
+        except Exception as exc:
+            last_attempt = attempt >= LLM_RETRY_ATTEMPTS - 1
+            if last_attempt or not _is_retryable_exception(exc):
+                raise
+            delay = _retry_delay(attempt)
+            print(
+                f"[LLM] retryable {type(exc).__name__}: {exc}; "
+                f"retry {attempt + 2}/{LLM_RETRY_ATTEMPTS} in {delay:.1f}s"
+            )
+            if delay:
+                time.sleep(delay)
+    raise RuntimeError("LLM retry loop exited unexpectedly")
 
 
 # ── Tool schemas ──────────────────────────────────────────────
@@ -95,6 +162,7 @@ TOOL_ADD_CANDIDATE = {
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "股票代码"},
+            "name": {"type": "string", "description": "股票中文名称，如无法确认可省略"},
             "source": {
                 "type": "string",
                 "enum": ["B", "C"],
@@ -197,10 +265,9 @@ def call_with_tool(
     For single-tool scenarios (direction, emergency), returns a single-element list.
     For multi-tool (candidates, adjustments), returns multiple elements.
     """
-    client = _get_client()
     for attempt in range(tries):
         try:
-            response = client.messages.create(
+            response = _create_message_with_retry(
                 model=model or ANTHROPIC_MODEL,
                 max_tokens=max_tokens,
                 tools=tools,
@@ -235,8 +302,7 @@ def call_text(
 ) -> str:
     """Call LLM without tools, return raw text. For sub-agent summaries when
     Claude Code is not suitable (e.g., short context-free completions)."""
-    client = _get_client()
-    response = client.messages.create(
+    response = _create_message_with_retry(
         model=model or ANTHROPIC_MODEL,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],

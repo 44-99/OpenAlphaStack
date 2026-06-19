@@ -28,11 +28,7 @@ def default_workflow_config() -> dict[str, Any]:
         "version": 1,
         "nodes": {
             "market_snapshot": {"enabled": True, "locked": False, "params": {}},
-            "sub_agent_a": {"enabled": True, "locked": False, "params": {}},
-            "sub_agent_b": {"enabled": True, "locked": False, "params": {}},
-            "sub_agent_c": {"enabled": True, "locked": False, "params": {}},
-            "merge_decision": {"enabled": True, "locked": False, "params": {}},
-            "bull_bear_debate": {"enabled": True, "locked": False, "params": {"max_rounds": 1}},
+            "agent_research": {"enabled": True, "locked": False, "params": {"timeout_sec": 900}},
             "risk_validation": {
                 "enabled": True,
                 "locked": True,
@@ -41,39 +37,88 @@ def default_workflow_config() -> dict[str, Any]:
             "plan_writer": {"enabled": True, "locked": True, "params": {}},
             "state_watcher": {"enabled": True, "locked": False, "params": {}},
             "fastlane_tick": {"enabled": True, "locked": False, "params": {"tick_interval_sec": 1}},
-            "signal_scan": {"enabled": True, "locked": False, "params": {}},
-            "execution_check": {"enabled": True, "locked": True, "params": {}},
-            "order_simulator": {"enabled": True, "locked": True, "params": {}},
-            "ledger_writer": {"enabled": True, "locked": True, "params": {}},
-            "alert_router": {"enabled": True, "locked": False, "params": {}},
+            "intraday_event_stream": {"enabled": True, "locked": True, "params": {}},
             "daily_report": {"enabled": True, "locked": False, "params": {}},
-            "ledger_pairing": {"enabled": True, "locked": False, "params": {}},
-            "agent_reflection": {"enabled": True, "locked": False, "params": {}},
+            "trade_attribution": {"enabled": True, "locked": False, "params": {}},
+            "strategy_feedback": {"enabled": True, "locked": False, "params": {}},
         },
     }
 
 
-def default_workflow_edges() -> list[dict[str, str]]:
+def default_workflow_edges() -> list[dict[str, Any]]:
     return [
-        {"from": "market_snapshot", "to": "sub_agent_a"},
-        {"from": "market_snapshot", "to": "sub_agent_b"},
-        {"from": "market_snapshot", "to": "sub_agent_c"},
-        {"from": "sub_agent_a", "to": "merge_decision"},
-        {"from": "sub_agent_b", "to": "merge_decision"},
-        {"from": "sub_agent_c", "to": "merge_decision"},
-        {"from": "merge_decision", "to": "bull_bear_debate"},
-        {"from": "bull_bear_debate", "to": "risk_validation"},
-        {"from": "risk_validation", "to": "plan_writer"},
-        {"from": "plan_writer", "to": "state_watcher"},
-        {"from": "state_watcher", "to": "fastlane_tick"},
-        {"from": "fastlane_tick", "to": "signal_scan"},
-        {"from": "signal_scan", "to": "execution_check"},
-        {"from": "execution_check", "to": "order_simulator"},
-        {"from": "order_simulator", "to": "ledger_writer"},
-        {"from": "ledger_writer", "to": "alert_router"},
-        {"from": "alert_router", "to": "daily_report"},
-        {"from": "daily_report", "to": "ledger_pairing"},
-        {"from": "ledger_pairing", "to": "agent_reflection"},
+        {
+            "from": "market_snapshot",
+            "to": "agent_research",
+            "kind": "data",
+            "label": "Agent 任务上下文",
+            "refs": ["artifact.market.snapshot", "account.state", "rule.skills"],
+            "required": True,
+        },
+        {
+            "from": "agent_research",
+            "to": "risk_validation",
+            "kind": "data",
+            "label": "Agent 计划草案",
+            "refs": ["artifact.agent.plan_draft", "artifact.agent.research"],
+            "required": True,
+        },
+        {
+            "from": "risk_validation",
+            "to": "plan_writer",
+            "kind": "data",
+            "label": "风控结果",
+            "refs": ["plan.buy_candidates", "plan.risk_report"],
+            "required": True,
+        },
+        {
+            "from": "plan_writer",
+            "to": "state_watcher",
+            "kind": "data",
+            "label": "交易计划",
+            "refs": ["artifact.plan.json"],
+            "required": True,
+        },
+        {
+            "from": "state_watcher",
+            "to": "fastlane_tick",
+            "kind": "data",
+            "label": "账户状态",
+            "refs": ["account.state", "artifact.plan.json"],
+            "required": True,
+        },
+        {
+            "from": "fastlane_tick",
+            "to": "intraday_event_stream",
+            "kind": "data",
+            "label": "关键 tick",
+            "refs": ["artifact.fastlane.tick", "account.state", "artifact.plan.json"],
+            "required": True,
+        },
+        {
+            "from": "intraday_event_stream",
+            "to": "daily_report",
+            "kind": "data",
+            "label": "盘中账本",
+            "refs": ["account.state", "account.ledger"],
+            "required": True,
+        },
+        {
+            "from": "daily_report",
+            "to": "trade_attribution",
+            "kind": "data",
+            "label": "日报与成交",
+            "refs": ["review.daily_report", "account.ledger"],
+            "required": True,
+        },
+        {
+            "from": "trade_attribution",
+            "to": "strategy_feedback",
+            "kind": "data",
+            "label": "交易归因",
+            "refs": ["review/trade_attribution.json"],
+            "required": True,
+        },
     ]
 
 
@@ -170,6 +215,35 @@ class WorkflowEventStore:
             artifact_dir=artifact_dir,
         )
 
+    def record_node_warning(
+        self,
+        *,
+        phase: str,
+        node_id: str,
+        node_name: str,
+        summary: str,
+        input_refs: list[str] | None = None,
+        output_refs: list[str] | None = None,
+        input_payload: Any = None,
+        output_payload: Any = None,
+    ) -> dict[str, Any]:
+        event_id = _new_event_id()
+        artifact_dir = self._write_artifacts(event_id, input_payload=input_payload, output_payload=output_payload)
+        return self._append_event(
+            event_id=event_id,
+            phase=phase,
+            node_id=node_id,
+            node_name=node_name,
+            status="warning",
+            started_at=_now_iso(),
+            ended_at=_now_iso(),
+            duration_ms=0,
+            input_refs=input_refs or [],
+            output_refs=output_refs or [],
+            summary=summary,
+            artifact_dir=artifact_dir,
+        )
+
     def record_node_skip(self, *, phase: str, node_id: str, node_name: str, summary: str) -> dict[str, Any]:
         return self._append_event(
             phase=phase,
@@ -207,7 +281,10 @@ class WorkflowEventStore:
             if not line.strip():
                 continue
             try:
-                rows.append(json.loads(line))
+                event = json.loads(line)
+                if _is_noisy_legacy_tick(event):
+                    continue
+                rows.append(event)
             except json.JSONDecodeError as exc:
                 rows.append({
                     "event_id": f"corrupt_{line_no}",
@@ -231,9 +308,14 @@ class WorkflowEventStore:
         if not self.config_path.exists():
             return self.write_config(default_workflow_config())
         try:
-            return json.loads(self.config_path.read_text(encoding="utf-8"))
+            stored = json.loads(self.config_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return default_workflow_config()
+        current_node_ids = set(default_workflow_config()["nodes"])
+        stored_node_ids = set((stored.get("nodes") or {}).keys()) if isinstance(stored, dict) else set()
+        if not current_node_ids.issubset(stored_node_ids) or not stored_node_ids.issubset(current_node_ids):
+            return self.write_config(stored)
+        return stored
 
     def write_config(self, config: dict[str, Any]) -> dict[str, Any]:
         merged = default_workflow_config()
@@ -339,22 +421,22 @@ class WorkflowEventStore:
 def _node_display_name(node_id: str) -> str:
     names = {
         "market_snapshot": "市场快照",
-        "sub_agent_a": "子代理A",
-        "sub_agent_b": "子代理B",
-        "sub_agent_c": "子代理C",
-        "merge_decision": "合并决策",
-        "bull_bear_debate": "多空辩论",
+        "agent_research": "自主 Agent 研判",
         "risk_validation": "风控校验",
         "plan_writer": "计划写入",
         "state_watcher": "状态观察",
         "fastlane_tick": "盘中快车道",
-        "signal_scan": "信号扫描",
-        "execution_check": "执行检查",
-        "order_simulator": "订单模拟",
-        "ledger_writer": "账本写入",
-        "alert_router": "告警路由",
+        "intraday_event_stream": "关键事件流",
         "daily_report": "盘后日报",
-        "ledger_pairing": "成交配对",
-        "agent_reflection": "Agent反思",
+        "trade_attribution": "交易归因",
+        "strategy_feedback": "策略反馈入库",
     }
     return names.get(node_id, node_id)
+
+
+def _is_noisy_legacy_tick(event: dict[str, Any]) -> bool:
+    """Hide old 1s polling ticks that carried no decision signal."""
+    return (
+        event.get("node_id") == "fastlane_tick"
+        and "事件 0 条" in str(event.get("summary") or "")
+    )

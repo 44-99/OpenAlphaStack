@@ -1,11 +1,12 @@
-export type PageKey = 'watch' | 'holdings' | 'plan' | 'ledger' | 'logs';
-export type WorkbenchMode = 'watch' | 'workflow' | 'review';
+export type PageKey = 'watch' | 'workflow' | 'account';
+export type RunMode = 'paper' | 'live' | 'demo';
 export type KlinePeriod = '1m' | '5m' | '15m' | '60m' | 'day' | 'week' | 'month';
 export type OverlayKind = 'NONE' | 'MA' | 'EMA' | 'BOLL';
 export type AgentProvider = 'claude' | 'codex';
 export type KlineLayerKey = 'trades' | 'plan' | 'signals' | 'structures';
 
 export interface DashboardState {
+  run_id?: string;
   total_asset: number;
   cash: number;
   position_value: number;
@@ -26,6 +27,7 @@ export interface Position {
 
 export interface PlanCandidate {
   code: string;
+  name?: string;
   strategy_type?: string;
   entry_min?: number;
   entry_max?: number;
@@ -54,11 +56,13 @@ export interface PlanData {
 
 export interface WatchlistItem {
   code: string;
+  name?: string;
   source?: string;
   change_pct?: number;
 }
 
 export interface LedgerEntry {
+  run_id?: string;
   seq?: number;
   time?: string;
   decision?: string;
@@ -88,11 +92,35 @@ export interface CacheStatus {
 }
 
 export interface EngineStatus {
+  run_id?: string;
   status?: string;
+  is_alive?: boolean;
+  process_id?: number | null;
   observation_mode?: boolean;
   observation_reason?: string;
   has_plan?: boolean;
   data_time?: string;
+}
+
+export interface RunRecord {
+  run_id: string;
+  mode: RunMode | string;
+  status: string;
+  is_alive: boolean;
+  process_id?: number | null;
+  data_time?: string;
+  total_asset?: number;
+  cash?: number;
+  position_value?: number;
+  trade_count?: number;
+  holdings_count?: number;
+  has_plan?: boolean;
+  live_locked?: boolean;
+}
+
+export interface RunsResponse {
+  runs: RunRecord[];
+  selected_run_id?: string;
 }
 
 export interface KlineData {
@@ -185,6 +213,41 @@ export interface WorkflowEvent {
   artifact_dir?: string;
 }
 
+export interface AgentTimelineEvent {
+  event_id: string;
+  task_id: string;
+  parent_task_id?: string;
+  role?: string;
+  status: string;
+  started_at?: string;
+  ended_at?: string;
+  summary?: string;
+  input_ref?: string;
+  output_ref?: string;
+  result_ref?: string;
+  error?: string;
+}
+
+export interface AgentTimelineTask {
+  task_id: string;
+  parent_task_id?: string;
+  role?: string;
+  status: string;
+  summary?: string;
+  input_ref?: string;
+  output_ref?: string;
+  result_ref?: string;
+  events?: AgentTimelineEvent[];
+}
+
+export interface AgentRunTimeline {
+  run_id: string;
+  task_id: string;
+  events: AgentTimelineEvent[];
+  tasks: Record<string, AgentTimelineTask>;
+  warnings: string[];
+}
+
 export interface WorkflowGraphNode {
   id: string;
   name: string;
@@ -205,14 +268,27 @@ export interface WorkflowGraphNode {
 export interface WorkflowGraphEdge {
   from: string;
   to: string;
+  kind?: 'data' | 'sequence';
   label?: string;
   refs?: string[];
+  required?: boolean;
 }
 
 export interface WorkflowGraph {
   run_id: string;
   nodes: WorkflowGraphNode[];
   edges: WorkflowGraphEdge[];
+  run_status?: string;
+  is_alive?: boolean;
+  process_id?: number | null;
+  data_time?: string;
+  observation_mode?: boolean;
+  observation_reason?: string;
+  calendar_date?: string;
+  display_date?: string;
+  is_trading_day?: boolean;
+  market_status?: 'trading' | 'closed' | 'stale';
+  market_message?: string;
 }
 
 export interface WorkflowConfigNode {

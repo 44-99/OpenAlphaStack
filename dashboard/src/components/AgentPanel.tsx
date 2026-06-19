@@ -18,7 +18,7 @@ const providers: Array<{ key: AgentProvider; label: string; command: string }> =
 
 export function AgentPanel({ collapsed, onToggle, injection }: AgentPanelProps) {
   const [provider, setProvider] = useState<AgentProvider>('claude');
-  const [started, setStarted] = useState<Set<AgentProvider>>(() => new Set(['claude']));
+  const [started, setStarted] = useState<Set<AgentProvider>>(() => new Set());
 
   function selectProvider(next: AgentProvider) {
     setProvider(next);
@@ -50,9 +50,9 @@ export function AgentPanel({ collapsed, onToggle, injection }: AgentPanelProps) 
         {providers.map((item) => (
           <button
             key={item.key}
-            className={provider === item.key ? 'active' : ''}
+            className={provider === item.key && started.has(item.key) ? 'active' : ''}
             onClick={() => selectProvider(item.key)}
-            title={`启动 ${item.command}`}
+            title={started.has(item.key) ? `切换到 ${item.command}` : `启动 ${item.command}`}
           >
             {item.key === 'codex' ? <Code2 size={15} /> : <Bot size={15} />}
             {item.label}
@@ -61,6 +61,12 @@ export function AgentPanel({ collapsed, onToggle, injection }: AgentPanelProps) 
       </div>
 
       <div className="agent-terminal-stack">
+        {started.size === 0 ? (
+          <div className="agent-terminal-empty">
+            <strong>Agent 终端未启动</strong>
+            <span>选择 Claude Code 或 Codex CLI 后才会创建终端连接。</span>
+          </div>
+        ) : null}
         {providers.map((item) => started.has(item.key) ? (
           <AgentTerminalPane
             key={item.key}

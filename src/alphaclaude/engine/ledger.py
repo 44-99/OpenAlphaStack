@@ -30,7 +30,7 @@ class Ledger:
         with self._lock:
             self._seq += 1
             entry["seq"] = self._seq
-            entry["time"] = entry.get("time") or datetime.now().strftime("%H:%M:%S")
+            entry["time"] = entry.get("time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return self._seq

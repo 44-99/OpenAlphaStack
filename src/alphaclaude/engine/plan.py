@@ -41,6 +41,8 @@ class PlanManager:
     @staticmethod
     def _default_v2_fields() -> dict:
         return {
+            "plan_date": "",
+            "plan_generated_at": "",
             "position_cap_pct": 80.0,
             "preferred_sectors": [],
             "avoid_sectors": [],
@@ -128,6 +130,13 @@ class PlanManager:
             for c in self._data.get("buy_candidates", [])
             if c.get("valid_until", today) >= today
         ]
+
+    def mark_premarket_plan_generated(self, generated_at: datetime | None = None) -> None:
+        """Record the trading date that this plan was explicitly generated for."""
+        dt = generated_at or self._now
+        self._data["plan_date"] = dt.strftime("%Y-%m-%d")
+        self._data["plan_generated_at"] = dt.isoformat()
+        self.save("premarket_plan")
 
     def get_holding_adjustments(self) -> list[dict]:
         return self._data.get("holding_adjustments", [])

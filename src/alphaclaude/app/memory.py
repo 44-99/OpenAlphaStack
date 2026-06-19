@@ -239,4 +239,4 @@ def _read_group_transcript(conv_id: str, limit: int = 30) -> str:
                     continue
     except OSError:
         return ""
-    return "\n".join(f"  {l}" for l in lines[-limit:])
+    return "\n".join(f"  {line}" for line in lines[-limit:])

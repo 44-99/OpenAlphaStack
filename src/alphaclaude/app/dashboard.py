@@ -7,12 +7,18 @@ import os
 import shutil
 import subprocess
 import threading
-from datetime import datetime, timedelta
+import argparse
+from datetime import datetime, time, timedelta
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, ValidationError
 
 from alphaclaude.engine import run_registry
+from alphaclaude.engine import cli as engine_cli
+from alphaclaude.engine.agent_event import validate_agent_events
+from alphaclaude.engine.trading_calendar import is_trading_day, non_trading_reason
 from alphaclaude.engine.workflow_events import WorkflowEventStore, default_workflow_config, default_workflow_edges
 from alphaclaude.paths import DATA_DIR, PROJECT_ROOT
 
@@ -34,18 +40,75 @@ DEMO_RUN_ID = "demo_run"
 RERUN_REQUESTS_FILE = "workflow_rerun_requests.jsonl"
 SAFE_RERUN_NODES = {
     "market_snapshot",
-    "sub_agent_a",
-    "sub_agent_b",
-    "sub_agent_c",
-    "merge_decision",
-    "bull_bear_debate",
+    "agent_research",
     "risk_validation",
     "plan_writer",
     "daily_report",
-    "ledger_pairing",
-    "agent_reflection",
+    "trade_attribution",
+    "strategy_feedback",
 }
-BLOCKED_RERUN_NODES = {"state_watcher", "fastlane_tick", "signal_scan", "execution_check", "order_simulator", "ledger_writer", "alert_router"}
+BLOCKED_RERUN_NODES = {"state_watcher", "fastlane_tick", "intraday_event_stream"}
+
+
+class WorkflowGraphNodeModel(BaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    locked: bool = False
+    status: str = "idle"
+    summary: str = ""
+    last_event_id: str = ""
+    phase: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    duration_ms: int | float = 0
+    input_refs: list[str] = Field(default_factory=list)
+    output_refs: list[str] = Field(default_factory=list)
+    artifact_dir: str = ""
+
+
+class WorkflowGraphEdgeModel(BaseModel):
+    from_: str = Field(alias="from")
+    to: str
+    kind: Literal["data", "sequence"] = "sequence"
+    label: str = ""
+    refs: list[str] = Field(default_factory=list)
+    required: bool = True
+
+
+class WorkflowGraphModel(BaseModel):
+    run_id: str
+    nodes: list[WorkflowGraphNodeModel]
+    edges: list[WorkflowGraphEdgeModel]
+    run_status: str = ""
+    is_alive: bool = False
+    process_id: int | None = None
+    data_time: str = ""
+    observation_mode: bool = False
+    observation_reason: str = ""
+    calendar_date: str = ""
+    display_date: str = ""
+    is_trading_day: bool = True
+    market_status: Literal["trading", "closed", "stale"] = "trading"
+    market_message: str = ""
+
+
+class WorkflowConfigNodeModel(BaseModel):
+    enabled: bool = True
+    locked: bool = False
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowConfigModel(BaseModel):
+    version: int = 1
+    nodes: dict[str, WorkflowConfigNodeModel] = Field(default_factory=dict)
+    updated_at: str = ""
+
+
+def _workflow_config_payload(payload: Any) -> dict[str, Any]:
+    """Validate workflow config while preserving dict shape for the store."""
+    return WorkflowConfigModel.model_validate(payload).model_dump()
+
 
 # SSE event queues: one per connected client
 _sse_queues: list[asyncio.Queue] = []
@@ -84,6 +147,8 @@ def _get_active_output_dir() -> str | None:
 
 def _get_run_output_dir(run_id: str | None = None) -> str | None:
     """Return a safe output directory for a run id, or the active paper run."""
+    if run_id == DEMO_RUN_ID:
+        return None
     if not run_id or run_id == "active":
         return _get_active_output_dir()
 
@@ -99,6 +164,223 @@ def _workflow_store_for_run(run_id: str | None = None) -> WorkflowEventStore | N
     if not output_dir:
         return None
     return WorkflowEventStore(output_dir, run_id=os.path.basename(output_dir))
+
+
+def _workflow_runtime_meta(run_id: str) -> dict:
+    try:
+        record = run_registry.get_run(run_id)
+        state = _read_json(os.path.join(record.run_dir, "state.json")) or {}
+        engine_meta = state.get("engine_meta", {})
+        data_time = state.get("data_time", "")
+        return {
+            "run_status": record.status,
+            "is_alive": record.is_alive,
+            "process_id": record.process_id,
+            "data_time": data_time,
+            "observation_mode": record.observation_mode,
+            "observation_reason": engine_meta.get("observation_reason", ""),
+            **_workflow_calendar_meta(run_id, data_time),
+        }
+    except Exception:
+        return {
+            "run_status": "unknown",
+            "is_alive": False,
+            "process_id": None,
+            "data_time": "",
+            "observation_mode": False,
+            "observation_reason": "",
+            **_workflow_calendar_meta(run_id, ""),
+        }
+
+
+def _date_part(value: str | None) -> str:
+    if not value:
+        return ""
+    import re
+
+    match = re.search(r"\d{4}-\d{2}-\d{2}", str(value))
+    return match.group(0) if match else ""
+
+
+def _workflow_event_display_date(graph: dict[str, Any]) -> str:
+    dates = [
+        _date_part(str(node.get("ended_at") or node.get("started_at") or ""))
+        for node in graph.get("nodes", [])
+        if isinstance(node, dict)
+    ]
+    dates = [item for item in dates if item]
+    return max(dates) if dates else ""
+
+
+def _workflow_calendar_meta(run_id: str, data_time: str | None, event_date: str = "") -> dict[str, Any]:
+    today = datetime.now().date()
+    calendar_date = today.isoformat()
+    is_open_day = is_trading_day(today)
+    data_date = _date_part(data_time)
+    run_date = _date_part(run_id.replace("T", " "))
+    display_date = data_date or event_date or run_date
+
+    if not is_open_day:
+        display_date = event_date or run_date or data_date
+        reason = non_trading_reason(today)
+        return {
+            "calendar_date": calendar_date,
+            "display_date": display_date,
+            "is_trading_day": False,
+            "market_status": "closed",
+            "market_message": f"今日休市（{reason}），当前展示最近一次模拟盘记录：{display_date or run_id}",
+        }
+
+    if display_date and display_date != calendar_date:
+        return {
+            "calendar_date": calendar_date,
+            "display_date": display_date,
+            "is_trading_day": True,
+            "market_status": "stale",
+            "market_message": f"今天是交易日，但当前查看的是 {display_date} 的模拟盘记录。",
+        }
+
+    return {
+        "calendar_date": calendar_date,
+        "display_date": display_date or calendar_date,
+        "is_trading_day": True,
+        "market_status": "trading",
+        "market_message": "今天是交易日，流程图展示当日模拟盘进度。",
+    }
+
+
+def _state_summary_from_file(run_id: str, state: dict | None) -> dict:
+    """Return normalized account metrics for a run state payload."""
+    if not state:
+        return {}
+    cash = state.get("cash", 0)
+    positions = state.get("holdings", {})
+    position_value = sum(
+        p.get("shares", 0) * p.get("current_price", 0)
+        for p in positions.values()
+    )
+    nav = state.get("initial_capital", 100000)
+    total = cash + position_value
+    return {
+        "run_id": run_id,
+        "total_asset": round(total, 2),
+        "cash": round(cash, 2),
+        "position_value": round(position_value, 2),
+        "day_pnl": round(total - nav, 2),
+        "day_return_pct": round((total - nav) / max(nav, 1) * 100, 2),
+        "trade_count": state.get("trade_count", 0),
+        "win_count": state.get("win_count", 0),
+        "positions": positions,
+        "engine_meta": state.get("engine_meta", {}),
+        "data_time": state.get("data_time", ""),
+    }
+
+
+def _load_watchlist_items() -> list[dict]:
+    state_dir = os.path.join(str(PROJECT_ROOT), "data", "state")
+    watchlist_path = os.path.join(state_dir, "watchlist.json")
+    if os.path.exists(watchlist_path):
+        with open(watchlist_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict) and isinstance(payload.get("stocks"), dict):
+            return [
+                {
+                    "code": code,
+                    "name": info.get("name", code) if isinstance(info, dict) else code,
+                    "source": "自选",
+                }
+                for code, info in payload["stocks"].items()
+            ]
+        if isinstance(payload, list):
+            return payload
+
+    pf_path = os.path.join(state_dir, "portfolio.json")
+    if os.path.exists(pf_path):
+        with open(pf_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, list) else []
+    return []
+
+
+def _stock_name_map_from_watchlist() -> dict[str, str]:
+    names: dict[str, str] = {}
+    for item in _load_watchlist_items():
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or item.get("symbol") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if code and name:
+            names[code] = name
+    return names
+
+
+def _stock_name(code: str, known_names: dict[str, str]) -> str:
+    if not code:
+        return ""
+    if code in known_names:
+        return known_names[code]
+    index_names = {
+        "000001": "上证指数",
+        "399001": "深证成指",
+        "399006": "创业板指",
+        "000688": "科创50",
+        "000300": "沪深300",
+        "000905": "中证500",
+    }
+    if code in index_names:
+        return index_names[code]
+    try:
+        from alphaclaude.tools.quote import get_stock_quote
+        quote = get_stock_quote(code)
+        name = str(quote.get("name") or "").strip()
+        if name and name != code:
+            known_names[code] = name
+            return name
+    except Exception:
+        return ""
+    return ""
+
+
+def _enrich_plan_stock_names(plan: dict) -> dict:
+    known_names = _stock_name_map_from_watchlist()
+    for candidate in plan.get("buy_candidates") or []:
+        if not isinstance(candidate, dict) or candidate.get("name"):
+            continue
+        code = str(candidate.get("code") or "").strip()
+        name = _stock_name(code, known_names)
+        if name:
+            candidate["name"] = name
+    return plan
+
+
+def _run_record_summary(record: run_registry.RunRecord) -> dict:
+    state = _read_json(record.state_path)
+    summary = _state_summary_from_file(record.run_id, state)
+    return {
+        **record.to_dict(),
+        "data_time": summary.get("data_time", ""),
+        "total_asset": summary.get("total_asset", 0),
+        "cash": summary.get("cash", 0),
+        "position_value": summary.get("position_value", 0),
+        "trade_count": summary.get("trade_count", 0),
+        "holdings_count": len(summary.get("positions", {}) or {}),
+        "has_plan": os.path.exists(os.path.join(record.run_dir, "plan.json")),
+    }
+
+
+def _dashboard_run_namespace(mode: str = "paper") -> argparse.Namespace:
+    return argparse.Namespace(
+        mode=mode,
+        capital=100000,
+        start=None,
+        end=None,
+        universe="",
+        watchlist="",
+        resume=None,
+        bar_period=60,
+        dry_run=False,
+        claude_every=1,
+    )
 
 
 def _read_jsonl(path: str, limit: int = 100) -> list[dict]:
@@ -191,6 +473,7 @@ def _demo_plan() -> dict:
             },
             {
                 "code": "000001",
+                "name": "上证指数",
                 "strategy_type": "指数观察",
                 "entry_min": 10.4,
                 "entry_max": 10.8,
@@ -268,8 +551,8 @@ def _demo_workflow_events(limit: int = 500) -> list[dict]:
             "started_at": "2026-06-04T08:40:00",
             "ended_at": "2026-06-04T08:40:08",
             "duration_ms": 8000,
-            "input_refs": ["quote.market"],
-            "output_refs": ["market.bias"],
+            "input_refs": ["source.quote.market"],
+            "output_refs": ["artifact.market.snapshot"],
             "summary": "指数弱修复，量能温和，适合小仓试错。",
             "error": "",
             "artifact_dir": "demo",
@@ -278,31 +561,63 @@ def _demo_workflow_events(limit: int = 500) -> list[dict]:
             "event_id": "demo_wf_002",
             "run_id": DEMO_RUN_ID,
             "phase": "premarket",
-            "node_id": "risk_validation",
-            "node_name": "风控校验",
+            "node_id": "agent_research",
+            "node_name": "自主 Agent 研判",
             "status": "success",
-            "started_at": "2026-06-04T08:46:00",
-            "ended_at": "2026-06-04T08:46:05",
-            "duration_ms": 5000,
-            "input_refs": ["plan.buy_candidates"],
-            "output_refs": ["plan.risk_report"],
-            "summary": "2 个候选通过，单票仓位未超过 25%。",
+            "started_at": "2026-06-04T08:40:09",
+            "ended_at": "2026-06-04T08:45:30",
+            "duration_ms": 321000,
+            "input_refs": ["artifact.market.snapshot", "account.state", "rule.skills"],
+            "output_refs": ["artifact.agent.research", "artifact.agent.plan_draft"],
+            "summary": "Agent 已读取本地准则和 skills，产出盘前计划草案。",
             "error": "",
             "artifact_dir": "demo",
         },
         {
             "event_id": "demo_wf_003",
             "run_id": DEMO_RUN_ID,
+            "phase": "premarket",
+            "node_id": "risk_validation",
+            "node_name": "风控校验",
+            "status": "success",
+            "started_at": "2026-06-04T08:46:00",
+            "ended_at": "2026-06-04T08:46:05",
+            "duration_ms": 5000,
+            "input_refs": ["artifact.agent.plan_draft"],
+            "output_refs": ["plan.risk_report"],
+            "summary": "2 个候选通过，单票仓位未超过 25%。",
+            "error": "",
+            "artifact_dir": "demo",
+        },
+        {
+            "event_id": "demo_wf_004",
+            "run_id": DEMO_RUN_ID,
             "phase": "intraday",
-            "node_id": "ledger_writer",
-            "node_name": "账本写入",
+            "node_id": "intraday_event_stream",
+            "node_name": "关键事件流",
             "status": "success",
             "started_at": "2026-06-04T10:12:00",
             "ended_at": "2026-06-04T10:12:01",
             "duration_ms": 1000,
-            "input_refs": ["execution.fill"],
-            "output_refs": ["ledger.jsonl"],
-            "summary": "写入 300913 buy 1000 股，成本线刷新。",
+            "input_refs": ["artifact.fastlane.tick"],
+            "output_refs": ["account.ledger", "account.state"],
+            "summary": "关键事件: 300913 buy 1000 股，成本线刷新。",
+            "error": "",
+            "artifact_dir": "demo",
+        },
+        {
+            "event_id": "demo_wf_005",
+            "run_id": DEMO_RUN_ID,
+            "phase": "postclose",
+            "node_id": "trade_attribution",
+            "node_name": "交易归因",
+            "status": "success",
+            "started_at": "2026-06-04T15:17:12",
+            "ended_at": "2026-06-04T15:17:12",
+            "duration_ms": 0,
+            "input_refs": ["review.daily_report", "account.ledger"],
+            "output_refs": ["review/trade_attribution.json"],
+            "summary": "归因显示今日收益主要来自计划内突破买入。",
             "error": "",
             "artifact_dir": "demo",
         },
@@ -327,6 +642,80 @@ def _demo_workflow_graph() -> dict:
             "phase": latest.get("phase", ""),
         })
     return {"run_id": DEMO_RUN_ID, "nodes": nodes, "edges": default_workflow_edges()}
+
+
+def _demo_agent_run_timeline(task_id: str) -> dict:
+    if task_id != "premarket_plan":
+        return {"run_id": DEMO_RUN_ID, "task_id": task_id, "events": [], "tasks": {}, "warnings": ["agent run not found"]}
+    events = [
+        {
+            "event_id": "demo_agent_evt_001",
+            "task_id": "market_intel",
+            "parent_task_id": "premarket_plan",
+            "role": "市场情报",
+            "status": "running",
+            "started_at": "2026-06-04T08:40:09",
+            "ended_at": "",
+            "summary": "读取市场快照并检查情绪周期。",
+            "input_ref": "tasks/market_intel/input.md",
+            "output_ref": "",
+            "result_ref": "",
+            "error": "",
+        },
+        {
+            "event_id": "demo_agent_evt_002",
+            "task_id": "market_intel",
+            "parent_task_id": "premarket_plan",
+            "role": "市场情报",
+            "status": "success",
+            "started_at": "",
+            "ended_at": "2026-06-04T08:42:20",
+            "summary": "市场情绪偏谨慎，量能温和修复。",
+            "input_ref": "",
+            "output_ref": "tasks/market_intel/output.md",
+            "result_ref": "tasks/market_intel/result.json",
+            "error": "",
+        },
+        {
+            "event_id": "demo_agent_evt_003",
+            "task_id": "candidate_discovery",
+            "parent_task_id": "premarket_plan",
+            "role": "候选发现",
+            "status": "success",
+            "started_at": "2026-06-04T08:42:21",
+            "ended_at": "2026-06-04T08:44:40",
+            "summary": "筛选出 2 个候选并写入证据包。",
+            "input_ref": "tasks/candidate_discovery/input.md",
+            "output_ref": "tasks/candidate_discovery/output.md",
+            "result_ref": "tasks/candidate_discovery/result.json",
+            "error": "",
+        },
+    ]
+    tasks = {
+        "market_intel": {
+            "task_id": "market_intel",
+            "parent_task_id": "premarket_plan",
+            "role": "市场情报",
+            "status": "success",
+            "summary": "市场情绪偏谨慎，量能温和修复。",
+            "input_ref": "tasks/market_intel/input.md",
+            "output_ref": "tasks/market_intel/output.md",
+            "result_ref": "tasks/market_intel/result.json",
+            "events": events[:2],
+        },
+        "candidate_discovery": {
+            "task_id": "candidate_discovery",
+            "parent_task_id": "premarket_plan",
+            "role": "候选发现",
+            "status": "success",
+            "summary": "筛选出 2 个候选并写入证据包。",
+            "input_ref": "tasks/candidate_discovery/input.md",
+            "output_ref": "tasks/candidate_discovery/output.md",
+            "result_ref": "tasks/candidate_discovery/result.json",
+            "events": events[2:],
+        },
+    }
+    return {"run_id": DEMO_RUN_ID, "task_id": task_id, "events": events, "tasks": tasks, "warnings": []}
 
 
 def _demo_kline_payload(code: str, period: str, limit: int) -> dict:
@@ -504,9 +893,9 @@ def _extract_annotations_from_json(payload, *, code: str) -> list:
     return annotations if isinstance(annotations, list) else []
 
 
-def _load_kline_annotations(code: str, period: str) -> list[dict]:
-    """Load structured K-line annotations from the active run output directory."""
-    output_dir = _get_active_output_dir()
+def _load_kline_annotations(code: str, period: str, run_id: str | None = None) -> list[dict]:
+    """Load structured K-line annotations from the selected run output directory."""
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return []
 
@@ -652,17 +1041,17 @@ def _generate_kline_annotations_from_tools(code: str, period: str) -> list[dict]
     return annotations
 
 
-def _ensure_generated_kline_annotations(code: str, period: str) -> list[dict]:
-    output_dir = _get_active_output_dir()
+def _ensure_generated_kline_annotations(code: str, period: str, run_id: str | None = None) -> list[dict]:
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return []
-    existing = _load_kline_annotations(code, period)
+    existing = _load_kline_annotations(code, period, run_id)
     if existing:
         return existing
     generated = _generate_kline_annotations_from_tools(code, period)
     if generated:
         _write_kline_annotations(output_dir, code, generated)
-    return _load_kline_annotations(code, period)
+    return _load_kline_annotations(code, period, run_id)
 
 
 def _cache_tree_stats(path: str) -> dict:
@@ -767,6 +1156,79 @@ def _stock_prefix(code: str) -> str:
 def _kline_cache_path(period: str, code: str) -> str:
     suffix = "json" if period in ("day", "week", "month") else "parquet"
     return os.path.join(KLINE_CACHE_DIR, period, f"{code}.{suffix}")
+
+
+def _kline_now() -> datetime:
+    return datetime.now()
+
+
+def _last_kline_time(df):
+    if df is None or df.empty:
+        return None
+    return df["time"].max()
+
+
+def _merge_kline_df(cached, fetched):
+    import pandas as pd
+
+    frames = [df for df in (cached, fetched) if df is not None and not df.empty]
+    if not frames:
+        return None
+    merged = pd.concat(frames, ignore_index=True)
+    merged["time"] = pd.to_datetime(merged["time"])
+    return (
+        merged[["time", "open", "high", "low", "close", "volume"]]
+        .sort_values("time")
+        .drop_duplicates(subset=["time"], keep="last")
+        .reset_index(drop=True)
+    )
+
+
+def _is_day_kline_stale(df) -> bool:
+    last_time = _last_kline_time(df)
+    if last_time is None:
+        return True
+    now = _kline_now()
+    today = now.date()
+    if not is_trading_day(today):
+        return False
+    return last_time.date() < today
+
+
+def _previous_trading_day(day):
+    from datetime import timedelta
+
+    candidate = day - timedelta(days=1)
+    for _ in range(10):
+        if is_trading_day(candidate):
+            return candidate
+        candidate -= timedelta(days=1)
+    return day - timedelta(days=1)
+
+
+def _expected_latest_minute_time(now: datetime) -> datetime | None:
+    if not is_trading_day(now.date()):
+        previous = _previous_trading_day(now.date())
+        return datetime.combine(previous, time(15, 0))
+    current = now.time()
+    if current < time(9, 30):
+        previous = _previous_trading_day(now.date())
+        return datetime.combine(previous, time(15, 0))
+    if current <= time(11, 30):
+        return now.replace(second=0, microsecond=0)
+    if current < time(13, 0):
+        return now.replace(hour=11, minute=30, second=0, microsecond=0)
+    if current <= time(15, 0):
+        return now.replace(second=0, microsecond=0)
+    return now.replace(hour=15, minute=0, second=0, microsecond=0)
+
+
+def _is_minute_kline_stale(df) -> bool:
+    last_time = _last_kline_time(df)
+    if last_time is None:
+        return True
+    expected = _expected_latest_minute_time(_kline_now())
+    return expected is not None and last_time.to_pydatetime() < expected
 
 
 def _df_to_kline_payload(code: str, df, source: str) -> dict:
@@ -930,11 +1392,11 @@ def _resample_ohlcv(df, rule: str):
 def _load_day_kline_df(code: str, limit: int):
     path = _kline_cache_path("day", code)
     df = _read_kline_json(path)
-    if df is None or len(df) < min(limit, 60):
+    if df is None or len(df) < min(limit, 60) or _is_day_kline_stale(df):
         try:
             fetched = _fetch_tencent_day_df(code, max(limit, 260))
             if not fetched.empty:
-                df = fetched
+                df = _merge_kline_df(df, fetched)
                 _write_kline_json(path, df)
         except Exception as e:
             logger.warning("Day K-line fetch failed: %s %s", code, e)
@@ -944,30 +1406,30 @@ def _load_day_kline_df(code: str, limit: int):
 def _load_week_kline_df(code: str, limit: int):
     path = _kline_cache_path("week", code)
     df = _read_kline_json(path)
-    if df is None or len(df) < min(limit, 30):
-        day_df = _load_day_kline_df(code, max(limit * 7, 260))
-        if day_df is None or day_df.empty:
-            return None
-        df = _resample_ohlcv(day_df, "W")
-        if not df.empty:
-            _write_kline_json(path, df)
-    elif not os.path.exists(path) and df is not None and not df.empty:
+    day_df = _load_day_kline_df(code, max(limit * 7, 260))
+    if day_df is None or day_df.empty:
+        return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
+    refreshed = _resample_ohlcv(day_df, "W")
+    if not refreshed.empty:
+        df = refreshed
         _write_kline_json(path, df)
+    elif df is None or len(df) < min(limit, 30):
+        return None
     return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
 
 
 def _load_month_kline_df(code: str, limit: int):
     path = _kline_cache_path("month", code)
     df = _read_kline_json(path)
-    if df is None or len(df) < min(limit, 12):
-        day_df = _load_day_kline_df(code, max(limit * 31, 520))
-        if day_df is None or day_df.empty:
-            return None
-        df = _resample_ohlcv(day_df, "ME")
-        if not df.empty:
-            _write_kline_json(path, df)
-    elif not os.path.exists(path) and df is not None and not df.empty:
+    day_df = _load_day_kline_df(code, max(limit * 31, 520))
+    if day_df is None or day_df.empty:
+        return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
+    refreshed = _resample_ohlcv(day_df, "ME")
+    if not refreshed.empty:
+        df = refreshed
         _write_kline_json(path, df)
+    elif df is None or len(df) < min(limit, 12):
+        return None
     return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
 
 
@@ -982,11 +1444,11 @@ def _load_1m_kline_df(code: str, limit: int):
             df = _read_kline_parquet(legacy_path)
             if df is not None:
                 break
-    if df is None or len(df) < min(limit, 120):
+    if df is None or len(df) < min(limit, 120) or _is_minute_kline_stale(df):
         try:
             fetched = _fetch_tencent_minute_df(code, max(limit, 800))
             if not fetched.empty:
-                df = fetched
+                df = _merge_kline_df(df, fetched)
                 _write_kline_parquet(path, df)
         except Exception as e:
             logger.warning("Minute K-line fetch failed: %s %s", code, e)
@@ -1000,16 +1462,16 @@ def _load_minute_kline_df(code: str, period: str, limit: int):
         return _load_1m_kline_df(code, limit)
     path = _kline_cache_path(period, code)
     df = _read_kline_parquet(path)
-    if df is None:
-        base_limit = max(limit * int(period[:-1]), 800)
-        base_df = _load_1m_kline_df(code, base_limit)
-        if base_df is None or base_df.empty:
+    base_limit = max(limit * int(period[:-1]), 800)
+    base_df = _load_1m_kline_df(code, base_limit)
+    if base_df is None or base_df.empty:
+        if df is None:
             legacy_path = os.path.join(LEGACY_MINUTE_CACHE_DIR, f"{code}_{period}.parquet")
             df = _read_kline_parquet(legacy_path)
-        else:
-            df = _resample_ohlcv(base_df, RESAMPLE_RULES[period])
-            if not df.empty:
-                _write_kline_parquet(path, df)
+    else:
+        df = _resample_ohlcv(base_df, RESAMPLE_RULES[period])
+        if not df.empty:
+            _write_kline_parquet(path, df)
     return df.sort_values("time").tail(limit) if df is not None and not df.empty else None
 
 
@@ -1044,7 +1506,7 @@ arm_forced_exit_timer = _arm_forced_exit_timer
 shutdown_sse = _shutdown_sse
 
 
-def _build_nav_sse(state: dict) -> str:
+def _build_nav_sse(state: dict, run_id: str = "") -> str:
     """Build an SSE 'nav' event string from a state.json dict."""
     nav = state.get("initial_capital", 100000)
     cash = state.get("cash", 0)
@@ -1055,7 +1517,7 @@ def _build_nav_sse(state: dict) -> str:
     )
     total = cash + position_value
     pnl = total - nav
-    return f"event: nav\ndata: {json.dumps({'total_asset': round(total, 2), 'cash': round(cash, 2), 'position_value': round(position_value, 2), 'day_pnl': round(pnl, 2), 'day_return_pct': round(pnl / max(nav, 1) * 100, 2), 'positions': positions, 'data_time': state.get('data_time', '')}, ensure_ascii=False)}\n\n"
+    return f"event: nav\ndata: {json.dumps({'run_id': run_id, 'total_asset': round(total, 2), 'cash': round(cash, 2), 'position_value': round(position_value, 2), 'day_pnl': round(pnl, 2), 'day_return_pct': round(pnl / max(nav, 1) * 100, 2), 'positions': positions, 'data_time': state.get('data_time', '')}, ensure_ascii=False)}\n\n"
 
 
 async def _sse_event_generator(request: Request):
@@ -1073,12 +1535,13 @@ async def _sse_event_generator(request: Request):
     try:
         # Send initial state snapshot
         output_dir = _get_active_output_dir()
+        run_id = os.path.basename(output_dir) if output_dir else ""
         state_path = os.path.join(output_dir, "state.json") if output_dir else ""
         if state_path:
             state = _read_json(state_path)
             if state:
                 last_data_time = state.get("data_time", "")
-                yield _build_nav_sse(state)
+                yield _build_nav_sse(state, run_id)
 
         yield f"event: connected\ndata: {json.dumps({'status': 'connected', 'time': datetime.now().isoformat()})}\n\n"
 
@@ -1103,7 +1566,7 @@ async def _sse_event_generator(request: Request):
                     dt = state.get("data_time", "")
                     if dt and dt != last_data_time:
                         last_data_time = dt
-                        yield _build_nav_sse(state)
+                        yield _build_nav_sse(state, run_id)
             if output_dir:
                 workflow_store = _workflow_store_for_run(os.path.basename(output_dir))
                 if workflow_store:
@@ -1134,50 +1597,36 @@ async def dashboard_sse(request: Request):
 
 
 @router.get("/api/state")
-async def api_state():
-    output_dir = _get_active_output_dir()
+async def api_state(run_id: str | None = None):
+    if run_id == DEMO_RUN_ID:
+        return _demo_state()
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return _demo_state()
     state = _read_json(os.path.join(output_dir, "state.json"))
     if not state:
         return JSONResponse({"error": "state.json not found"}, status_code=404)
-    cash = state.get("cash", 0)
-    positions = state.get("holdings", {})
-    position_value = sum(
-        p.get("shares", 0) * p.get("current_price", 0)
-        for p in positions.values()
-    )
-    nav = state.get("initial_capital", 100000)
-    total = cash + position_value
-    return {
-        "run_id": os.path.basename(output_dir),
-        "total_asset": round(total, 2),
-        "cash": round(cash, 2),
-        "position_value": round(position_value, 2),
-        "day_pnl": round(total - nav, 2),
-        "day_return_pct": round((total - nav) / max(nav, 1) * 100, 2),
-        "trade_count": state.get("trade_count", 0),
-        "win_count": state.get("win_count", 0),
-        "positions": positions,
-        "engine_meta": state.get("engine_meta", {}),
-        "data_time": state.get("data_time", ""),
-    }
+    return _state_summary_from_file(os.path.basename(output_dir), state)
 
 
 @router.get("/api/plan")
-async def api_plan():
-    output_dir = _get_active_output_dir()
+async def api_plan(run_id: str | None = None):
+    if run_id == DEMO_RUN_ID:
+        return _enrich_plan_stock_names(_demo_plan())
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
-        return _demo_plan()
+        return _enrich_plan_stock_names(_demo_plan())
     plan = _read_json(os.path.join(output_dir, "plan.json"))
     if not plan:
         return JSONResponse({"error": "plan.json not found"}, status_code=404)
-    return plan
+    return _enrich_plan_stock_names(plan)
 
 
 @router.get("/api/ledger")
-async def api_ledger(limit: int = 50, code: str = ""):
-    output_dir = _get_active_output_dir()
+async def api_ledger(limit: int = 50, code: str = "", run_id: str | None = None):
+    if run_id == DEMO_RUN_ID:
+        return _demo_ledger(limit=limit, code=code)
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return _demo_ledger(limit=limit, code=code)
     entries = _read_jsonl(os.path.join(output_dir, "ledger.jsonl"), limit=limit)
@@ -1235,28 +1684,28 @@ async def api_kline(code: str, period: str = "day", limit: int = 200):
 
 
 @router.get("/api/kline/{code}/annotations")
-async def api_kline_annotations(code: str, period: str = "day"):
+async def api_kline_annotations(code: str, period: str = "day", run_id: str | None = None):
     """Return Agent-produced structured K-line annotations for optional chart layers."""
     period = period.lower()
     if period not in KLINE_PERIODS:
         return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
-    if not _get_active_output_dir():
+    if run_id == DEMO_RUN_ID or not _get_run_output_dir(run_id):
         return {"code": code, "period": period, "annotations": _demo_annotations(code, period)}
-    return {"code": code, "period": period, "annotations": _ensure_generated_kline_annotations(code, period)}
+    return {"code": code, "period": period, "annotations": _ensure_generated_kline_annotations(code, period, run_id)}
 
 
 @router.post("/api/kline/{code}/annotations/generate")
-async def api_kline_annotations_generate(code: str, period: str = "day"):
+async def api_kline_annotations_generate(code: str, period: str = "day", run_id: str | None = None):
     """Regenerate local skill-derived K-line structure annotations for the active run."""
     period = period.lower()
     if period not in KLINE_PERIODS:
         return JSONResponse({"error": f"Unsupported period: {period}"}, status_code=400)
-    output_dir = _get_active_output_dir()
+    output_dir = _get_run_output_dir(run_id)
     if not output_dir:
         return {"code": code, "period": period, "annotations": _demo_annotations(code, period), "demo": True}
     generated = _generate_kline_annotations_from_tools(code, period)
     _write_kline_annotations(output_dir, code, generated)
-    return {"code": code, "period": period, "annotations": _load_kline_annotations(code, period), "generated": len(generated)}
+    return {"code": code, "period": period, "annotations": _load_kline_annotations(code, period, run_id), "generated": len(generated)}
 
 
 @router.get("/api/technical/{code}")
@@ -1272,12 +1721,11 @@ async def api_technical(code: str, indicator: str = "all"):
 @router.get("/api/watchlist")
 async def api_watchlist():
     try:
-        pf_path = os.path.join(str(PROJECT_ROOT), "data", "state", "portfolio.json")
-        if os.path.exists(pf_path):
-            with open(pf_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+        items = _load_watchlist_items()
+        if items:
+            return items
         if not _get_active_output_dir():
-            return [{"code": "300913", "source": "demo"}, {"code": "000001", "source": "demo"}]
+            return [{"code": "300913", "source": "demo"}, {"code": "000001", "name": "上证指数", "source": "demo"}]
         return []
     except Exception:
         return []
@@ -1301,9 +1749,105 @@ async def api_cache_minute_clear():
     return await api_cache_kline_clear()
 
 
+@router.get("/api/runs")
+async def api_runs(mode: str = "all"):
+    normalized_mode = mode.lower().strip()
+    if normalized_mode == "all":
+        records = run_registry.list_runs()
+    elif normalized_mode in {"paper", "live"}:
+        records = run_registry.list_runs(normalized_mode)
+    else:
+        return JSONResponse({"error": f"Unsupported mode: {mode}"}, status_code=400)
+
+    runs = [
+        _run_record_summary(record)
+        for record in records
+        if record.mode in {"paper", "live"}
+    ]
+    if not runs:
+        demo_state = _demo_state()
+        return {
+            "runs": [{
+                "run_id": DEMO_RUN_ID,
+                "mode": "demo",
+                "status": "demo",
+                "is_alive": False,
+                "process_id": None,
+                "data_time": demo_state["data_time"],
+                "total_asset": demo_state["total_asset"],
+                "cash": demo_state["cash"],
+                "position_value": demo_state["position_value"],
+                "trade_count": demo_state["trade_count"],
+                "holdings_count": len(demo_state["positions"]),
+                "has_plan": True,
+                "live_locked": True,
+            }],
+            "selected_run_id": DEMO_RUN_ID,
+        }
+    active = next((run for run in runs if run.get("is_alive")), runs[0])
+    return {"runs": runs, "selected_run_id": active["run_id"]}
+
+
+@router.post("/api/runs/start")
+async def api_run_start(request: Request):
+    payload = await request.json()
+    mode = str(payload.get("mode") or "paper").strip().lower()
+    if mode == "live":
+        return JSONResponse(
+            {"error": "实盘未准入：BrokerAdapter、人工确认、订单幂等和安全闸门完成前禁止从 Dashboard 启动。"},
+            status_code=423,
+        )
+    if mode != "paper":
+        return JSONResponse({"error": f"Unsupported mode: {mode}"}, status_code=400)
+    info = engine_cli.start_daemon(_dashboard_run_namespace(mode="paper"))
+    return {"run": info}
+
+
+@router.post("/api/runs/{run_id}/resume")
+async def api_run_resume(run_id: str):
+    if run_id.startswith("live_"):
+        return JSONResponse(
+            {"error": "实盘未准入：当前 Dashboard 只允许查看已有 live run。"},
+            status_code=423,
+        )
+    info = engine_cli.resume_run_daemon(run_id, _dashboard_run_namespace(mode="paper"))
+    return {"run": info}
+
+
+@router.post("/api/runs/{run_id}/stop")
+async def api_run_stop(run_id: str):
+    if run_id == DEMO_RUN_ID:
+        return JSONResponse({"error": "Demo run cannot be stopped"}, status_code=409)
+    if run_id.startswith("live_"):
+        return JSONResponse(
+            {"error": "实盘未准入：当前 Dashboard 只允许查看已有 live run。"},
+            status_code=423,
+        )
+    result = run_registry.stop_run(run_id)
+    return {"run": result.to_dict()}
+
+
 @router.get("/api/engine/status")
-async def api_engine_status():
-    records = run_registry.list_runs("paper")
+async def api_engine_status(run_id: str | None = None):
+    if run_id == DEMO_RUN_ID:
+        demo_state = _demo_state()
+        return {
+            "run_id": DEMO_RUN_ID,
+            "status": "demo",
+            "is_alive": False,
+            "process_id": None,
+            "observation_mode": True,
+            "observation_reason": "当前没有真实模拟盘，Dashboard 使用只读 Demo 数据。",
+            "data_time": demo_state["data_time"],
+            "has_plan": True,
+        }
+    if run_id and run_id != "active":
+        try:
+            records = [run_registry.get_run(run_id)]
+        except run_registry.RunNotFound as e:
+            return JSONResponse({"error": str(e), "run_id": e.run_id}, status_code=404)
+    else:
+        records = run_registry.list_runs("paper")
     record = records[0] if records else None
     output_dir = record.run_dir if record else _get_active_output_dir()
     run_id = record.run_id if record else (os.path.basename(output_dir) if output_dir else None)
@@ -1344,18 +1888,34 @@ async def api_workflow_events(run_id: str, limit: int = 500):
     return {"run_id": store.run_id, "events": store.read_events(limit=safe_limit)}
 
 
-@router.get("/api/workflow/runs/{run_id}/graph")
-async def api_workflow_graph(run_id: str):
+@router.get("/api/workflow/runs/{run_id}/graph", response_model=WorkflowGraphModel)
+async def api_workflow_graph(run_id: str) -> dict[str, Any] | JSONResponse:
     if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
-        return _demo_workflow_graph()
+        graph = _demo_workflow_graph()
+        data_time = _demo_state()["data_time"]
+        event_date = _workflow_event_display_date(graph)
+        graph.update({
+            "run_status": "demo",
+            "is_alive": False,
+            "process_id": None,
+            "data_time": data_time,
+            "observation_mode": False,
+            "observation_reason": "",
+            **_workflow_calendar_meta(DEMO_RUN_ID, data_time, event_date),
+        })
+        return graph
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
-    return store.build_graph()
+    graph = store.build_graph()
+    meta = _workflow_runtime_meta(store.run_id)
+    meta.update(_workflow_calendar_meta(store.run_id, meta.get("data_time", ""), _workflow_event_display_date(graph)))
+    graph.update(meta)
+    return graph
 
 
-@router.get("/api/workflow/runs/{run_id}/config")
-async def api_workflow_config(run_id: str):
+@router.get("/api/workflow/runs/{run_id}/config", response_model=WorkflowConfigModel)
+async def api_workflow_config(run_id: str) -> dict[str, Any] | JSONResponse:
     if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
         return default_workflow_config()
     store = _workflow_store_for_run(run_id)
@@ -1364,14 +1924,17 @@ async def api_workflow_config(run_id: str):
     return store.read_config()
 
 
-@router.post("/api/workflow/runs/{run_id}/config")
-async def api_workflow_config_update(run_id: str, request: Request):
+@router.post("/api/workflow/runs/{run_id}/config", response_model=WorkflowConfigModel)
+async def api_workflow_config_update(run_id: str, request: Request) -> dict[str, Any] | JSONResponse:
     if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
         return JSONResponse({"error": "Demo 模式不保存流程配置"}, status_code=409)
     store = _workflow_store_for_run(run_id)
     if not store:
         return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
-    payload = await request.json()
+    try:
+        payload = _workflow_config_payload(await request.json())
+    except ValidationError as exc:
+        return JSONResponse({"error": "Invalid workflow config", "details": exc.errors()}, status_code=400)
     config = store.write_config(payload)
     enabled = sum(1 for node in config.get("nodes", {}).values() if node.get("enabled"))
     total = len(config.get("nodes", {}))
@@ -1450,6 +2013,76 @@ async def api_workflow_artifact(run_id: str, event_id: str, name: str):
         "run_id": os.path.basename(output_dir),
         "event_id": event_id,
         "name": name,
+        "content": content,
+    }
+
+
+@router.get("/api/workflow/runs/{run_id}/agent-runs/{task_id}/timeline")
+async def api_agent_run_timeline(run_id: str, task_id: str):
+    if task_id in {"", ".", ".."} or "/" in task_id or "\\" in task_id:
+        return JSONResponse({"error": "Invalid agent task id"}, status_code=400)
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return _demo_agent_run_timeline(task_id)
+
+    output_dir = _get_run_output_dir(run_id)
+    if not output_dir:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+
+    agent_root = os.path.abspath(os.path.join(output_dir, "agent_runs"))
+    agent_dir = os.path.abspath(os.path.join(agent_root, task_id))
+    if not agent_dir.startswith(agent_root + os.sep):
+        return JSONResponse({"error": "Invalid agent task id"}, status_code=400)
+    if not os.path.isdir(agent_dir):
+        return {
+            "run_id": os.path.basename(output_dir),
+            "task_id": task_id,
+            "events": [],
+            "tasks": {},
+            "warnings": ["agent run not found"],
+        }
+
+    audit = validate_agent_events(agent_dir)
+    return {
+        "run_id": os.path.basename(output_dir),
+        "task_id": task_id,
+        "events": audit.get("events", []),
+        "tasks": audit.get("tasks", {}),
+        "warnings": audit.get("warnings", []),
+    }
+
+
+@router.get("/api/workflow/runs/{run_id}/agent-runs/{task_id}/artifacts/{artifact_ref:path}")
+async def api_agent_run_artifact(run_id: str, task_id: str, artifact_ref: str):
+    if task_id in {"", ".", ".."} or "/" in task_id or "\\" in task_id:
+        return JSONResponse({"error": "Invalid agent task id"}, status_code=400)
+    if not artifact_ref or artifact_ref in {".", ".."}:
+        return JSONResponse({"error": "Invalid agent artifact path"}, status_code=400)
+    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
+        return {
+            "run_id": DEMO_RUN_ID,
+            "task_id": task_id,
+            "artifact_ref": artifact_ref,
+            "content": f"Demo artifact: {artifact_ref}",
+        }
+
+    output_dir = _get_run_output_dir(run_id)
+    if not output_dir:
+        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
+
+    agent_root = os.path.abspath(os.path.join(output_dir, "agent_runs"))
+    agent_dir = os.path.abspath(os.path.join(agent_root, task_id))
+    artifact_path = os.path.abspath(os.path.join(agent_dir, artifact_ref))
+    if not agent_dir.startswith(agent_root + os.sep) or not artifact_path.startswith(agent_dir + os.sep):
+        return JSONResponse({"error": "Invalid agent artifact path"}, status_code=400)
+    if not os.path.isfile(artifact_path):
+        return JSONResponse({"error": "Agent artifact not found"}, status_code=404)
+
+    with open(artifact_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return {
+        "run_id": os.path.basename(output_dir),
+        "task_id": task_id,
+        "artifact_ref": artifact_ref,
         "content": content,
     }
 

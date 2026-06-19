@@ -15,9 +15,12 @@ htmlcov/
 
 # Claude Code local data
 .claude/
+.agents/
 
 # Runtime data
 data/logs/
+data/dev_logs/
+data/diagnostics/
 data/cache/
 data/output/
 data/memory/

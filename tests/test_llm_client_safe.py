@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from alphaclaude.tools import llm_client
 
 
@@ -57,3 +59,24 @@ def test_call_with_tool_safe_returns_empty_when_fallback_fails(monkeypatch):
     )
 
     assert result == []
+
+
+def test_call_text_retries_retryable_connection_errors(monkeypatch):
+    APIConnectionError = type("APIConnectionError", (Exception,), {})
+    calls = []
+
+    class FakeMessages:
+        def create(self, **_kwargs):
+            calls.append("call")
+            if len(calls) < 3:
+                raise APIConnectionError("Connection error.")
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="retry ok")]
+            )
+
+    fake_client = SimpleNamespace(messages=FakeMessages())
+    monkeypatch.setattr(llm_client, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda _seconds: None)
+
+    assert llm_client.call_text("prompt") == "retry ok"
+    assert calls == ["call", "call", "call"]

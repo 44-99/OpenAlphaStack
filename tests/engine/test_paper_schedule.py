@@ -79,6 +79,7 @@ def test_new_paper_run_without_plan_is_not_actionable(output_base):
 
 def test_generated_plan_makes_paper_run_actionable(output_base):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = FakeClock(datetime(2026, 5, 13, 8, 30))
     engine.plan.set_sim_now(datetime(2026, 5, 13, 8, 30))
     engine.plan.set_market_bias(
         "neutral",
@@ -86,6 +87,7 @@ def test_generated_plan_makes_paper_run_actionable(output_base):
         "盘前计划已生成，但今天不主动开仓。",
         position_cap=30,
     )
+    engine.plan.mark_premarket_plan_generated(datetime(2026, 5, 13, 8, 30))
 
     assert engine._has_actionable_plan_for_today()
 
@@ -94,6 +96,73 @@ def test_generated_plan_makes_paper_run_actionable(output_base):
 
     assert meta["observation_mode"] is False
     assert meta["observation_reason"] == ""
+
+
+def test_stale_plan_does_not_make_resumed_paper_run_actionable(output_base):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.plan.set_sim_now(datetime(2026, 5, 18, 8, 30))
+    engine.plan.set_market_bias(
+        "neutral",
+        55,
+        "历史盘前计划，恢复时不能直接盘中执行。",
+        position_cap=30,
+    )
+    engine.clock = FakeClock(datetime(2026, 5, 19, 14, 0))
+
+    assert not engine._has_actionable_plan_for_today()
+
+
+def test_stale_plan_with_holdings_does_not_make_resumed_paper_run_actionable(output_base):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.state.set_data_time("2026-05-18 10:00:00")
+    engine.state.add_holding("600036", 100, 40.0, "old_plan", stop_loss=38.0, take_profit=44.0)
+    engine.plan.set_sim_now(datetime(2026, 5, 18, 8, 30))
+    engine.plan.set_market_bias(
+        "neutral",
+        55,
+        "历史盘前计划，恢复时不能因为仍有持仓就直接执行。",
+        position_cap=30,
+    )
+    engine.clock = FakeClock(datetime(2026, 5, 19, 14, 0))
+
+    assert not engine._has_actionable_plan_for_today()
+
+
+def test_metadata_update_does_not_make_stale_plan_actionable(output_base):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.plan.set_sim_now(datetime(2026, 5, 18, 8, 30))
+    engine.plan.set_market_bias(
+        "neutral",
+        55,
+        "昨天的盘前计划，今天不能因为冷却写入变成可执行。",
+        position_cap=30,
+    )
+    engine.clock = FakeClock(datetime(2026, 5, 19, 9, 42))
+    engine.plan.set_sim_now(datetime(2026, 5, 19, 9, 42))
+    engine.plan.mark_stopped_out("600036", cooldown_hours=24)
+
+    plan = engine.plan.load()
+    assert plan["updated"].startswith("2026-05-19")
+    assert plan["updated_by"] == "stop_cooldown"
+    assert not engine._has_actionable_plan_for_today()
+
+
+def test_today_plan_remains_actionable_after_metadata_update(output_base):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = FakeClock(datetime(2026, 5, 19, 8, 30))
+    engine.plan.set_sim_now(datetime(2026, 5, 19, 8, 30))
+    engine.plan.set_market_bias(
+        "neutral",
+        55,
+        "今天的盘前计划，允许空仓观察。",
+        position_cap=30,
+    )
+    engine.plan.mark_premarket_plan_generated(datetime(2026, 5, 19, 8, 30))
+    engine.plan.set_sim_now(datetime(2026, 5, 19, 9, 42))
+    engine.plan.mark_stopped_out("600036", cooldown_hours=24)
+
+    assert engine.plan.load()["updated_by"] == "stop_cooldown"
+    assert engine._has_actionable_plan_for_today()
 
 
 def test_non_trading_day_premarket_sends_skip_notice(output_base, monkeypatch):
@@ -217,15 +286,16 @@ def test_run_paper_leaves_observation_when_trading_day_becomes_actionable(output
 def test_run_paper_generates_late_plan_if_premarket_window_was_missed(output_base, monkeypatch):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
     engine.clock = SequencedClock(
-        [datetime(2026, 5, 19, 9, 35)],
-        ["morning"],
+        [datetime(2026, 5, 19, 14, 0)],
+        ["afternoon"],
         [True],
     )
     calls = []
+    tick_calls = []
     engine.fast_lane = SimpleNamespace(
         reset_day=lambda: None,
         execute_holding_adjustments=lambda: [],
-        tick=lambda: {"events": [], "emergency": False},
+        tick=lambda: tick_calls.append("tick") or {"events": [], "emergency": False},
     )
 
     def fake_morning_analysis():
@@ -249,9 +319,53 @@ def test_run_paper_generates_late_plan_if_premarket_window_was_missed(output_bas
 
     meta = engine.state.load()["engine_meta"]
     assert calls == ["morning"]
+    assert tick_calls == ["tick"]
+    assert engine.plan.load()["plan_date"] == "2026-05-19"
     assert meta["status"] == "running"
     assert meta["observation_mode"] is False
     assert meta["observation_reason"] == ""
+
+
+def test_run_paper_does_not_mark_failed_llm_plan_as_actionable(output_base, monkeypatch):
+    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
+    engine.clock = SequencedClock(
+        [datetime(2026, 5, 19, 14, 0)],
+        ["afternoon"],
+        [True],
+    )
+    calls = []
+    tick_calls = []
+    engine.fast_lane = SimpleNamespace(
+        reset_day=lambda: None,
+        execute_holding_adjustments=lambda: [],
+        tick=lambda: tick_calls.append("tick") or {"events": [], "emergency": False},
+    )
+
+    def fake_failed_morning_analysis():
+        calls.append("morning")
+        engine.plan.set_market_bias(
+            "neutral",
+            50,
+            "",
+            position_cap=50,
+        )
+        return {"stages": {"merged": {"llm_used": False}, "risk": {}}}
+
+    monkeypatch.setattr(engine, "run_morning_analysis", fake_failed_morning_analysis)
+
+    def fake_sleep(_seconds: int) -> None:
+        engine.stop()
+
+    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
+
+    engine.run_paper()
+
+    meta = engine.state.load()["engine_meta"]
+    assert calls == ["morning"]
+    assert tick_calls == []
+    assert engine.plan.load()["plan_date"] == ""
+    assert meta["observation_mode"] is True
+    assert "LLM" in meta["observation_reason"]
 
 
 def test_run_paper_wraps_loop_with_windows_sleep_guard(output_base, monkeypatch):

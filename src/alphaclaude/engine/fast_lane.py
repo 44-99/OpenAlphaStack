@@ -17,6 +17,16 @@ from alphaclaude.engine.t0 import T0Tracker
 
 add_legacy_paths()
 
+
+def _summarize_key_tick(events: list[dict], emergency: bool, trigger_reason: str, code_count: int) -> str:
+    """Summarize only meaningful intraday events for workflow observability."""
+    if emergency:
+        return f"紧急触发: {trigger_reason or '盘中风险条件满足'}"
+    event_names = [str(event.get("event") or event.get("action") or "event") for event in events[:3]]
+    suffix = "、".join(event_names) if event_names else "关键事件"
+    return f"关键 tick: 监控 {code_count} 只，触发 {len(events)} 条: {suffix}"
+
+
 class FastLane:
     """Python fast lane: price monitoring, stop/profit, buy candidates, rule signals, emergency detection.
 
@@ -700,6 +710,7 @@ class FastLane:
             if self.mode == "backtest":
                 self.state.set_data_time(now.strftime("%Y-%m-%d %H:%M:%S"))
             self.state.save()
+            self._record_key_tick(events, False, "", codes)
             return {"events": events, "emergency": False, "trigger_reason": ""}
 
         # 1.5 Time+condition auto-close — only close if held too long AND clearly losing
@@ -758,6 +769,7 @@ class FastLane:
             if now.strftime("%H:%M:%S") == "15:00:00":
                 self.state.snapshot_nav()
             self.state.save()
+            self._record_key_tick(events, emergency, trigger_reason, codes)
             return {"events": events, "emergency": emergency, "trigger_reason": trigger_reason}
 
         # 2. Buy candidate check — bucket-based allocation
@@ -1059,20 +1071,31 @@ class FastLane:
         if current_market_price > 0:
             self._prev_market_price = current_market_price
 
-        if self.workflow:
-            try:
-                self.workflow.record_node_finish(
-                    phase="intraday",
-                    node_id="fastlane_tick",
-                    node_name="盘中快车道",
-                    summary=f"tick 完成，监控 {len(codes)} 只，事件 {len(events)} 条",
-                    output_refs=["state.json", "ledger.jsonl"],
-                    output_payload={"events": events[:20], "codes": codes},
-                )
-            except Exception as exc:
-                print(f"[Workflow] record failed: {exc}")
+        self._record_key_tick(events, emergency, trigger_reason, codes)
 
         return {"events": events, "emergency": emergency, "trigger_reason": trigger_reason}
+
+    def _record_key_tick(self, events: list[dict], emergency: bool, trigger_reason: str, codes: list[str]) -> None:
+        """Record only meaningful intraday ticks in workflow_events.jsonl."""
+        if not self.workflow or not (events or emergency):
+            return
+        try:
+            self.workflow.record_node_finish(
+                phase="intraday",
+                node_id="intraday_event_stream",
+                node_name="关键事件流",
+                summary=_summarize_key_tick(events, emergency, trigger_reason, len(codes)),
+                input_refs=["artifact.fastlane.tick", "account.state", "artifact.plan.json"],
+                output_refs=["account.state", "account.ledger"],
+                output_payload={
+                    "events": events[:20],
+                    "codes": codes,
+                    "emergency": emergency,
+                    "trigger_reason": trigger_reason,
+                },
+            )
+        except Exception as exc:
+            print(f"[Workflow] record failed: {exc}")
 
     def execute_holding_adjustments(self) -> list[dict]:
         """Execute plan.json holding_adjustments at market open. Called once at 9:25."""

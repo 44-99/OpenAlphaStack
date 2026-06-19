@@ -4,7 +4,6 @@ import json
 import shutil
 import sys
 import uuid
-from pathlib import Path
 
 import pytest
 import tomllib

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 import uuid
 from datetime import datetime
@@ -63,6 +62,28 @@ def _candidate(code: str, **overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def test_fast_lane_records_only_key_workflow_ticks():
+    workflow = MagicMock()
+    fast_lane = FastLane.__new__(FastLane)
+    fast_lane.workflow = workflow
+
+    fast_lane._record_key_tick([], False, "", ["300001"])
+    workflow.record_node_finish.assert_not_called()
+
+    fast_lane._record_key_tick(
+        [{"event": "rule_signal_buy", "code": "300001"}],
+        False,
+        "",
+        ["300001"],
+    )
+
+    workflow.record_node_finish.assert_called_once()
+    kwargs = workflow.record_node_finish.call_args.kwargs
+    assert kwargs["node_id"] == "intraday_event_stream"
+    assert kwargs["input_refs"] == ["artifact.fastlane.tick", "account.state", "artifact.plan.json"]
+    assert kwargs["output_payload"]["events"][0]["event"] == "rule_signal_buy"
 
 
 def test_plan_normalizes_strategy_type_defaults_to_automatic(alpha_dir):

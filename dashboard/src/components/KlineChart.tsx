@@ -1,21 +1,45 @@
-import * as echarts from 'echarts';
+import { BarChart, CandlestickChart, LineChart, ScatterChart } from 'echarts/charts';
+import {
+  DataZoomComponent,
+  GridComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from 'echarts/components';
+import { init, use as useECharts, type ECharts } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { buildKlineOption } from '../charts/klineOption';
 import type { KlineData, KlineLayerKey, KlinePeriod, KlinePlanAnnotation, KlineStructureAnnotation, KlineTradeMarker, LedgerEntry, OverlayKind, PlanData } from '../types';
 
+useECharts([
+  BarChart,
+  CandlestickChart,
+  LineChart,
+  ScatterChart,
+  DataZoomComponent,
+  GridComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
+
 interface KlineChartProps {
   code: string;
+  name?: string;
   period: KlinePeriod;
   overlay: OverlayKind;
   tradeRefreshKey?: string | number;
   layers?: KlineLayerKey[];
   plan?: PlanData;
+  runId?: string;
 }
 
-export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers = ['trades'], plan = {} }: KlineChartProps) {
+export function KlineChart({ code, name = '', period, overlay, tradeRefreshKey = '', layers = ['trades'], plan = {}, runId }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useRef<ECharts | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [source, setSource] = useState('');
@@ -25,7 +49,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
 
   useEffect(() => {
     if (!containerRef.current) return;
-    chartRef.current = echarts.init(containerRef.current);
+    chartRef.current = init(containerRef.current);
     const chart = chartRef.current;
     const resize = () => chart.resize();
     const wheelZoom = createWheelZoomHandler(chart);
@@ -70,7 +94,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
   useEffect(() => {
     if (!code) return;
     let active = true;
-    api.ledgerForCode(code, 200)
+    api.ledgerForCode(code, 200, runId)
       .then((rows) => {
         if (!active) return;
         setTrades(rows.map((row) => ledgerToTradeMarker(row, code)).filter((row) => row.time && row.price > 0));
@@ -81,7 +105,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
     return () => {
       active = false;
     };
-  }, [code, tradeRefreshKey]);
+  }, [code, tradeRefreshKey, runId]);
 
   useEffect(() => {
     if (!code || !layers.includes('structures')) {
@@ -89,7 +113,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
       return;
     }
     let active = true;
-    api.klineAnnotations(code, period)
+    api.klineAnnotations(code, period, runId)
       .then((data) => {
         if (active) setStructures(data.annotations || []);
       })
@@ -99,7 +123,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
     return () => {
       active = false;
     };
-  }, [code, period, layers]);
+  }, [code, period, layers, runId]);
 
   useEffect(() => {
     if (!chartRef.current || !klineData) return;
@@ -119,7 +143,7 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
   return (
     <section className="kline-panel">
       <div className="chart-meta">
-        <span>{code}</span>
+        <span>{stockTitle(code, name)}</span>
         <span>{period.toUpperCase()}</span>
         {source ? <span>{source}</span> : null}
         {loading ? <span>加载中</span> : null}
@@ -128,6 +152,11 @@ export function KlineChart({ code, period, overlay, tradeRefreshKey = '', layers
       {error ? <div className="chart-error">{error}</div> : null}
     </section>
   );
+}
+
+function stockTitle(code: string, name?: string) {
+  const label = (name || '').trim();
+  return label && label !== code ? `${label} · ${code}` : code;
 }
 
 function planToAnnotations(plan: PlanData, code: string): KlinePlanAnnotation[] {
@@ -176,7 +205,7 @@ function ledgerToTradeMarker(row: LedgerEntry, fallbackCode: string): KlineTrade
   };
 }
 
-function createWheelZoomHandler(chart: echarts.ECharts) {
+function createWheelZoomHandler(chart: ECharts) {
   let lastTime = 0;
   let remainder = 0;
 
@@ -219,7 +248,7 @@ function normalizeWheelDelta(event: WheelEvent) {
   return event.deltaY;
 }
 
-function getPointerRatio(chart: echarts.ECharts, event: WheelEvent) {
+function getPointerRatio(chart: ECharts, event: WheelEvent) {
   const rect = chart.getDom().getBoundingClientRect();
   if (!rect.width) return 0.5;
   return clamp((event.clientX - rect.left) / rect.width, 0.05, 0.95);

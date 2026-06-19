@@ -42,62 +42,6 @@ def _pipeline(path: Path):
     return OvernightPipeline(state, plan, ledger, clock, str(path), mode="backtest")
 
 
-def test_direction_fallback_infers_conservative_bias(pipeline_dir):
-    pipeline = _pipeline(pipeline_dir)
-
-    result = pipeline._parse_direction_fallback("市场偏空，风险偏高，总仓位20%。")
-
-    assert result == [{
-        "bias": "bearish",
-        "confidence": 50,
-        "bias_reasoning": "市场偏空，风险偏高，总仓位20%。",
-        "position_cap": 20,
-        "prefer_sectors": [],
-        "avoid_sectors": [],
-    }]
-
-
-def test_bull_bear_debate_uses_safe_text_fallback(pipeline_dir, monkeypatch):
-    pipeline = _pipeline(pipeline_dir)
-    monkeypatch.setattr(pipeline, "_call_text_safe", lambda _prompt, label, **kw: f"{label} text")
-    monkeypatch.setattr(pipeline, "_build_bull_prompt", lambda *_args: "bull prompt")
-    monkeypatch.setattr(pipeline, "_build_bear_prompt", lambda *_args: "bear prompt")
-    monkeypatch.setattr(pipeline, "_build_risk_prompt", lambda *_args: "risk prompt")
-
-    def raise_tool(*_args, **_kwargs):
-        raise RuntimeError("tool use failed")
-
-    monkeypatch.setattr(llm_client, "call_with_tool", raise_tool)
-    monkeypatch.setattr(
-        llm_client,
-        "call_text",
-        lambda *_args, **_kwargs: json.dumps([{
-            "code": "600036",
-            "source": "B",
-            "priority": 1,
-            "entry_max": 43.5,
-            "stop_loss_pct": -5,
-            "take_profit_pct": 8,
-            "position_pct": 10,
-            "reasoning": "fallback candidate",
-        }]),
-    )
-
-    candidates, trace = pipeline._run_bull_bear_debate({}, {"bias": "neutral"})
-
-    assert candidates == [{
-        "code": "600036",
-        "source": "B",
-        "reasoning": "fallback candidate",
-        "priority": 1,
-        "entry_max": 43.5,
-        "stop_loss_pct": -5.0,
-        "take_profit_pct": 8.0,
-        "position_pct": 10.0,
-    }]
-    assert "BULL" in trace
-
-
 def test_emergency_fallback_holds_when_text_is_unstructured(pipeline_dir, monkeypatch):
     pipeline = _pipeline(pipeline_dir)
 
@@ -119,10 +63,79 @@ def test_launch_emergency_does_not_send_duplicate_alert(pipeline_dir, monkeypatc
     pipeline = _pipeline(pipeline_dir)
     alerts = []
 
-    monkeypatch.setattr(pipeline_module, "_notify", True)
     pipeline_module.notify_alert = lambda *args: alerts.append(args)
     monkeypatch.setattr(llm_client, "call_with_tool", lambda *_args, **_kwargs: [{"action": "hold", "reasoning": "test"}])
 
     pipeline.launch_emergency("300263 下跌5.0%")
 
     assert alerts == []
+
+
+def test_run_full_records_market_artifact_and_agent_research_inputs(pipeline_dir, monkeypatch):
+    pipeline = _pipeline(pipeline_dir)
+    pipeline.plan._data = {
+        "market_bias": "neutral",
+        "buy_candidates": [],
+        "risk_report": {"passed_count": 0, "rejected_count": 0},
+    }
+    artifacts_dir = pipeline_dir / "agent_runs" / "premarket_plan"
+
+    class FakeRunner:
+        def __init__(self, output_dir, run_id, timeout):
+            assert Path(output_dir) == pipeline_dir
+            assert run_id == pipeline.run_id
+
+        def run_premarket_plan(self, market_snapshot="", account_summary=""):
+            assert market_snapshot == "MARKET SNAPSHOT"
+            assert "总资产" in account_summary
+            from alphaclaude.engine.agent_task_runner import AgentTaskResult
+            return AgentTaskResult(
+                task_id="premarket_plan",
+                ok=True,
+                returncode=0,
+                artifacts_dir=artifacts_dir,
+                stdout="ok",
+                stderr="",
+                parsed_artifacts={"plan_draft": {"market_bias": "neutral", "buy_candidates": []}},
+                audit_warnings=["events.jsonl missing"],
+                agent_events=[],
+            )
+
+    monkeypatch.setattr(pipeline, "_fetch_market_snapshot", lambda: "MARKET SNAPSHOT")
+    monkeypatch.setattr(pipeline_module, "AgentTaskRunner", FakeRunner)
+    monkeypatch.setattr(pipeline, "run_risk_validation", lambda: {"stage": "risk", "passed": 0, "rejected": 0})
+
+    pipeline.run_full()
+
+    events = [
+        json.loads(line)
+        for line in (pipeline_dir / "workflow_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    market_event = next(
+        event for event in events
+        if event["node_id"] == "market_snapshot" and event["status"] == "success"
+    )
+    market_output = json.loads(
+        (pipeline_dir / market_event["artifact_dir"] / "output.json").read_text(encoding="utf-8")
+    )
+    agent_research = next(
+        event for event in events
+        if event["node_id"] == "agent_research" and event["status"] == "running"
+    )
+
+    assert market_output["market_snapshot"] == "MARKET SNAPSHOT"
+    assert agent_research["input_refs"] == ["artifact.market.snapshot", "account.state", "rule.skills"]
+
+
+def test_call_text_safe_does_not_set_pipeline_token_cap(pipeline_dir, monkeypatch):
+    pipeline = _pipeline(pipeline_dir)
+    calls = []
+
+    def fake_call_text(prompt, **kwargs):
+        calls.append((prompt, kwargs))
+        return "FULL TEXT"
+
+    monkeypatch.setattr(llm_client, "call_text", fake_call_text)
+
+    assert pipeline._call_text_safe("PROMPT", "Label") == "FULL TEXT"
+    assert calls == [("PROMPT", {"model": None})]

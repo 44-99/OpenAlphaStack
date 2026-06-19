@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -101,6 +102,71 @@ def _pid(value: Any) -> int | None:
     return pid if pid > 0 else None
 
 
+def _pid_command_line(pid: int) -> str:
+    """Return the command line for a PID when the platform exposes it."""
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/value"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=3,
+            )
+            for line in (result.stdout or "").splitlines():
+                if line.startswith("CommandLine="):
+                    return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\").CommandLine",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=3,
+            )
+            return (result.stdout or "").strip()
+        except Exception:
+            return ""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3,
+        )
+        return (result.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+def _is_engine_pid(pid: int | None) -> bool:
+    """Return true only when the stored PID still belongs to an engine process."""
+    if not _is_pid_alive(pid):
+        return False
+    if pid is None:
+        return False
+    command = _pid_command_line(pid)
+    if not command:
+        return True
+    return (
+        "alphaclaude.engine.cli" in command
+        or "alphaclaude engine" in command
+        or "alphaclaude\\engine\\cli.py" in command
+        or "alphaclaude/engine/cli.py" in command
+    )
+
+
 def _record_from_dir(run_dir: Path) -> RunRecord | None:
     if not run_dir.is_dir():
         return None
@@ -114,8 +180,13 @@ def _record_from_dir(run_dir: Path) -> RunRecord | None:
     state = _read_json(state_path)
     meta = dict(state.get("engine_meta") or {})
     process_id = _pid(meta.get("process_id"))
-    is_alive = _is_pid_alive(process_id)
     stored_status = str(meta.get("status") or "").strip()
+    stopped_at = str(meta.get("stopped_at") or "")
+    is_alive = (
+        _is_engine_pid(process_id)
+        and stored_status not in {"stopped", "completed", "failed"}
+        and not stopped_at
+    )
     if is_alive:
         status = stored_status if stored_status in {"paused", "observation"} else "running"
     elif process_id or stored_status in {"running", "observation", "paused"}:
@@ -138,7 +209,7 @@ def _record_from_dir(run_dir: Path) -> RunRecord | None:
         status=status,
         is_alive=is_alive,
         started_at=str(meta.get("started_at") or ""),
-        stopped_at=str(meta.get("stopped_at") or ""),
+        stopped_at=stopped_at,
         resume_count=resume_count,
         observation_mode=bool(meta.get("observation_mode") or status == "observation"),
         engine_meta=meta,
@@ -171,11 +242,14 @@ def get_run(run_id: str) -> RunRecord:
 
 def find_active_run(mode: str, run_id: str | None = None) -> RunRecord | None:
     """Return a live run for the given mode, optionally preferring one run_id."""
-    records = list_runs(mode)
     if run_id:
-        for record in records:
-            if record.run_id == run_id and record.is_alive:
-                return record
+        try:
+            record = get_run(run_id)
+        except RunNotFound:
+            return None
+        return record if record.mode == mode and record.is_alive else None
+
+    records = list_runs(mode)
     for record in records:
         if record.is_alive:
             return record

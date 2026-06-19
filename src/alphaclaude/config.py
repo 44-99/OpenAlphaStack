@@ -19,6 +19,7 @@ STOCK_DATA_DIR = str(DATA_DIR)
 # Claude CLI
 CLAUDE_CMD = os.getenv("CLAUDE_CMD", "claude")
 CLAUDE_TIMEOUT = int(os.getenv("CLAUDE_TIMEOUT", "300"))
+AGENT_WORKFLOW_TIMEOUT = int(os.getenv("AGENT_WORKFLOW_TIMEOUT", "900"))
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

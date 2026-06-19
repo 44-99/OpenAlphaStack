@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import datetime
 
 from alphaclaude.engine.constants import (
@@ -61,10 +62,23 @@ class EngineState:
 
     def save(self):
         with self._lock:
-            tmp = self.path + ".tmp"
+            tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2, default=str)
-            os.replace(tmp, self.path)
+            last_error: OSError | None = None
+            for attempt in range(8):
+                try:
+                    os.replace(tmp, self.path)
+                    return
+                except PermissionError as exc:
+                    last_error = exc
+                    time.sleep(min(0.05 * (2 ** attempt), 1.0))
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            if last_error is not None:
+                raise last_error
 
     def load(self) -> dict:
         with self._lock:

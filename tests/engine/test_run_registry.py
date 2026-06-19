@@ -79,6 +79,20 @@ def test_get_run_returns_exact_run(workspace_tmp, monkeypatch):
     assert record.status == "stopped"
 
 
+def test_get_run_treats_reused_non_engine_pid_as_stopped(workspace_tmp, monkeypatch):
+    output = workspace_tmp / "output"
+    _write_run(output, "paper_2026-05-16T09-00-00", meta={"process_id": 23116, "status": "running"})
+
+    monkeypatch.setattr(run_registry, "_output_base", lambda: output)
+    monkeypatch.setattr(run_registry, "_is_pid_alive", lambda pid: int(pid or 0) == 23116)
+    monkeypatch.setattr(run_registry, "_pid_command_line", lambda _pid: "node.exe codegraph serve --mcp")
+
+    record = run_registry.get_run("paper_2026-05-16T09-00-00")
+
+    assert record.is_alive is False
+    assert record.status == "stopped"
+
+
 def test_get_run_rejects_unknown_run(workspace_tmp, monkeypatch):
     monkeypatch.setattr(run_registry, "_output_base", lambda: workspace_tmp / "output")
 
