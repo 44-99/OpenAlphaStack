@@ -111,14 +111,15 @@ export function WorkflowBoard({ graph, events, plan, ledger, onSendToAgent }: {
   }, [graph?.run_id, nodePositions]);
 
   useEffect(() => {
-    if (!graph?.run_id || selectedNode?.id !== 'agent_research') {
+    const taskId = agentTaskIdForNode(selectedNode?.id);
+    if (!graph?.run_id || !taskId) {
       setAgentTimeline(null);
       setAgentTimelineMessage('');
       return;
     }
     let active = true;
     setAgentTimelineMessage('读取 Agent 子任务审计轨迹...');
-    api.agentRunTimeline(graph.run_id, 'premarket_plan')
+    api.agentRunTimeline(graph.run_id, taskId)
       .then((timeline) => {
         if (!active) return;
         setAgentTimeline(timeline);
@@ -287,7 +288,7 @@ export function WorkflowBoard({ graph, events, plan, ledger, onSendToAgent }: {
           <>
             {selectedNode ? <NodeStatusPanel node={selectedNode} selectedEvents={selectedEvents} /> : null}
             {selectedNode ? <WorkflowNodeArtifact nodeId={selectedNode.id} plan={plan || {}} ledger={ledger || []} events={events} /> : null}
-            {selectedNode?.id === 'agent_research' ? (
+            {agentTaskIdForNode(selectedNode?.id) ? (
               <AgentTimelinePanel
                 timeline={agentTimeline}
                 message={agentTimelineMessage}
@@ -565,6 +566,12 @@ export function workflowCalendarNotice(graph?: WorkflowGraph) {
 
 function workflowLayoutStorageKey(runId: string) {
   return `alphaclaude.workflow.layout.${runId}`;
+}
+
+export function agentTaskIdForNode(nodeId?: string) {
+  if (nodeId === 'agent_research') return 'premarket_plan';
+  if (nodeId === 'trade_attribution') return 'postclose_review';
+  return '';
 }
 
 function datePart(value?: string) {

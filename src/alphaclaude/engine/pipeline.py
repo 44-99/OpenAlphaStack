@@ -669,7 +669,7 @@ class OvernightPipeline:
         audit_warning_count = len(agent_stage.get("audit_warnings") or [])
         agent_ok = bool(agent_stage.get("ok"))
         self._record_workflow(
-            "warning" if audit_warning_count else "success",
+            "warning" if audit_warning_count or not agent_ok else "success",
             phase="premarket",
             node_id="agent_research",
             node_name="自主 Agent 研究",

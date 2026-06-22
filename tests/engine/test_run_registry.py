@@ -47,6 +47,7 @@ def test_list_runs_normalizes_valid_modes(workspace_tmp, monkeypatch):
     _write_run(output, "paper_2026-05-16T09-00-00")
     _write_run(output, "backtest_2026-05-16T10-00-00", meta={"process_id": 0, "status": "stopped"})
     _write_run(output, "live_2026-05-16T11-00-00", meta={"process_id": 9999, "status": "observation"})
+    _write_run(output, "agent_2026-05-16_premarket_plan", meta={"mode": "agent", "agent_task_id": "premarket_plan", "process_id": 0, "status": "completed"})
     _write_run(output, "note_2026-05-16T12-00-00")
 
     monkeypatch.setattr(run_registry, "_output_base", lambda: output)
@@ -54,15 +55,32 @@ def test_list_runs_normalizes_valid_modes(workspace_tmp, monkeypatch):
 
     runs = run_registry.list_runs()
 
-    assert [r.run_id for r in runs] == [
+    by_id = {run.run_id: run for run in runs}
+    assert set(by_id) == {
         "live_2026-05-16T11-00-00",
         "backtest_2026-05-16T10-00-00",
         "paper_2026-05-16T09-00-00",
-    ]
-    assert runs[0].mode == "live"
-    assert runs[0].is_alive is True
-    assert runs[0].status == "observation"
-    assert runs[1].status == "stopped"
+        "agent_2026-05-16_premarket_plan",
+    }
+    assert by_id["live_2026-05-16T11-00-00"].mode == "live"
+    assert by_id["live_2026-05-16T11-00-00"].is_alive is True
+    assert by_id["live_2026-05-16T11-00-00"].status == "observation"
+    assert by_id["backtest_2026-05-16T10-00-00"].status == "stopped"
+    assert by_id["agent_2026-05-16_premarket_plan"].mode == "agent"
+    assert by_id["agent_2026-05-16_premarket_plan"].status == "completed"
+
+
+def test_list_runs_can_filter_agent_runs(workspace_tmp, monkeypatch):
+    output = workspace_tmp / "output"
+    _write_run(output, "paper_2026-05-16T09-00-00")
+    _write_run(output, "agent_2026-05-16_postclose_review", meta={"mode": "agent", "agent_task_id": "postclose_review", "process_id": 0, "status": "completed"})
+
+    monkeypatch.setattr(run_registry, "_output_base", lambda: output)
+    monkeypatch.setattr(run_registry, "_is_pid_alive", lambda pid: False)
+
+    runs = run_registry.list_runs("agent")
+
+    assert [run.run_id for run in runs] == ["agent_2026-05-16_postclose_review"]
 
 
 def test_get_run_returns_exact_run(workspace_tmp, monkeypatch):

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNodeAgentPrompt, buildWorkflowFlow, isRerunBlocked, workflowCalendarNotice, workflowViewContext } from './WorkflowBoard';
+import { agentTaskIdForNode, buildNodeAgentPrompt, buildWorkflowFlow, isRerunBlocked, workflowCalendarNotice, workflowViewContext } from './WorkflowBoard';
 import type { WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
 describe('WorkflowBoard helpers', () => {
@@ -34,6 +34,12 @@ describe('WorkflowBoard helpers', () => {
     expect(isRerunBlocked('intraday_event_stream')).toBe(true);
     expect(isRerunBlocked('fastlane_tick')).toBe(true);
     expect(isRerunBlocked('market_snapshot')).toBe(false);
+  });
+
+  it('maps workflow nodes to scheduled agent task timelines', () => {
+    expect(agentTaskIdForNode('agent_research')).toBe('premarket_plan');
+    expect(agentTaskIdForNode('trade_attribution')).toBe('postclose_review');
+    expect(agentTaskIdForNode('risk_validation')).toBe('');
   });
 
   it('builds blueprint flow nodes and semantic edges', () => {

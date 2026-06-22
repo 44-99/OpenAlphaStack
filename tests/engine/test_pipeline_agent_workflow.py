@@ -188,3 +188,44 @@ def test_agent_workflow_audit_warnings_mark_workflow_warning(pipeline_dir, monke
 
     assert result["stages"]["agent_research"]["audit_warnings"] == ["events.jsonl missing"]
     assert "审计告警 1 条" in warning["summary"]
+
+
+def test_agent_workflow_failed_agent_marks_workflow_warning(pipeline_dir, monkeypatch):
+    pipeline = _pipeline(pipeline_dir)
+    artifacts_dir = pipeline_dir / "agent_runs" / "premarket_plan"
+
+    class FakeRunner:
+        def __init__(self, output_dir, run_id, timeout):
+            pass
+
+        def run_premarket_plan(self, market_snapshot="", account_summary=""):
+            return AgentTaskResult(
+                task_id="premarket_plan",
+                ok=False,
+                returncode=1,
+                artifacts_dir=artifacts_dir,
+                stdout="",
+                stderr="failed",
+                parsed_artifacts={},
+                audit_warnings=[],
+                agent_events=[],
+                error="failed",
+            )
+
+    monkeypatch.setattr(pipeline_module, "AgentTaskRunner", FakeRunner)
+    monkeypatch.setattr(pipeline, "_fetch_market_snapshot", lambda: "MARKET")
+    monkeypatch.setattr(pipeline, "run_risk_validation", lambda: {"stage": "risk", "passed": 0, "rejected": 0})
+
+    result = pipeline.run_full()
+
+    events = [
+        json.loads(line)
+        for line in (pipeline_dir / "workflow_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    warning = next(
+        event for event in events
+        if event["node_id"] == "agent_research" and event["status"] == "warning"
+    )
+
+    assert result["stages"]["agent_research"]["ok"] is False
+    assert "未成功" in warning["summary"]

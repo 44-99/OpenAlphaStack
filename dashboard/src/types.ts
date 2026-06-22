@@ -1,5 +1,5 @@
 export type PageKey = 'watch' | 'workflow' | 'account';
-export type RunMode = 'paper' | 'live' | 'demo';
+export type RunMode = 'paper' | 'live' | 'demo' | 'agent';
 export type KlinePeriod = '1m' | '5m' | '15m' | '60m' | 'day' | 'week' | 'month';
 export type OverlayKind = 'NONE' | 'MA' | 'EMA' | 'BOLL';
 export type AgentProvider = 'claude' | 'codex';

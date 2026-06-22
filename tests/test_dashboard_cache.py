@@ -330,6 +330,33 @@ def test_engine_status_uses_run_registry_liveness(tmp_path, monkeypatch):
     assert result["process_id"] == 31560
 
 
+def test_runs_api_includes_agent_runs(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "agent_2026-06-20_postclose_review"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps({
+            "data_time": "2026-06-20 15:30:00",
+            "engine_meta": {
+                "mode": "agent",
+                "agent_task_id": "postclose_review",
+                "process_id": 0,
+                "status": "completed",
+                "started_at": "2026-06-20T15:30:00",
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+    monkeypatch.setattr(run_registry, "_output_base", lambda: output)
+    monkeypatch.setattr(run_registry, "_is_pid_alive", lambda _pid: False)
+
+    result = asyncio.run(app_dashboard.api_runs())
+
+    assert result["selected_run_id"] == "agent_2026-06-20_postclose_review"
+    assert result["runs"][0]["mode"] == "agent"
+
+
 def test_workflow_events_api_reads_active_run(tmp_path, monkeypatch):
     output = tmp_path / "output"
     run_dir = output / "paper_2026-06-04T09-30-00"
@@ -559,6 +586,42 @@ def test_agent_run_timeline_reads_dynamic_subtasks(tmp_path, monkeypatch):
     assert len(result["events"]) == 2
     assert result["tasks"]["market_intel"]["status"] == "success"
     assert result["tasks"]["market_intel"]["input_ref"] == "tasks/market_intel/input.md"
+
+
+def test_agent_run_timeline_reads_postclose_review(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    run_dir = output / "agent_2026-06-20_postclose_review"
+    agent_dir = run_dir / "agent_runs" / "postclose_review"
+    task_dir = agent_dir / "tasks" / "trade_review"
+    task_dir.mkdir(parents=True)
+    (task_dir / "input.md").write_text("ledger", encoding="utf-8")
+    (task_dir / "output.md").write_text("review", encoding="utf-8")
+    (task_dir / "result.json").write_text('{"ok": true}', encoding="utf-8")
+    (agent_dir / "events.jsonl").write_text(
+        json.dumps({
+            "event_id": "agent_evt_postclose",
+            "task_id": "trade_review",
+            "parent_task_id": "postclose_review",
+            "role": "盘后归因",
+            "status": "success",
+            "started_at": "2026-06-20T15:30:00",
+            "ended_at": "2026-06-20T15:31:00",
+            "summary": "复盘完成",
+            "input_ref": "tasks/trade_review/input.md",
+            "output_ref": "tasks/trade_review/output.md",
+            "result_ref": "tasks/trade_review/result.json",
+            "error": "",
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
+
+    result = asyncio.run(app_dashboard.api_agent_run_timeline("agent_2026-06-20_postclose_review", "postclose_review"))
+
+    assert result["run_id"] == "agent_2026-06-20_postclose_review"
+    assert result["task_id"] == "postclose_review"
+    assert result["tasks"]["trade_review"]["role"] == "盘后归因"
+    assert result["warnings"] == []
 
 
 def test_agent_run_timeline_rejects_unsafe_task_id(tmp_path, monkeypatch):

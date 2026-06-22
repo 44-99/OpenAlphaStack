@@ -17,6 +17,8 @@ from alphaclaude.feishu.bot import send_text
 from alphaclaude.app.stock import format_market_report
 from alphaclaude.claude import ask_claude, build_trading_prompt
 from alphaclaude.app.memory import _list_modified_transcripts, _uuid_to_conv, _consolidate_session
+from alphaclaude.engine.workflow_events import WorkflowEventStore
+from alphaclaude.tools.engine_status import _is_pid_alive
 
 logger = logging.getLogger("scheduler")
 
@@ -337,6 +339,188 @@ def _post_market_paper() -> None:
         logger.error("模拟盘停止失败: %s", e, exc_info=True, extra={"category": "paper"})
 
 
+# === External scheduled Agent tasks ===
+
+def _agent_task_run_id(task_id: str, today: date) -> str:
+    return f"agent_{today.isoformat()}_{task_id}"
+
+
+def _agent_task_sentinel_path(task_id: str) -> str:
+    return os.path.join(STOCK_DATA_DIR, "state", f".agent_task_{task_id}_last_start")
+
+
+def _agent_task_output_dir(task_id: str, today: date) -> str:
+    return os.path.join(STOCK_DATA_DIR, "output", _agent_task_run_id(task_id, today))
+
+
+def _is_trading_day_for_agent_task(today: date) -> bool:
+    from alphaclaude.engine.trading_calendar import is_trading_day
+
+    return is_trading_day(today)
+
+
+def _agent_task_started_today(task_id: str, today: date) -> bool:
+    sentinel = _agent_task_sentinel_path(task_id)
+    if not os.path.exists(sentinel):
+        return False
+    try:
+        return open(sentinel, encoding="utf-8").read().strip() == today.isoformat()
+    except OSError:
+        return False
+
+
+def _mark_agent_task_started(task_id: str, today: date) -> None:
+    sentinel = _agent_task_sentinel_path(task_id)
+    os.makedirs(os.path.dirname(sentinel), exist_ok=True)
+    with open(sentinel, "w", encoding="utf-8") as f:
+        f.write(today.isoformat())
+
+
+def _is_agent_task_process_running(task_id: str, today: date) -> bool:
+    state_path = os.path.join(_agent_task_output_dir(task_id, today), "state.json")
+    if not os.path.exists(state_path):
+        return False
+    try:
+        with open(state_path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return False
+    meta = state.get("engine_meta") or {}
+    status = str(meta.get("status") or "")
+    if status in {"completed", "failed", "stopped"}:
+        return False
+    try:
+        pid = int(meta.get("process_id") or 0)
+    except (TypeError, ValueError):
+        return False
+    return _is_pid_alive(pid)
+
+
+def _scheduled_agent_task_command(task_id: str, mode: str = "paper") -> list[str]:
+    return [
+        sys.executable,
+        "-u",
+        "-m",
+        "alphaclaude.engine.cli",
+        "--agent-task",
+        task_id,
+        "--mode",
+        mode,
+    ]
+
+
+def _record_agent_task_launch_error(task_id: str, today: date, error: str) -> None:
+    run_id = _agent_task_run_id(task_id, today)
+    output_dir = _agent_task_output_dir(task_id, today)
+    try:
+        store = WorkflowEventStore(output_dir, run_id=run_id)
+        store.record_node_error(
+            phase="system",
+            node_id="agent_task_launch",
+            node_name="Agent 任务启动",
+            error=error,
+            input_payload={"task_id": task_id, "run_id": run_id},
+        )
+    except Exception as exc:
+        logger.error("Agent 任务启动失败事件写入失败: %s", exc, extra={"category": "agent_task"})
+
+
+def _record_agent_task_launch_warning(task_id: str, today: date, summary: str) -> None:
+    run_id = _agent_task_run_id(task_id, today)
+    output_dir = _agent_task_output_dir(task_id, today)
+    try:
+        store = WorkflowEventStore(output_dir, run_id=run_id)
+        store.record_node_warning(
+            phase="system",
+            node_id="agent_task_launch",
+            node_name="Agent 任务启动",
+            summary=summary,
+            input_payload={"task_id": task_id, "run_id": run_id},
+        )
+    except Exception as exc:
+        logger.error("Agent 任务启动告警事件写入失败: %s", exc, extra={"category": "agent_task"})
+
+
+def _launch_scheduled_agent_task(task_id: str, *, today: date | None = None, mode: str = "paper") -> dict:
+    today = today or date.today()
+    if not _is_trading_day_for_agent_task(today):
+        logger.info("今日非交易日，跳过 Agent 任务 %s", task_id, extra={"category": "agent_task"})
+        return {"started": False, "task_id": task_id, "reason": "non_trading_day"}
+    if _agent_task_started_today(task_id, today):
+        logger.info("今日 Agent 任务已启动过，跳过 %s", task_id, extra={"category": "agent_task"})
+        return {"started": False, "task_id": task_id, "reason": "already_started"}
+    if _is_agent_task_process_running(task_id, today):
+        logger.warning("Agent 任务仍在运行，跳过重复启动 %s", task_id, extra={"category": "agent_task"})
+        _record_agent_task_launch_warning(task_id, today, "同任务进程仍在运行，跳过重复启动")
+        return {"started": False, "task_id": task_id, "reason": "already_running"}
+
+    run_id = _agent_task_run_id(task_id, today)
+    logs_dir = os.path.join(STOCK_DATA_DIR, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    out_path = os.path.join(logs_dir, f"{run_id}.out.log")
+    err_path = os.path.join(logs_dir, f"{run_id}.err.log")
+    env = os.environ.copy()
+    src_path = os.path.join(_PROJECT_ROOT, "src")
+    env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+
+    cmd = _scheduled_agent_task_command(task_id, mode)
+    out_f = open(out_path, "ab")
+    err_f = open(err_path, "ab")
+    try:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=_PROJECT_ROOT,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=out_f,
+                stderr=err_f,
+                close_fds=True,
+                creationflags=creationflags,
+            )
+        except OSError as exc:
+            error = str(exc)
+            _record_agent_task_launch_error(task_id, today, error)
+            logger.error("Agent 任务启动失败 %s: %s", task_id, error, extra={"category": "agent_task"})
+            return {"started": False, "task_id": task_id, "run_id": run_id, "reason": "launch_failed", "error": error}
+    finally:
+        out_f.close()
+        err_f.close()
+
+    _mark_agent_task_started(task_id, today)
+    logger.info("Agent 任务已启动: %s pid=%s", task_id, proc.pid, extra={"category": "agent_task"})
+    return {
+        "started": True,
+        "task_id": task_id,
+        "run_id": run_id,
+        "pid": proc.pid,
+        "stdout": out_path,
+        "stderr": err_path,
+        "cmd": cmd,
+    }
+
+
+def _pre_market_agent_task() -> None:
+    try:
+        _launch_scheduled_agent_task("premarket_plan", mode="paper")
+    except Exception as e:
+        logger.error("盘前 Agent 任务启动失败: %s", e, exc_info=True, extra={"category": "agent_task"})
+
+
+def _post_market_agent_task() -> None:
+    try:
+        _launch_scheduled_agent_task("postclose_review", mode="paper")
+    except Exception as e:
+        logger.error("盘后 Agent 任务启动失败: %s", e, exc_info=True, extra={"category": "agent_task"})
+
+
 def start_scheduler(include_market_jobs: bool = True):
     """Initialize scheduler and restore user-created tasks.
 
@@ -359,6 +543,11 @@ def start_scheduler(include_market_jobs: bool = True):
                        id="dream_am", name="记忆整理(凌晨)")
     _scheduler.add_job(run_memory_consolidation, CronTrigger(hour=15, minute=17),
                        id="dream_pm", name="记忆整理(下午)")
+    # Agent 定时任务：调度器只启动独立 CLI 进程，不在 scheduler 线程里运行 Claude。
+    _scheduler.add_job(_pre_market_agent_task, CronTrigger(hour=8, minute=30, day_of_week="mon-fri"),
+                       id="agent_premarket_plan", name="Agent 盘前计划")
+    _scheduler.add_job(_post_market_agent_task, CronTrigger(hour=15, minute=30, day_of_week="mon-fri"),
+                       id="agent_postclose_review", name="Agent 盘后复盘")
     # 模拟盘自动调度：盘前 8:30 启动，盘后 15:05 停止（交易日历兜底非交易日跳过）
     _scheduler.add_job(_pre_market_paper, CronTrigger(hour=8, minute=30, day_of_week="mon-fri"),
                        id="paper_start", name="模拟盘启动")

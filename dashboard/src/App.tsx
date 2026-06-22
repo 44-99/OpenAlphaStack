@@ -442,6 +442,7 @@ function RunControlCenter({ runs, selectedRun, open, busyKey, message, onToggle,
 }) {
   const controlRef = useRef<HTMLDivElement | null>(null);
   const paperRuns = runs.filter((run) => run.mode === 'paper' || run.mode === 'demo');
+  const agentRuns = runs.filter((run) => run.mode === 'agent');
   const liveRuns = runs.filter((run) => run.mode === 'live');
   const liveLocked = true;
 
@@ -492,6 +493,17 @@ function RunControlCenter({ runs, selectedRun, open, busyKey, message, onToggle,
             runs={paperRuns}
             selectedRunId={selectedRun?.run_id || ''}
             busyKey={busyKey}
+            emptyText="暂无模拟盘记录"
+            onSelect={onSelect}
+            onResume={onResume}
+            onStop={onStop}
+          />
+          <RunGroup
+            title="Agent 任务"
+            runs={agentRuns}
+            selectedRunId={selectedRun?.run_id || ''}
+            busyKey={busyKey}
+            emptyText="暂无 Agent 任务记录"
             onSelect={onSelect}
             onResume={onResume}
             onStop={onStop}
@@ -530,11 +542,12 @@ export function isOutsideRunControl(target: EventTarget | null, control: Pick<HT
   return !control.contains(target as Node);
 }
 
-function RunGroup({ title, runs, selectedRunId, busyKey, onSelect, onResume, onStop }: {
+function RunGroup({ title, runs, selectedRunId, busyKey, emptyText, onSelect, onResume, onStop }: {
   title: string;
   runs: RunRecord[];
   selectedRunId: string;
   busyKey: string;
+  emptyText?: string;
   onSelect: (runId: string) => void;
   onResume: (run: RunRecord) => void;
   onStop: (run: RunRecord) => void;
@@ -555,7 +568,7 @@ function RunGroup({ title, runs, selectedRunId, busyKey, onSelect, onResume, onS
           onResume={onResume}
           onStop={onStop}
         />
-      )) : <p className="run-empty">暂无模拟盘记录</p>}
+      )) : <p className="run-empty">{emptyText || '暂无记录'}</p>}
     </section>
   );
 }
@@ -570,7 +583,7 @@ function RunRow({ run, selected, busyKey, liveLocked = false, onSelect, onResume
   onStop: (run: RunRecord) => void;
 }) {
   const busy = busyKey.endsWith(run.run_id);
-  const canControl = run.mode !== 'demo' && !liveLocked;
+  const canControl = run.mode !== 'demo' && run.mode !== 'agent' && !liveLocked;
   return (
     <article className={`run-row ${selected ? 'selected' : ''} ${run.is_alive ? 'alive' : 'stopped'}`}>
       <button className="run-row-main" onClick={() => onSelect(run.run_id)}>
@@ -602,6 +615,7 @@ function modeLabel(mode?: string) {
   if (mode === 'paper') return '模拟盘';
   if (mode === 'live') return '实盘';
   if (mode === 'demo') return '演示';
+  if (mode === 'agent') return 'Agent任务';
   return mode || '--';
 }
 

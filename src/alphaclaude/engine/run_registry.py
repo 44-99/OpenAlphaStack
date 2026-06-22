@@ -15,7 +15,7 @@ from typing import Any
 from alphaclaude.paths import DATA_DIR
 from alphaclaude.tools.engine_status import _is_pid_alive
 
-VALID_MODES = {"paper", "backtest", "live"}
+VALID_MODES = {"paper", "backtest", "live", "agent"}
 
 
 class RunControlError(RuntimeError):

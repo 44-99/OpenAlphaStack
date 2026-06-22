@@ -1754,7 +1754,7 @@ async def api_runs(mode: str = "all"):
     normalized_mode = mode.lower().strip()
     if normalized_mode == "all":
         records = run_registry.list_runs()
-    elif normalized_mode in {"paper", "live"}:
+    elif normalized_mode in {"paper", "live", "agent"}:
         records = run_registry.list_runs(normalized_mode)
     else:
         return JSONResponse({"error": f"Unsupported mode: {mode}"}, status_code=400)
@@ -1762,7 +1762,7 @@ async def api_runs(mode: str = "all"):
     runs = [
         _run_record_summary(record)
         for record in records
-        if record.mode in {"paper", "live"}
+        if record.mode in {"paper", "live", "agent"}
     ]
     if not runs:
         demo_state = _demo_state()

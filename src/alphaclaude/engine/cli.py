@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from alphaclaude.engine import run_registry
+from alphaclaude.engine import scheduled_agent_task
 from alphaclaude.paths import DATA_DIR, SRC_DIR
 from alphaclaude.engine.paper import PaperEngine
 from alphaclaude.engine.universe import fallback_universe, generate_universe
@@ -274,8 +275,19 @@ def main() -> None:
                         help="Stop one recorded engine run by run_id")
     parser.add_argument("--resume-run",
                         help="Resume one recorded engine run by run_id; requires --daemon")
+    parser.add_argument("--agent-task",
+                        choices=sorted(scheduled_agent_task.VALID_SCHEDULED_AGENT_TASKS),
+                        help="Run one scheduled autonomous Agent task and exit")
 
     args = parser.parse_args()
+
+    if args.agent_task:
+        mode = args.mode or "paper"
+        result = scheduled_agent_task.run_scheduled_agent_task(args.agent_task, mode=mode)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result.get("ok"):
+            raise SystemExit(1)
+        return
 
     if args.list_runs:
         runs = [r.to_dict() for r in run_registry.list_runs(args.mode)]

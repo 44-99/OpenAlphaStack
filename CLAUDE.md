@@ -82,7 +82,7 @@
 |------|----------|------|
 | `backtest` | `python -m alphaclaude.tools.backtest <code> -s <策略>` 或 `--list` | 策略历史胜率与收益验证——单股单策略 |
 | `backtest_runner` | `python -m alphaclaude.tools.backtest_runner --start 2024-01-01 --end 2024-06-30 -u default` | 完整回测入口——支持 screen 策略名或代码列表，调包内引擎 |
-| `engine` | `python -m alphaclaude.engine.cli --mode backtest --start ... --end ...` 或 `alphaclaude-engine --mode paper` | 统一 Agent 引擎 — 盘前启动自主 Agent 任务读取 skills 并生成 plan_draft，盘中 Python 机械执行，盘后 Python 报告；backtest/paper/live 共用包内核心；live 未完成券商准入前不得真金自动交易 |
+| `engine` | `python -m alphaclaude.engine.cli --mode backtest --start ... --end ...`、`alphaclaude-engine --mode paper`，或 `python -m alphaclaude.engine.cli --agent-task premarket_plan/postclose_review --mode paper` | 统一 Agent 引擎 — 盘前启动自主 Agent 任务读取 skills 并生成 plan_draft，盘中 Python 机械执行，盘后可由独立 Agent 任务复盘；backtest/paper/live 共用包内核心；live 未完成券商准入前不得真金自动交易 |
 
 ### 自选股
 
@@ -114,7 +114,7 @@
 4. **数据时效性**: 每次返回结果包含 `time` 字段，标注数据时间
 5. **错误处理**: 如果返回 `{"error": "..."}` ，如实告知用户数据获取失败
 6. **缓存**: 工具内部有缓存（行情300s，基本面3600s），短时间内重复调用不会重复请求
-7. **引擎运行**: `alphaclaude.engine.cli` 盘前启动自主 Agent 任务生成当天 `plan_draft.json`。Agent 必须先读 `CLAUDE.md` 和 `skills/README.md`，自行选择需要的 `skills/*/SKILL.md`，自主创建子任务或子 Agent，并通过 `python -m alphaclaude.engine.agent_event start/finish` 写入审计事件。Python 只负责调度、审计校验、风控、计划落盘和盘中机械执行；盘后只做 Python 汇总报告。紧急：大盘跌>3%或持仓跌>5%触发 Claude Code
+7. **引擎运行**: `alphaclaude.engine.cli` 盘前启动自主 Agent 任务生成当天 `plan_draft.json`。也可用 `--agent-task premarket_plan/postclose_review --mode paper` 由调度器新建独立 Agent 任务进程。Agent 必须先读 `CLAUDE.md` 和 `skills/README.md`，自行选择需要的 `skills/*/SKILL.md`，自主创建子任务或子 Agent，并通过 `python -m alphaclaude.engine.agent_event start/finish` 写入审计事件。Python 只负责调度、审计校验、风控、计划落盘和盘中机械执行；盘后复盘 Agent 不得改写交易状态。紧急：大盘跌>3%或持仓跌>5%触发 Claude Code
 8. **回测**: `--mode backtest --dry-run` 仅 Python 快车道；完整回测不加 `--dry-run`，每个交易日盘前用历史可见数据调 Claude Code 生成当日 plan
 
 ## 交易纪律（必须遵守）
