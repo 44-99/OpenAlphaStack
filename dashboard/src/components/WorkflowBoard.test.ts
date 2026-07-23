@@ -3,7 +3,7 @@ import { agentTaskIdForNode, buildNodeAgentPrompt, buildWorkflowFlow, isRerunBlo
 import type { WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
 describe('WorkflowBoard helpers', () => {
-  it('builds concise node context for the agent terminal', () => {
+  it('builds concise node context for copying into Codex', () => {
     const node: WorkflowGraphNode = {
       id: 'risk_validation',
       name: '风控校验',

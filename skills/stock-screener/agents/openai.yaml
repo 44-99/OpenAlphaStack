@@ -1,0 +1,11 @@
+interface:
+  display_name: "A 股选股"
+  short_description: "使用确定性规则筛选并通过 MCP 数据复核候选股票和风险"
+  default_prompt: "使用 $stock-screener 筛选并复核少量 A 股候选。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "open-alpha-stack"
+      description: "OpenAlphaStack bounded A-share research tools"
+      transport: "stdio"

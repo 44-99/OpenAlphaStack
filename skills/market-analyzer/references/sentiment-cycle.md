@@ -10,7 +10,7 @@
 
 ## 1. 换手率分析（情绪热度核心指标）
 
-从 `python -m alphaclaude.tools.quote {code}` 和 `python -m alphaclaude.tools.technical {code} --all` 获取换手率数据：
+从 `MCP `stock_quote(code)`` 和 `MCP `stock_technical(code, indicator="all")`` 获取换手率数据：
 
 | 换手率 | 情绪阶段 | 含义 |
 |--------|----------|------|
@@ -32,7 +32,7 @@
 
 ## 3. 新闻情绪面分析
 
-从 `python -m alphaclaude.tools.news {code}` 搜索近期新闻，分析情绪倾向：
+从 `MCP `stock_news(code)`` 搜索近期新闻，分析情绪倾向：
 
 | 新闻特征 | 情绪判断 |
 |----------|----------|
@@ -42,7 +42,7 @@
 
 ## 4. 均线收缩与波动率
 
-从 `python -m alphaclaude.tools.technical {code} --all`：
+从 `MCP `stock_technical(code, indicator="all")``：
 
 - MA5/MA10/MA20 三线粘合（均线收缩）→ 蓄势，方向待定，情绪冷淡
 - 波动率降至低位（ATR 萎缩）→ 情绪极度低迷，**蓄势爆发前兆**

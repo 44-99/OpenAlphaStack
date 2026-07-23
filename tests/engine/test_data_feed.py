@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from alphaclaude.engine import BacktestDataFeed
-from alphaclaude.engine.data_feed import _generate_day_bars
+from openalphastack.engine import BacktestDataFeed
+from openalphastack.engine.data_feed import _generate_day_bars
 
 
 def test_generate_day_bars_respects_a_share_sessions():

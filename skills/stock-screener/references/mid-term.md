@@ -1,7 +1,7 @@
 # 中线筛选 (1-4 周)
 
 **策略名**: value（价值中线）
-**CLI**: `python -m alphaclaude.tools.screen -s value`
+**CLI**: `MCP `screen_candidates(strategy="value")``
 
 ---
 
@@ -22,15 +22,15 @@
 对筛选结果前 5 名：
 
 ```bash
-python -m alphaclaude.tools.quote {code}              # 现价确认
-python -m alphaclaude.tools.technical {code} --all    # 均线多头排列、布林带位置
-python -m alphaclaude.tools.fundamental {code}        # PE/PB/ROE/营收增速 + 行业分位排名
-python -m alphaclaude.tools.news {code}               # 排除利空
+MCP `stock_quote(code)`              # 现价确认
+MCP `stock_technical(code, indicator="all")`    # 均线多头排列、布林带位置
+MCP `stock_fundamentals(code)`        # PE/PB/ROE/营收增速 + 行业分位排名
+MCP `stock_news(code)`               # 排除利空
 ```
 
 ## 行业比较
 
-`python -m alphaclaude.tools.fundamental {code}` 返回 `industry_rank` 字段：
+`MCP `stock_fundamentals(code)`` 返回 `industry_rank` 字段：
 - PE 在同行业分位：< 30% 为低估，> 70% 为高估
 - ROE 在同行业分位：> 50% 为优质
 

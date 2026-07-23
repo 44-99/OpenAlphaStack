@@ -30,23 +30,23 @@ jobs:
         run: python -m pytest -q
 
       - name: Compile package
-        run: python -m compileall -q src/alphaclaude
+        run: python -m compileall -q src/openalphastack
 
       - name: Unified CLI help
-        run: alphaclaude --help
+        run: openalphastack --help
 
       - name: Engine CLI help
-        run: alphaclaude engine start --help
+        run: openalphastack engine start --help
 
       - name: Quote CLI help
-        run: alphaclaude tools quote --help
+        run: openalphastack tools quote --help
 
       - name: Tool schema check
         run: |
           for tool in quote technical fundamental flow news screen backtest trend signal_detector pivot fibonacci sentiment portfolio risk signal signal_rules; do
-            echo "Checking alphaclaude tools $tool schema..."
-            alphaclaude tools "$tool" --help > /dev/null 2>&1 || {
-              echo "ERROR: alphaclaude tools $tool --help failed"
+            echo "Checking openalphastack tools $tool schema..."
+            openalphastack tools "$tool" --help > /dev/null 2>&1 || {
+              echo "ERROR: openalphastack tools $tool --help failed"
               exit 1
             }
           done
@@ -55,13 +55,13 @@ jobs:
       - name: Signal rules baseline check
         run: |
           echo "Running signal_rules --list..."
-          alphaclaude tools signal_rules --list
+          openalphastack tools signal_rules --list
           echo "Baseline check OK"
 
       - name: Risk calculator help
         run: |
-          alphaclaude tools risk --help
+          openalphastack tools risk --help
 
       - name: Signal validator help
         run: |
-          alphaclaude tools signal --help
+          openalphastack tools signal --help

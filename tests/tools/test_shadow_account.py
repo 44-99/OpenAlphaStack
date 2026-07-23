@@ -1,9 +1,8 @@
 """Shadow Account Phase B — comprehensive test coverage.
 
-Tests all core functions in alphaclaude.tools.shadow_account:
+Tests all core functions in openalphastack.tools.shadow_account:
 pair_trades, compute_diagnostics, _detect_patterns, format_for_prompt,
-build_reflection_prompt, format_reflections_for_prompt, IO functions,
-and integration functions with LLM mocking.
+build_reflection_prompt, format_reflections_for_prompt, and IO functions.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from alphaclaude.tools.shadow_account import (
+from openalphastack.tools.shadow_account import (
     _detect_patterns,
     _entry_date,
     _find_base_date,
@@ -31,8 +30,7 @@ from alphaclaude.tools.shadow_account import (
     load_ledger,
     merge_patterns,
     pair_trades,
-    resolve_with_llm,
-    run_phase_b,
+    prepare_reflection_prompt,
     save_diagnostics,
 )
 
@@ -464,7 +462,7 @@ class TestEntryDate:
 
 class TestLoadLedger:
     def test_valid(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -482,7 +480,7 @@ class TestLoadLedger:
         assert entries == []
 
     def test_malformed_json(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run2"
         run_dir.mkdir(parents=True)
@@ -499,7 +497,7 @@ class TestLoadLedger:
 
 class TestSaveDiagnostics:
     def test_creates_files(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -511,7 +509,7 @@ class TestSaveDiagnostics:
         assert len(jsons) >= 1
 
     def test_no_sub_c_output(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run2"
         run_dir.mkdir(parents=True)
@@ -522,7 +520,7 @@ class TestSaveDiagnostics:
 
 class TestLoadAccumulatedPatterns:
     def test_valid(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         shadow_dir = temp_dir / "data" / "output" / "test_run" / "shadow_account"
         shadow_dir.mkdir(parents=True)
@@ -538,7 +536,7 @@ class TestLoadAccumulatedPatterns:
         assert patterns == []
 
     def test_malformed(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         shadow_dir = temp_dir / "data" / "output" / "test_run2" / "shadow_account"
         shadow_dir.mkdir(parents=True)
@@ -549,7 +547,7 @@ class TestLoadAccumulatedPatterns:
 
 class TestMergePatterns:
     def test_new(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -563,7 +561,7 @@ class TestMergePatterns:
         assert patterns[0]["occurrence_count"] == 1
 
     def test_update_existing(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -579,7 +577,7 @@ class TestMergePatterns:
         assert patterns[0]["status"] == "active"
 
     def test_empty(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -589,7 +587,7 @@ class TestMergePatterns:
 
 class TestLoadLatestDiagnostics:
     def test_multiple(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         shadow_dir = temp_dir / "data" / "output" / "test_run" / "shadow_account"
         shadow_dir.mkdir(parents=True)
@@ -608,7 +606,7 @@ class TestLoadLatestDiagnostics:
 
 class TestCompareRuns:
     def test_detects_changes(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         for rid in ("run_a", "run_b"):
             shadow_dir = temp_dir / "data" / "output" / rid / "shadow_account"
@@ -632,7 +630,7 @@ class TestCompareRuns:
         assert result["resolved"][0]["name"] == "X"
 
     def test_both_empty(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         for rid in ("run_a", "run_b"):
             (temp_dir / "data" / "output" / rid / "shadow_account").mkdir(parents=True)
@@ -645,37 +643,12 @@ class TestCompareRuns:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Integration tests (LLM mocking)
+# External Agent handoff
 # ═══════════════════════════════════════════════════════════════════
 
-class TestResolveWithLLM:
-    def test_success(self, monkeypatch):
-        def _mock_call_text(prompt, **kwargs):
-            return "反思：应严格止损，避免扛单"
-        monkeypatch.setattr(
-            "alphaclaude.tools.llm_client.call_text", _mock_call_text)
-        # Need at least one paired trade to trigger LLM call
-        paired = [{"symbol": "000001", "entry_price": 10, "exit_price": 11,
-                    "pnl": 1000, "entry_date": "2025-03-14", "exit_date": "2025-03-20"}]
-        diag = compute_diagnostics(paired, [], [])
-        result = resolve_with_llm(diag)
-        assert "止损" in result
-
-    def test_failure(self, monkeypatch):
-        def _mock_call_text(prompt, **kwargs):
-            raise RuntimeError("API error")
-        monkeypatch.setattr(
-            "alphaclaude.tools.llm_client.call_text", _mock_call_text)
-        paired = [{"symbol": "000001", "entry_price": 10, "exit_price": 11,
-                    "pnl": 1000, "entry_date": "2025-03-14", "exit_date": "2025-03-20"}]
-        diag = compute_diagnostics(paired, [], [])
-        result = resolve_with_llm(diag)
-        assert result == ""
-
-
-class TestRunPhaseB:
+class TestPrepareReflectionPrompt:
     def test_insufficient_trades(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -684,11 +657,11 @@ class TestRunPhaseB:
         # Only 2 paired trades (< 4 threshold)
         (shadow_dir / "shadow_2025-03-14.json").write_text(
             json.dumps({"paired_trades_count": 2}), encoding="utf-8")
-        result = run_phase_b("test_run")
+        result = prepare_reflection_prompt("test_run")
         assert result == ""
 
     def test_with_sufficient_data(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
+        import openalphastack.tools.shadow_account as sa
         monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
         run_dir = temp_dir / "data" / "output" / "test_run"
         run_dir.mkdir(parents=True)
@@ -701,32 +674,9 @@ class TestRunPhaseB:
                 "behavioral_diagnostics": {"disposition_effect": {"detected": False}},
                 "recurring_patterns": [],
             }), encoding="utf-8")
-        def _mock_reflection(diag):
-            return "保持纪律"
-        monkeypatch.setattr(sa, "resolve_with_llm", _mock_reflection)
-        result = run_phase_b("test_run")
+        result = prepare_reflection_prompt("test_run")
         assert len(result) > 0
-        assert "保持纪律" in result
-
-    def test_llm_failure(self, temp_dir, monkeypatch):
-        import alphaclaude.tools.shadow_account as sa
-        monkeypatch.setattr(sa, "PROJECT_DIR", str(temp_dir))
-        run_dir = temp_dir / "data" / "output" / "test_run"
-        run_dir.mkdir(parents=True)
-        shadow_dir = run_dir / "shadow_account"
-        shadow_dir.mkdir()
-        (shadow_dir / "shadow_2025-03-14.json").write_text(
-            json.dumps({
-                "paired_trades_count": 5, "open_positions_count": 0,
-                "summary": {"win_rate": 50.0, "total_pnl": 0},
-                "behavioral_diagnostics": {},
-                "recurring_patterns": [],
-            }), encoding="utf-8")
-        def _mock_reflection_fail(diag):
-            return ""
-        monkeypatch.setattr(sa, "resolve_with_llm", _mock_reflection_fail)
-        result = run_phase_b("test_run")
-        assert result == ""
+        assert "交易复盘分析师" in result
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -6,8 +6,8 @@ import uuid
 
 import pytest
 
-from alphaclaude import paths
-from alphaclaude.engine import run_registry
+from openalphastack import paths
+from openalphastack.engine import run_registry
 
 
 @pytest.fixture

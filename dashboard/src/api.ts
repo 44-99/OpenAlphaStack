@@ -9,7 +9,6 @@ import type {
   PlanData,
   RunsResponse,
   WatchlistItem,
-  AgentProvider,
   AgentRunTimeline,
   WorkflowConfig,
   WorkflowEvent,
@@ -112,32 +111,6 @@ export const api = {
       if (!response.ok) throw new Error(data?.error || `${response.status}`);
       return data as CacheStatus & { removed_files?: number };
     }),
-  streamAgent: async (
-    provider: AgentProvider,
-    payload: { message: string; session_id: string; context: Record<string, unknown> },
-    onChunk: (chunk: string) => void,
-  ) => {
-    const response = await fetch(`/api/agent/${provider}/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data?.error || `${response.status}`);
-    }
-    if (!response.body) return;
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      onChunk(decoder.decode(value, { stream: true }));
-    }
-    const tail = decoder.decode();
-    if (tail) onChunk(tail);
-  },
 };
 
 export function normalizeWatchlist(raw: unknown[]): WatchlistItem[] {

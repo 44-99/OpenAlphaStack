@@ -1,115 +1,150 @@
-# AlphaClaude
+<div align="center">
 
-AlphaClaude is a local AI-agent trading workstation for A-share workflows. It combines an interactive K-line dashboard, a paper-trading engine, and an embedded Claude Code / Codex terminal.
+<h1>OpenAlphaStack</h1>
 
-![AlphaClaude Dashboard Workbench](docs/assets/dashboard-workbench.jpg)
+<p><strong>An open-source Codex plugin stack for auditable A-share research, backtesting, and paper trading.</strong></p>
 
-## What You Get
+[![CI](https://github.com/44-99/OpenAlphaStack/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/44-99/OpenAlphaStack/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2563eb.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab.svg?logo=python&logoColor=white)](pyproject.toml)
+[![Codex Plugin](https://img.shields.io/badge/Codex-plugin-111827.svg)](.codex-plugin/plugin.json)
+[![MCP](https://img.shields.io/badge/MCP-local--first-1f9d8a.svg)](.mcp.json)
+[![GitHub stars](https://img.shields.io/github/stars/44-99/OpenAlphaStack?style=flat&logo=github)](https://github.com/44-99/OpenAlphaStack/stargazers)
 
-- **Interactive K-line dashboard**: day, week, 1m, 5m, 15m, and 60m candles with MA/EMA/BOLL, volume, crosshair tooltip, zoom, pan, and local cache controls.
-- **Paper-trading engine**: pre-market Agent research writes `plan.json`; intraday Python executes mechanically; `state.json` and `ledger.jsonl` keep the run auditable.
-- **Embedded Agent terminal**: the right panel is a real `xterm` PowerShell session that can launch Claude Code or Codex CLI inside the dashboard.
-- **Feishu notifications**: Feishu is a notification and fallback command channel, not the primary UI. The dashboard is the main workstation.
+[Quick start](#quick-start) · [Architecture](docs/architecture.md) · [Skills](docs/skills.md) · [Roadmap](docs/roadmap.md)
 
-Live trading is not enabled. The current project is for research, dashboarding, backtesting, and paper trading until broker integration, human confirmation, order idempotency, and safety gates are implemented.
+</div>
 
-## Quick Start
+The plugin packages domain Skills and a local MCP server as one installable
+system. Codex Desktop may compose those Skills in scheduled tasks. The MCP
+server exposes typed market, risk, backtest, and paper-plan tools. Python validates
+plans and executes them mechanically; it never launches an Agent or invents a
+missing trading plan.
 
-### Dashboard First
+> Paper trading only. OpenAlphaStack does not place real orders and does not promise investment returns.
 
-Use this path if you want to see the workstation before wiring every integration.
+![OpenAlphaStack Dashboard](docs/assets/dashboard-workbench.jpg)
 
-```bash
-git clone https://github.com/44-99/AlphaClaude.git
-cd AlphaClaude
-pip install -r requirements.txt
-pip install -e .
-npm install
-npm run dev
+## Why OpenAlphaStack?
+
+- **One plugin, two extension layers** — package reusable domain Skills and a
+  typed MCP server as one Codex-native system.
+- **Agent research, deterministic execution** — Codex analyzes and proposes;
+  Python owns validation, T+1 rules, fees, state transitions and paper execution.
+- **Auditable by design** — explicit plans, version checks, idempotency keys,
+  append-only ledgers and observable workflow events.
+- **Local-first and model-independent at the core** — market tools and execution
+  state stay local instead of being hidden inside an Agent subprocess.
+- **Honest safety boundary** — all mutation tools are paper-only; there is no
+  live-order MCP tool.
+
+## Architecture
+
+```text
+Codex task or scheduled prompt
+        │ invokes
+        ▼
+Domain Skills ─────────► OpenAlphaStack MCP
+                              │
+                 ┌────────────┼─────────────┐
+                 ▼            ▼             ▼
+             Market data   Plan + risk   Backtests
+                              │
+                              ▼
+                    Deterministic paper engine
+                              │
+                    plan / state / ledger
+                              │
+                              ▼
+                       Read-only Dashboard
 ```
 
-Open `http://localhost:5173`.
+The boundaries are intentional:
 
-`npm run dev` starts the FastAPI backend on `8800`, starts Vite on `5173`, proxies `/api/*` and WebSocket traffic to the backend, and clears old dev processes occupying those ports.
+- **Codex Desktop**: conversations, scheduled tasks, research, and operator review.
+- **Skills**: reusable market, screening, stock-analysis, and T0 domain capabilities.
+- **MCP**: typed access to live data and bounded paper-only actions.
+- **Python engine**: T+1 rules, fees, validation, state, audit, and mechanical execution.
+- **Dashboard**: K-line, plans, positions, ledger, workflow events, and diagnostics.
 
-### Full Setup
+## Quick start
 
 Requirements:
 
 - Python 3.10+
-- Node.js 20+ and npm
-- Claude Code CLI
-- Optional: Codex CLI
-- Optional: Feishu developer account for notifications
+- Node.js 20+
+- Codex Desktop
 
-Create `.env` from `.env.example` and fill in the integrations you need:
-
-```bash
-FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
-FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-FEISHU_BOT_NAME=StockBot
-FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-CLAUDE_CMD=C:\Users\YourName\AppData\Roaming\npm\claude.cmd
-CLAUDE_TIMEOUT=300
-
-ANTHROPIC_AUTH_TOKEN=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-ANTHROPIC_BASE_URL=https://api.example.com/anthropic
-ANTHROPIC_MODEL=your-model
-```
-
-Production-style dashboard:
-
-```bash
+```powershell
+git clone https://github.com/44-99/OpenAlphaStack.git
+cd OpenAlphaStack
+pip install -r requirements.txt
+pip install -e .
+npm install
 npm run dashboard:build
-alphaclaude app start
+openalphastack app start
 ```
 
-Open `http://localhost:8800/dashboard`.
+Open `http://127.0.0.1:8800/dashboard`.
 
-## Commands
+Then open the repository in Codex Desktop and try:
 
-Engine:
-
-```bash
-alphaclaude engine start --mode backtest --start 2024-01-01 --end 2024-06-30 -u default
-alphaclaude engine start --mode paper -u default --daemon
-alphaclaude engine list
-alphaclaude engine status paper_2026-05-16T09-00-00
-alphaclaude engine stop paper_2026-05-16T09-00-00
-alphaclaude engine resume paper_2026-05-16T09-00-00 --daemon
-alphaclaude engine stop-running
+```text
+Use $market-analyzer to assess today's A-share market, cite the MCP data used,
+and finish with risks and invalidation conditions.
 ```
 
-Tools:
+The repository is also a Codex plugin: `.codex-plugin/plugin.json` discovers the
+Skills and `.mcp.json` registers the stdio server. After installing the Python
+package, install/open the plugin in Codex and verify the `open-alpha-stack` MCP
+tools are available.
 
-```bash
-alphaclaude tools quote 600519
-alphaclaude tools technical 600519 --all
-alphaclaude tools backtest 600519 -s ma_cross
-alphaclaude tools backtest_runner --start 2024-01-01 --end 2024-06-30 -u default
+Start the MCP server manually for diagnostics:
+
+```powershell
+openalphastack mcp serve
 ```
 
-Feishu command menus are documented separately in [docs/feishu-bot-menu.md](docs/feishu-bot-menu.md).
+## Codex Skills
 
-## Current Status
+- `$market-analyzer`: market environment, sentiment, sectors, and leaders.
+- `$stock-screener`: deterministic screening and candidate verification.
+- `$stock-analyzer`: technical, fundamental, news, position, and risk analysis.
+- `$t0-intraday`: T0 feasibility, direction, sizing, and guardrails.
 
-- Python package structure lives under `src/alphaclaude/`.
-- Dashboard source lives under `dashboard/` and builds to `dashboard/dist/`.
-- Backtest and paper trading share the `alphaclaude.engine` core.
-- Dashboard API, SSE, K-line cache, and Agent terminal WebSocket live in `src/alphaclaude/app/dashboard.py`.
-- Feishu integration lives under `src/alphaclaude/feishu/`.
-- `live` mode is reserved and not admitted for real-money trading.
+Scheduled tasks compose these domain Skills; premarket and postclose are task
+prompts, not duplicate Skills. A local scheduled task requires the computer and
+Codex Desktop to remain running.
 
-## Project Layout
+## MCP safety contract
 
-- `src/alphaclaude/app/`: FastAPI app, Dashboard API/SSE/WebSocket, app CLI.
-- `src/alphaclaude/engine/`: backtest, paper trading, reserved live engine core.
-- `src/alphaclaude/tools/`: quote, technical, risk, signal, report, and related CLI tools.
-- `src/alphaclaude/feishu/`: Feishu auth, bot messages, groups, users, and WebSocket adapter.
-- `dashboard/`: React + Vite + TypeScript dashboard source.
-- `scripts/`: Windows development scripts.
-- `docs/`: architecture, roadmap, Feishu menu, and project notes.
+Read tools expose paper/backtest runs, market data, indicators, news, screens,
+risk calculations, and deterministic baseline backtests.
+
+The only plan mutations are:
+
+1. `save_plan_draft` — writes a non-executable `plan.codex-draft.json`.
+2. `publish_paper_plan` — validates, requires an idempotency key, checks the
+   expected plan version, and atomically updates a paper run only.
+
+Live runs are hidden from MCP mutations. No shell, arbitrary file-write, or live-order tool is exposed.
+
+## Engine commands
+
+```powershell
+openalphastack engine start --mode paper -u default --daemon
+openalphastack engine list
+openalphastack engine status <run_id>
+openalphastack engine stop <run_id>
+openalphastack engine resume <run_id> --daemon
+
+openalphastack engine start --mode backtest \
+  --start 2024-01-01 --end 2024-06-30 -u default
+```
+
+The paper engine can stay running outside trading hours. It idles according to
+the trading calendar and remains observation-only until Codex publishes a valid
+plan for the current date.
 
 ## Verification
 
@@ -117,7 +152,7 @@ Feishu command menus are documented separately in [docs/feishu-bot-menu.md](docs
 npm run dashboard:test
 npm run dashboard:build
 python -m pytest -q
-python -m compileall -q src\alphaclaude
+python -m compileall -q src\openalphastack
 ```
 
 ## Documentation
@@ -125,9 +160,20 @@ python -m compileall -q src\alphaclaude
 - [Architecture](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
 - [Skills](docs/skills.md)
-- [Project comparison](docs/project-comparison.md)
-- [Feishu bot menu](docs/feishu-bot-menu.md)
+- [Feishu notifications](docs/feishu-bot-menu.md)
+
+## Contributing
+
+Issues and focused pull requests are welcome. Before changing the repository,
+read [AGENT_GUIDE.md](AGENT_GUIDE.md), preserve the paper-only MCP boundary and
+add tests for behavior that affects validation, state, risk or idempotency.
+
+## Security
+
+The Dashboard binds to localhost by default. Do not expose it directly to a LAN
+or the internet without adding authentication, TLS, CSRF protection, and an
+explicit network policy.
 
 ## License
 
-MIT © AlphaClaude
+MIT © OpenAlphaStack

@@ -1,0 +1,11 @@
+interface:
+  display_name: "市场研判"
+  short_description: "基于 MCP 实时数据研判 A 股市场环境、板块与情绪周期"
+  default_prompt: "使用 $market-analyzer 分析今天的 A 股市场环境。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "open-alpha-stack"
+      description: "OpenAlphaStack bounded A-share research tools"
+      transport: "stdio"

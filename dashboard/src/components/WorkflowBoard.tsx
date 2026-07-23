@@ -38,12 +38,12 @@ type FlowEdgeData = {
 
 const nodeTypes = { workflowNode: WorkflowFlowNode };
 
-export function WorkflowBoard({ graph, events, plan, ledger, onSendToAgent }: {
+export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
   graph?: WorkflowGraph;
   events: WorkflowEvent[];
   plan?: PlanData;
   ledger?: LedgerEntry[];
-  onSendToAgent?: (text: string) => void;
+  onCopyPrompt?: (text: string) => void;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedEdgeId, setSelectedEdgeId] = useState('');
@@ -276,8 +276,8 @@ export function WorkflowBoard({ graph, events, plan, ledger, onSendToAgent }: {
         <header>
           <strong>{selectedEdge ? '数据流详情' : selectedNode?.name || '节点详情'}</strong>
           <span className="workflow-inspector-actions">
-            {!selectedEdge && selectedNode && onSendToAgent ? (
-              <button onClick={() => onSendToAgent(buildNodeAgentPrompt(selectedNode, selectedEvents))}>发送到 Agent</button>
+            {!selectedEdge && selectedNode && onCopyPrompt ? (
+              <button onClick={() => onCopyPrompt(buildNodeAgentPrompt(selectedNode, selectedEvents))}>复制 Codex 提示</button>
             ) : null}
             {!selectedEdge && selectedNode?.locked ? <span className="lock-pill">锁定</span> : null}
           </span>
@@ -565,7 +565,7 @@ export function workflowCalendarNotice(graph?: WorkflowGraph) {
 }
 
 function workflowLayoutStorageKey(runId: string) {
-  return `alphaclaude.workflow.layout.${runId}`;
+  return `openalphastack.workflow.layout.${runId}`;
 }
 
 export function agentTaskIdForNode(nodeId?: string) {
@@ -597,7 +597,7 @@ export function buildNodeAgentPrompt(node: WorkflowGraphNode, events: WorkflowEv
   const recent = events.slice(0, 3).map((event) => (
     `${event.status}/${event.phase || '--'}: ${event.summary || event.error || '--'}`
   )).join('；');
-  return `请结合 AlphaClaude 当前流程节点分析：节点=${node.name}(${node.id})；状态=${node.status}；启用=${node.enabled}；锁定=${node.locked}；摘要=${node.summary || '--'}；最近事件=${recent || '暂无'}。`;
+  return `请结合 OpenAlphaStack 当前流程节点分析：节点=${node.name}(${node.id})；状态=${node.status}；启用=${node.enabled}；锁定=${node.locked}；摘要=${node.summary || '--'}；最近事件=${recent || '暂无'}。`;
 }
 
 export function isRerunBlocked(nodeId: string) {

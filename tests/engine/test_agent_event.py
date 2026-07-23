@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from alphaclaude.engine.agent_event import (
+from openalphastack.engine.agent_event import (
     read_agent_events,
     record_agent_event,
     validate_agent_events,

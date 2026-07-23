@@ -1,4 +1,4 @@
-name: Agent Backtest
+name: Deterministic Backtest
 
 on:
   workflow_dispatch:
@@ -38,20 +38,9 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
-      - name: Verify Claude Code CLI
+      - name: Run deterministic backtest
         run: |
-          which claude || which claude.cmd || {
-            echo "Claude Code CLI not found on runner"
-            echo "Install via: npm install -g @anthropic-ai/claude-code"
-            exit 1
-          }
-          echo "Claude Code found"
-
-      - name: Run Agent backtest
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          alphaclaude tools backtest_runner \
+          openalphastack tools backtest_runner \
             --start "${{ inputs.start_date }}" \
             --end "${{ inputs.end_date }}" \
             --universe "${{ inputs.universe }}" \
@@ -62,10 +51,10 @@ jobs:
         run: |
           RUN_ID=$(ls -t data/output/backtest_* | head -1 | xargs basename)
           echo "Run ID: $RUN_ID"
-          alphaclaude tools daily_report "$RUN_ID" --all
+          openalphastack tools daily_report "$RUN_ID" --all
           echo ""
           echo "===== FINAL STATS ====="
-          alphaclaude tools daily_report "$RUN_ID"
+          openalphastack tools daily_report "$RUN_ID"
 
       - name: Upload backtest artifacts
         if: always()

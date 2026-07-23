@@ -1,0 +1,11 @@
+interface:
+  display_name: "个股分析"
+  short_description: "结合技术面、基本面、新闻、位置和风险分析具体 A 股股票"
+  default_prompt: "使用 $stock-analyzer 分析这只股票并说明风险。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "open-alpha-stack"
+      description: "OpenAlphaStack bounded A-share research tools"
+      transport: "stdio"

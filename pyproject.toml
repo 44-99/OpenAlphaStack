@@ -3,24 +3,24 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "alphaclaude"
+name = "openalphastack"
 version = "0.1.0"
-description = "AlphaClaude stock analysis and trading assistant"
+description = "Open-source Codex plugin stack for auditable A-share research and paper trading"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi==0.115.6",
     "uvicorn==0.34.0",
     "httpx==0.28.1",
+    "pandas>=2.2.0",
     "akshare>=1.16.0",
-    "apscheduler==3.10.4",
     "python-dotenv==1.0.1",
     "lark-oapi>=1.4.0",
-    "websockets>=13.0",
     "pyarrow>=16.0.0",
+    "mcp>=1.2.0,<2.0.0",
 ]
 
 [project.scripts]
-alphaclaude = "alphaclaude.app.cli:main"
+openalphastack = "openalphastack.app.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

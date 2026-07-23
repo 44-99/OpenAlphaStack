@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from alphaclaude.engine import paper as paper_module
-from alphaclaude.engine.paper import PaperEngine
-from alphaclaude.tools.engine_status import _is_pid_alive
+from openalphastack.engine import paper as paper_module
+from openalphastack.engine.paper import PaperEngine
+from openalphastack.tools.engine_status import _is_pid_alive
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -244,128 +244,6 @@ def test_run_paper_stays_alive_in_closed_market_observation_until_stopped(output
     assert meta["status"] == "observation"
     assert meta["observation_mode"] is True
     assert "waiting for next trading session" in meta["observation_reason"]
-
-
-def test_run_paper_leaves_observation_when_trading_day_becomes_actionable(output_base, monkeypatch):
-    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
-    clock = SequencedClock(
-        [
-            datetime(2026, 5, 17, 10, 30),
-            datetime(2026, 5, 19, 8, 30),
-            datetime(2026, 5, 19, 8, 30),
-        ],
-        ["weekend", "pre_market", "pre_market"],
-        [False, False, False],
-    )
-    engine.clock = clock
-    calls = []
-
-    monkeypatch.setattr(
-        engine,
-        "run_morning_analysis",
-        lambda: calls.append("morning") or {"stages": {"merged": {}, "risk": {}}},
-    )
-
-    def fake_sleep(_seconds: int) -> None:
-        if clock._index == 0:
-            clock.advance()
-            return
-        engine.stop()
-
-    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
-
-    engine.run_paper()
-
-    meta = engine.state.load()["engine_meta"]
-    assert calls == ["morning"]
-    assert meta["status"] == "running"
-    assert meta["observation_mode"] is False
-    assert meta["observation_reason"] == ""
-
-
-def test_run_paper_generates_late_plan_if_premarket_window_was_missed(output_base, monkeypatch):
-    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
-    engine.clock = SequencedClock(
-        [datetime(2026, 5, 19, 14, 0)],
-        ["afternoon"],
-        [True],
-    )
-    calls = []
-    tick_calls = []
-    engine.fast_lane = SimpleNamespace(
-        reset_day=lambda: None,
-        execute_holding_adjustments=lambda: [],
-        tick=lambda: tick_calls.append("tick") or {"events": [], "emergency": False},
-    )
-
-    def fake_morning_analysis():
-        calls.append("morning")
-        engine.plan.set_market_bias(
-            "neutral",
-            55,
-            "补跑盘前计划：当前仅观察，不主动开仓。",
-            position_cap=30,
-        )
-        return {"stages": {"merged": {}, "risk": {}}}
-
-    monkeypatch.setattr(engine, "run_morning_analysis", fake_morning_analysis)
-
-    def fake_sleep(_seconds: int) -> None:
-        engine.stop()
-
-    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
-
-    engine.run_paper()
-
-    meta = engine.state.load()["engine_meta"]
-    assert calls == ["morning"]
-    assert tick_calls == ["tick"]
-    assert engine.plan.load()["plan_date"] == "2026-05-19"
-    assert meta["status"] == "running"
-    assert meta["observation_mode"] is False
-    assert meta["observation_reason"] == ""
-
-
-def test_run_paper_does_not_mark_failed_llm_plan_as_actionable(output_base, monkeypatch):
-    engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
-    engine.clock = SequencedClock(
-        [datetime(2026, 5, 19, 14, 0)],
-        ["afternoon"],
-        [True],
-    )
-    calls = []
-    tick_calls = []
-    engine.fast_lane = SimpleNamespace(
-        reset_day=lambda: None,
-        execute_holding_adjustments=lambda: [],
-        tick=lambda: tick_calls.append("tick") or {"events": [], "emergency": False},
-    )
-
-    def fake_failed_morning_analysis():
-        calls.append("morning")
-        engine.plan.set_market_bias(
-            "neutral",
-            50,
-            "",
-            position_cap=50,
-        )
-        return {"stages": {"merged": {"llm_used": False}, "risk": {}}}
-
-    monkeypatch.setattr(engine, "run_morning_analysis", fake_failed_morning_analysis)
-
-    def fake_sleep(_seconds: int) -> None:
-        engine.stop()
-
-    monkeypatch.setattr(paper_module.time, "sleep", fake_sleep)
-
-    engine.run_paper()
-
-    meta = engine.state.load()["engine_meta"]
-    assert calls == ["morning"]
-    assert tick_calls == []
-    assert engine.plan.load()["plan_date"] == ""
-    assert meta["observation_mode"] is True
-    assert "LLM" in meta["observation_reason"]
 
 
 def test_run_paper_wraps_loop_with_windows_sleep_guard(output_base, monkeypatch):

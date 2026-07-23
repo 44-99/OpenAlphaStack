@@ -16,7 +16,6 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules/echarts')) return 'echarts';
           if (id.includes('node_modules/@xyflow')) return 'react-flow';
-          if (id.includes('node_modules/@xterm')) return 'xterm';
           if (id.includes('node_modules')) return 'vendor';
         },
       },

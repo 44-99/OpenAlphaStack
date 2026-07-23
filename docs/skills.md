@@ -1,62 +1,24 @@
-# 技能系统
+# Domain Skills
 
-技能采用**场景化渐进式展开**设计：SKILL.md 作为路由层描述分析场景，references/ 按需加载深度知识。Agent 通过 description 理解技能用途并自主激活，不依赖关键词触发。
+OpenAlphaStack keeps Skills aligned with reusable analysis capabilities instead
+of execution time. Codex tasks and scheduled prompts compose them as needed.
 
-## 技能目录结构
+| Skill | Responsibility | Primary MCP tools |
+|---|---|---|
+| `market-analyzer` | Market, sentiment, sector, and leader analysis | `market_overview`, `market_news` |
+| `stock-screener` | Deterministic screening and candidate verification | `screen_candidates`, quote, technical, news |
+| `stock-analyzer` | Evidence-backed analysis of one stock | quote, technical, fundamentals, news, risk |
+| `t0-intraday` | T0 feasibility and guardrails for existing holdings | quote, technical, position sizing |
 
-```
-skills/
-├── trading-principles.md           # 前置技能：7 条交易铁律，始终加载
-├── stock-analyzer/                 # 个股深度分析管线
-│   ├── SKILL.md                    # 路由：6 阶段分析管线定义
-│   └── references/
-│       ├── entry-signals.md        # 5 种入场信号（金叉/突破/回踩/底部/一阳三阴）
-│       ├── position-management.md  # 箱体震荡战法
-│       ├── advanced.md             # 缠论 + 波浪理论
-│       └── risk-checklist.md       # 风险排查清单
-├── market-analyzer/                # 市场研判管线
-│   ├── SKILL.md                    # 路由：市场分析流程
-│   └── references/
-│       ├── sentiment-cycle.md      # 情绪周期策略
-│       ├── dragon-head.md          # 龙头识别策略
-│       └── sector-rotation.md      # 板块轮动分析
-└── stock-screener/                 # 多因子选股管线
-    ├── SKILL.md                    # 路由：筛选流程
-    └── references/
-        ├── short-term.md           # 短线筛选参数
-        ├── mid-term.md             # 中线筛选参数
-        └── hot-money.md            # 热钱追踪参数
-```
+## Scheduled-task composition
 
-## 分层加载
+A premarket task normally composes `market-analyzer`, `stock-screener`, and
+`stock-analyzer`, then uses the plan MCP tools directly to validate and save a
+draft. Publication must be explicitly requested and remains paper-only.
 
-- **SKILL.md** 启动时加载（Claude Code 注入上下文）。充当局部的分析管线路由器 —— 定义分析步骤顺序、每个步骤使用的工具、references/ 文件的加载条件。
-- **references/** 按需加载。包含公式理论、参数阈值、市场条件、评分调整规则。Agent 根据分析进度自主决定何时展开哪个 reference。
-- **无 scripts/ 目录** — 所有计算由 `src/alphaclaude/tools/` 下的 CLI 模块完成，JSON 进 JSON 出，通过 Bash 调用。统一命令为 `alphaclaude tools <tool>`；Skills 定义"用哪个工具、怎么组合"，工具执行计算。
+A postclose task reads the run snapshot and immutable ledger directly, then may
+invoke `market-analyzer` or `stock-analyzer` for attribution. Strategy and cost
+reviews are scheduled prompts or ordinary Codex tasks, not separate Skills.
 
-## 前置技能
-
-`trading-principles.md` 配置 `always_load: true`，作为交易铁律始终加载到系统提示词中，确保所有分析都遵守统一的风险控制和入场纪律。内容包括：严进策略（不追高）、趋势交易（多头排列）、效率优先（筹码结构）、买点偏好（回踩支撑）、风险排查、估值关注、强势趋势股放宽。
-
-## 与旧版的关键区别
-
-| 维度 | 旧版（11 独立技能） | 新版（3 场景管线） |
-|------|---------------------|---------------------|
-| 激活方式 | 关键词触发（如"金叉"匹配 ma-golden-cross） | Description-based — Agent 理解用户意图自主选择 |
-| 策略组织 | 11 个独立 SKILL.md，各自定义工具链 | 3 个管线按分析阶段编排，策略作为 references 按需加载 |
-| 计算层 | `skills/*/scripts/` Python 脚本 | `src/alphaclaude/tools/` 统一 CLI 模块，所有技能共享 |
-| 内容保真 | 从 YAML 迁移时易丢失细节 | 深度知识集中在 references/，一个文件一个主题 |
-
-## 工具与技能的对应
-
-技能管线通过组合工具完成分析。每个工具单一职责，JSON 进 JSON 出：
-
-| 分析阶段 | 使用的工具 |
-|----------|-----------|
-| 数据获取 | `alphaclaude.tools.quote`（行情）、`technical`（指标）、`fundamental`（财务）、`flow`（资金）、`news`（消息） |
-| 趋势研判 | `alphaclaude.tools.trend`（MA排列/交叉/乖离） |
-| 入场信号 | `alphaclaude.tools.signal_detector`（5 种信号检测） |
-| 位置判断 | `alphaclaude.tools.pivot`（箱体/中枢）、`fibonacci`（回撤/扩展） |
-| 情绪评估 | `alphaclaude.tools.sentiment`（换手热度/量能/ATR/均线粘合/综合评分） |
-| 筛选推荐 | `alphaclaude.tools.screen`（多因子选股）、`backtest`（历史回测） |
-| 持仓管理 | `alphaclaude.tools.portfolio`（自选股/盈亏概览） |
+Validate every Skill with the `skill-creator` `quick_validate.py` script after
+editing it.

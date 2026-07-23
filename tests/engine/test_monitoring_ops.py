@@ -10,13 +10,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from alphaclaude.engine.clock import TradingClock
-from alphaclaude.engine.execution import ExecutionEngine
-from alphaclaude.engine.fast_lane import FastLane
-from alphaclaude.engine.plan import PlanManager
-from alphaclaude.engine.pipeline import OvernightPipeline
-from alphaclaude.engine.state import EngineState
-from alphaclaude.tools import engine_status
+from openalphastack.engine.clock import TradingClock
+from openalphastack.engine.execution import ExecutionEngine
+from openalphastack.engine.fast_lane import FastLane
+from openalphastack.engine.plan import PlanManager
+from openalphastack.engine.state import EngineState
+from openalphastack.tools import engine_status
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOLS_DIR = PROJECT_ROOT / "tools"
@@ -33,7 +32,7 @@ def _write_json(path: Path, data: dict) -> None:
 def engine_dir() -> Path:
     tmp_root = PROJECT_ROOT / "data" / "test_tmp"
     tmp_root.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_root / f"alphaclaude_engine_test_{uuid.uuid4().hex}"
+    tmp_path = tmp_root / f"openalphastack_engine_test_{uuid.uuid4().hex}"
     tmp_path.mkdir(exist_ok=False)
     plan_data = {
         "updated": "2025-03-14T09:30:00",
@@ -281,34 +280,6 @@ def test_new_buy_is_locked_until_t1_release(engine_parts):
     assert state.holdings["600519"]["shares"] == 100
 
 
-def test_emergency_action_does_not_mark_locked_sell_as_executed(engine_parts, engine_dir):
-    state, plan, clock, ledger, execution = engine_parts
-    state._data["holdings"]["300488"]["locked_today"] = 300
-    state._data["holdings"]["300488"]["available"] = 0
-    state.save()
-    pipeline = OvernightPipeline(
-        state,
-        plan,
-        ledger,
-        clock,
-        str(engine_dir),
-        "paper",
-        execution=execution,
-    )
-
-    pipeline._apply_emergency_decisions({
-        "action": "close",
-        "code": "300488",
-        "reasoning": "same-day locked emergency",
-    })
-
-    assert state.holdings["300488"]["shares"] == 300
-    ledger.append.assert_called()
-    final_entry = ledger.append.call_args_list[-1].args[0]
-    assert final_entry["decision"] == "emergency_action"
-    assert final_entry["executed"] is False
-
-
 def test_emergency_tier_persists_across_fast_lane_restart(engine_parts):
     state, plan, clock, ledger, execution = engine_parts
     state.update_quote("300488", 41.0)
@@ -364,7 +335,7 @@ def test_take_profit_triggers_sell_and_cooldown(engine_parts):
 
 def test_time_condition_close_uses_mocked_backtest_feed(engine_parts, monkeypatch):
     state, plan, clock, ledger, execution = engine_parts
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     quotes = {
         "600036": {"code": "600036", "price": 43.00, "high": 43.50, "low": 42.80},
         "300488": {"code": "300488", "price": 42.00, "high": 43.00, "low": 41.80},
@@ -422,7 +393,7 @@ def test_t0_forward_cycle_uses_point_price_triggers(engine_parts):
 
 def test_cooldown_prevents_rebuy_with_mocked_feed(engine_parts, monkeypatch):
     state, plan, clock, ledger, execution = engine_parts
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     plan.mark_stopped_out("300488", cooldown_hours=24)
     state._data["holdings"].pop("300488")
     quotes = {

@@ -1,6 +1,6 @@
 import json
 
-from alphaclaude.engine.workflow_events import (
+from openalphastack.engine.workflow_events import (
     WorkflowEventStore,
     default_workflow_config,
     default_workflow_edges,

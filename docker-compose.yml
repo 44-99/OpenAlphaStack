@@ -1,17 +1,15 @@
 services:
-  alphaclaude:
+  openalphastack:
     build: .
-    container_name: alphaclaude-bot
+    container_name: openalphastack
     restart: unless-stopped
     ports:
-      - "8800:8800"
+      - "127.0.0.1:8800:8800"
     volumes:
       - ./data:/app/data
-      - ~/.claude:/root/.claude
     env_file:
       - .env
     environment:
-      - CLAUDE_CMD=claude
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     logging:
       driver: "json-file"

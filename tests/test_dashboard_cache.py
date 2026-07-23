@@ -1,12 +1,11 @@
 import asyncio
-import base64
 import json
 
 import pandas as pd
 from fastapi.responses import JSONResponse
 
-from alphaclaude.app import dashboard as app_dashboard
-from alphaclaude.engine import run_registry
+from openalphastack.app import dashboard as app_dashboard
+from openalphastack.engine import run_registry
 
 
 def _isolate_kline_cache(tmp_path, monkeypatch):
@@ -18,19 +17,6 @@ def _isolate_kline_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(app_dashboard, "LEGACY_MINUTE_CACHE_DIR", str(legacy_minute_dir))
     monkeypatch.setattr(app_dashboard, "MINUTE_CACHE_DIR", str(legacy_minute_dir))
     return data_dir, kline_dir, legacy_minute_dir
-
-
-def test_agent_terminal_startup_args_hides_utf8_setup(monkeypatch):
-    monkeypatch.setattr(app_dashboard, "_agent_terminal_command", lambda _provider: "claude")
-
-    args = app_dashboard._agent_terminal_startup_args("claude")
-    encoded = args.rsplit(" ", 1)[-1]
-    script = base64.b64decode(encoded).decode("utf-16-le")
-
-    assert "-EncodedCommand" in args
-    assert "[Console]::OutputEncoding" in script
-    assert "chcp 65001 | Out-Null" in script
-    assert script.endswith("claude")
 
 
 def test_workflow_graph_model_serializes_edge_from_alias():

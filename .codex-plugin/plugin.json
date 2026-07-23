@@ -1,0 +1,30 @@
+{
+  "name": "open-alpha-stack",
+  "version": "0.1.0",
+  "description": "Open-source Codex plugin for auditable A-share research and paper trading with MCP, Skills, and a deterministic Python engine.",
+  "author": {
+    "name": "44-99",
+    "url": "https://github.com/44-99"
+  },
+  "homepage": "https://github.com/44-99/OpenAlphaStack",
+  "repository": "https://github.com/44-99/OpenAlphaStack",
+  "license": "MIT",
+  "keywords": ["codex", "mcp", "skills", "quant", "a-share", "paper-trading"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OpenAlphaStack",
+    "shortDescription": "Open MCP and Skills stack for A-share research",
+    "longDescription": "An open-source Codex plugin combining domain Skills, bounded MCP tools, deterministic backtests, paper execution, audit state, and a local observability dashboard.",
+    "developerName": "44-99",
+    "category": "Developer Tools",
+    "capabilities": ["Research", "MCP", "Paper Trading", "Backtesting"],
+    "websiteURL": "https://github.com/44-99/OpenAlphaStack",
+    "defaultPrompt": [
+      "Analyze today's A-share market with OpenAlphaStack.",
+      "Screen and review a small set of A-share candidates.",
+      "Audit my latest paper-trading run and its risks."
+    ],
+    "brandColor": "#1F9D8A"
+  }
+}

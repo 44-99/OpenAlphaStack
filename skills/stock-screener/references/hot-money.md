@@ -1,7 +1,7 @@
 # 游资热点筛选
 
 **策略名**: hot_money（热钱追踪）
-**CLI**: `python -m alphaclaude.tools.screen -s hot_money`
+**CLI**: `MCP `screen_candidates(strategy="hot_money")``
 
 ---
 
@@ -26,10 +26,10 @@
 ## 二次确认
 
 ```bash
-python -m alphaclaude.tools.quote {code}            # 现价/换手率/量比
-python -m alphaclaude.tools.technical {code} --all  # 技术形态
-python -m alphaclaude.tools.flow {code}             # 主力资金方向 —— 游资流入 vs 机构出货
-python -m alphaclaude.tools.news market             # 市场热点题材
+MCP `stock_quote(code)`            # 现价/换手率/量比
+MCP `stock_technical(code, indicator="all")`  # 技术形态
+MCP 返回的资金流字段（如有）                          # 主力资金方向；缺失时不得猜测
+MCP `market_news()`             # 市场热点题材
 ```
 
 ## 仓位建议

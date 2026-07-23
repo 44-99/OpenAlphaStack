@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
 import shutil
 import uuid
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from alphaclaude.engine import EventQueue, SessionLock, T0Tracker
+from openalphastack.engine import T0Tracker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def support_dir() -> Path:
     tmp_root = PROJECT_ROOT / "data" / "test_tmp"
     tmp_root.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_root / f"alphaclaude_support_test_{uuid.uuid4().hex}"
+    tmp_path = tmp_root / f"openalphastack_support_test_{uuid.uuid4().hex}"
     tmp_path.mkdir(exist_ok=False)
     try:
         yield tmp_path
@@ -62,49 +60,3 @@ def test_t0_tracker_loads_config_and_resets_runtime_state():
     assert tracker.t0_shares == 0
     assert tracker.t0_entry_price == 0.0
     assert tracker.paused_until == ""
-
-
-def test_event_queue_push_pop_and_pending_count(support_dir):
-    queue = EventQueue(str(support_dir))
-
-    queue.push({"event": "signal", "code": "600036"})
-    queue.push({"event": "risk", "code": "300488"})
-
-    assert queue.pending_count() == 2
-    assert queue.should_trigger(count_threshold=2) is True
-
-    events = queue.pop_unprocessed()
-
-    assert [e["event"] for e in events] == ["signal", "risk"]
-    assert all(e["processed"] is True for e in events)
-    assert queue.pending_count() == 0
-    assert queue.pop_unprocessed() == []
-
-
-def test_event_queue_triggers_on_oldest_pending_event(support_dir):
-    queue = EventQueue(str(support_dir))
-    queue.push({"event": "signal", "code": "600036"})
-
-    queue_path = Path(queue.path)
-    event = json.loads(queue_path.read_text(encoding="utf-8").strip())
-    event["timestamp"] = (datetime.now() - timedelta(minutes=20)).isoformat()
-    queue_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    assert queue.should_trigger(count_threshold=3, time_threshold=900) is True
-
-
-def test_session_lock_acquire_release_and_context_manager(support_dir):
-    lock = SessionLock(str(support_dir))
-
-    assert lock.locked() is False
-    assert lock.acquire(timeout=0.1) is True
-    assert lock.locked() is True
-
-    lock.release()
-
-    assert lock.locked() is False
-
-    with SessionLock(str(support_dir)) as context_lock:
-        assert context_lock.locked() is True
-
-    assert context_lock.locked() is False

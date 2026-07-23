@@ -30,7 +30,6 @@ import type {
   WorkflowGraph,
 } from './types';
 
-const AgentPanel = lazy(() => import('./components/AgentPanel').then((module) => ({ default: module.AgentPanel })));
 const KlineChart = lazy(() => import('./components/KlineChart').then((module) => ({ default: module.KlineChart })));
 const WorkflowBoard = lazy(() => import('./components/WorkflowBoard').then((module) => ({ default: module.WorkflowBoard })));
 
@@ -101,10 +100,7 @@ export default function App() {
   const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
   const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph | undefined>();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(true);
   const [leftWidth, setLeftWidth] = useState(190);
-  const [rightWidth, setRightWidth] = useState(380);
-  const [agentInjection, setAgentInjection] = useState<{ id: number; text: string } | undefined>();
   const selectedRun = useMemo(() => runs.find((run) => run.run_id === selectedRunId), [runs, selectedRunId]);
 
   const watchlistNames = useMemo(() => {
@@ -300,14 +296,13 @@ export default function App() {
 
   return (
     <div
-      className={`terminal-app ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}`}
+      className={`terminal-app ${leftCollapsed ? 'left-collapsed' : ''}`}
       style={{
         '--left-width': `${leftCollapsed ? 64 : leftWidth}px`,
-        '--right-width': `${rightCollapsed ? 64 : rightWidth}px`,
       } as CSSProperties}
     >
       <header className="topbar">
-        <div className="brand">AlphaClaude</div>
+        <div className="brand">OpenAlphaStack</div>
         <Stat label="总资产" value={money(state.total_asset)} />
         <Stat label="现金" value={money(state.cash)} />
         <Stat label="持仓" value={money(state.position_value)} />
@@ -398,23 +393,12 @@ export default function App() {
               events={workflowEvents}
               plan={plan}
               ledger={ledger}
-              onSendToAgent={(text) => {
-                setRightCollapsed(false);
-                setAgentInjection({ id: Date.now(), text });
-              }}
+              onCopyPrompt={(text) => void navigator.clipboard.writeText(text)}
             />
           </Suspense>
         ) : null}
         {page === 'account' ? <Account positions={positions || {}} ledger={ledger} /> : null}
       </main>
-      {!rightCollapsed ? <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} /> : null}
-      <Suspense fallback={<aside className={`agent-panel ${rightCollapsed ? 'collapsed' : ''}`} />}>
-        <AgentPanel
-          collapsed={rightCollapsed}
-          onToggle={() => setRightCollapsed((value) => !value)}
-          injection={agentInjection}
-        />
-      </Suspense>
     </div>
   );
 }

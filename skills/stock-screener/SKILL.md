@@ -1,60 +1,22 @@
 ---
 name: stock-screener
-description: >
-  选股推荐技能。当用户让推荐股票、选股、问"有什么好票""帮我找几个标的"
-  "短线有什么机会""中线布局什么"时使用此技能。提供短线/中线/游资三种筛选模式。
-triggers:
-  - 选股
-  - 推荐
-  - 标的
-  - 机会
-  - 短线
-  - 中线
-  - 游资
-  - 热门
-  - 筛选
-  - 有什么票
-  - 荐股
+description: 使用确定性规则筛选 A 股候选标的。用户要求选股、推荐标的、寻找短线或中线机会、热点和游资方向时使用。通过 OpenAlphaStack MCP 筛选并复核候选，最多输出五只，不直接发布交易计划。
 ---
 
-# 选股推荐流水线
+# 选股筛选
 
-当用户要求推荐股票时，按以下流水线执行。
+筛选负责缩小研究范围，不负责证明未来收益。
 
-## 分析流水线
+## 工作流
 
-### 阶段 1：确定筛选模式
+1. 根据用户目标选择策略：
+   - 短线或未指定：读取 `references/short-term.md`，使用 `breakout`。
+   - 中线：读取 `references/mid-term.md`，使用 `value`。
+   - 热点或游资：读取 `references/hot-money.md`，使用 `hot_money`。
+2. 调用 `screen_candidates`，传入策略和合理的 `top_n`。
+3. 对排名前 3–5 的候选并行调用 `stock_quote`、`stock_technical` 和 `stock_news`。
+4. 需要估值确认时调用 `stock_fundamentals`。
+5. 排除行情失效、代码异常、重大利空或技术结构已破坏的候选。
+6. 输出代码、名称、筛选依据、复核证据、风险和数据时间；结果不足时不要补齐数量。
 
-根据用户意图选择：
-
-- **短线 (1-5天)**：加载 `references/short-term.md`，运行 `python -m alphaclaude.tools.screen -s breakout`
-- **中线 (1-4周)**：加载 `references/mid-term.md`，运行 `python -m alphaclaude.tools.screen -s value`
-- **游资热点**：加载 `references/hot-money.md`，运行 `python -m alphaclaude.tools.screen -s hot_money`
-- 用户未指定 → 短线优先
-
-### 阶段 2：执行筛选
-
-```
-python -m alphaclaude.tools.screen -s {strategy}   # JSON 输出筛选结果列表
-```
-
-### 阶段 3：二次确认
-
-对筛选结果中排名前 3-5 的标的，逐支获取实时数据验证：
-
-```
-python -m alphaclaude.tools.quote {code}            # 确认现价/量比仍在筛选范围内
-python -m alphaclaude.tools.technical {code} --all  # 确认技术形态未被破坏
-python -m alphaclaude.tools.news {code}             # 排除突发利空
-```
-
-### 阶段 4：输出
-
-对每支推荐标的输出：
-1. **代码/名称/现价**
-2. **匹配的筛选条件**（如：涨幅 5%、换手率 8%、量比 2.1）
-3. **技术面确认**：均线排列/MACD 状态
-4. **入场建议**：买入价/止损价/止盈价
-5. **风险提示**：近期事件/估值注意
-
-最多推荐 5 支，筛选结果不足时如实说明，不硬凑。
+如需进一步分析某只股票，转入 `$stock-analyzer`。如需形成模拟盘计划，必须另外读取目标 paper run、校验计划并通过 MCP 保存草稿；本 Skill 不直接发布计划。

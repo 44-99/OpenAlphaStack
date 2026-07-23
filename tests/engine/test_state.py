@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 
-from alphaclaude.engine import state as state_module
-from alphaclaude.engine.state import EngineState
+from openalphastack.engine import state as state_module
+from openalphastack.engine.state import EngineState
 
 
 def test_state_save_retries_transient_windows_replace_denial(tmp_path, monkeypatch):

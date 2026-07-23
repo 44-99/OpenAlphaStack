@@ -14,7 +14,7 @@ $env:PYTHONLEGACYWINDOWSSTDIO = "0"
 $env:LC_ALL = "C.UTF-8"
 $env:LANG = "C.UTF-8"
 
-python -m uvicorn alphaclaude.app.main:app `
+python -m uvicorn openalphastack.app.main:app `
   --host 0.0.0.0 `
   --port 8800 `
   --reload `

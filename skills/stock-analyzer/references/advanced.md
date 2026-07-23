@@ -15,7 +15,7 @@
 
 ## 1. 中枢识别
 
-从 `python -m alphaclaude.tools.technical {code} --all` 获取近 60 日日线数据：
+从 `MCP `stock_technical(code, indicator="all")`` 获取近 60 日日线数据：
 - 识别近期价格的高低点序列，判断当前是否在**震荡中枢**（1 个以上中枢）还是**趋势段**（脱离中枢向上/向下）
 - 中枢：连续 3 段走势重叠区间，价格在此区间反复震荡
 - 趋势：连续 3 个同级别中枢均向同一方向移动
@@ -73,7 +73,7 @@
 
 ## 1. 识别当前浪型
 
-从 `python -m alphaclaude.tools.technical {code} --all` 获取近 120 日日线数据：
+从 `MCP `stock_technical(code, indicator="all")`` 获取近 120 日日线数据：
 
 **推动浪（1-3-5）识别特征**：
 - 第 1 浪：趋势反转的第一波，成交量温和放大

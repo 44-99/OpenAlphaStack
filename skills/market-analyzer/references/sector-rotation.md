@@ -7,7 +7,7 @@
 
 ## 1. 板块资金流向
 
-从 `python -m alphaclaude.tools.flow {sector}` 和 `python -m alphaclaude.tools.flow north`：
+从 MCP 市场响应中的可追溯板块及资金字段判断；字段缺失时只报告价格强弱，不推断资金流：
 
 - **北向资金**：连续流入/流出趋势。北向连续 3 日净流入 → 外资看多；连续流出 → 谨慎
 - **主力资金**：近 5 日主力净流入板块排名。持续流入的板块轮动概率更大

@@ -39,7 +39,7 @@ progress.md
 task_plan.md
 
 # Build artifacts
-src/alphaclaude.egg-info/
+src/openalphastack.egg-info/
 node_modules/
 dashboard/dist/
 

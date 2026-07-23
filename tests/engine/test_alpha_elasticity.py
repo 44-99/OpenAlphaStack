@@ -8,13 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from alphaclaude.engine.clock import TradingClock
-from alphaclaude.engine.execution import ExecutionEngine
-from alphaclaude.engine.fast_lane import FastLane
-from alphaclaude.engine.ledger import Ledger
-from alphaclaude.engine.plan import PlanManager
-from alphaclaude.engine.state import EngineState
-from alphaclaude.tools.engine_status import format_plan_text
+from openalphastack.engine.clock import TradingClock
+from openalphastack.engine.execution import ExecutionEngine
+from openalphastack.engine.fast_lane import FastLane
+from openalphastack.engine.ledger import Ledger
+from openalphastack.engine.plan import PlanManager
+from openalphastack.engine.state import EngineState
+from openalphastack.tools.engine_status import format_plan_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -122,7 +122,7 @@ def test_watch_only_candidate_never_auto_buys(alpha_dir, monkeypatch):
     state, plan, clock, ledger, execution = _engine_parts(
         alpha_dir, datetime(2025, 3, 14, 10, 0)
     )
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     plan.set_candidates([_candidate("600999", strategy_type="watch_only")])
     fast_lane = FastLane(
         state,
@@ -147,7 +147,7 @@ def test_breakout_candidate_waits_until_confirm_after(alpha_dir, monkeypatch):
     state, plan, clock, ledger, execution = _engine_parts(
         alpha_dir, datetime(2025, 3, 14, 9, 40)
     )
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     plan.set_candidates([
         _candidate("300001", source="B", strategy_type="breakout", confirm_after="09:45")
     ])
@@ -171,7 +171,7 @@ def test_daily_new_position_cap_rejects_excess_candidates(alpha_dir, monkeypatch
     state, plan, clock, ledger, execution = _engine_parts(
         alpha_dir, datetime(2025, 3, 14, 10, 0)
     )
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     plan._data["rules"]["daily_new_positions_limit"] = 1
     plan.set_candidates([
         _candidate("600001", strategy_type="defensive", priority=1),
@@ -202,7 +202,7 @@ def test_executed_candidate_buy_records_strategy_type(alpha_dir, monkeypatch):
     state, plan, clock, ledger, execution = _engine_parts(
         alpha_dir, datetime(2025, 3, 14, 10, 0)
     )
-    monkeypatch.setattr("alphaclaude.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
+    monkeypatch.setattr("openalphastack.tools.signal_rules.scan_code", lambda _code, df=None: {"signals": []})
     plan.set_candidates([
         _candidate("300001", strategy_type="breakout", confirm_after="09:45")
     ])
@@ -237,7 +237,7 @@ def test_plan_summary_shows_strategy_type(alpha_dir, monkeypatch):
         "is_alive": True,
         "run_dir": str(alpha_dir),
     }
-    monkeypatch.setattr("alphaclaude.tools.engine_status.get_all_runs", lambda: [run])
+    monkeypatch.setattr("openalphastack.tools.engine_status.get_all_runs", lambda: [run])
 
     text = format_plan_text()
 

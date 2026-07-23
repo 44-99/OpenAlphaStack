@@ -1,0 +1,11 @@
+interface:
+  display_name: "底仓做 T"
+  short_description: "评估 A 股底仓日内做 T 的可行条件、方向、仓位和风险参数"
+  default_prompt: "使用 $t0-intraday 评估我的持仓是否适合做 T。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "open-alpha-stack"
+      description: "OpenAlphaStack bounded A-share research tools"
+      transport: "stdio"

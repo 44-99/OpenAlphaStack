@@ -4,8 +4,8 @@ import logging
 import shutil
 import uuid
 
-from alphaclaude import paths
-from alphaclaude.logging_config import setup_logging
+from openalphastack import paths
+from openalphastack.logging_config import setup_logging
 
 
 def test_setup_logging_creates_nested_logs_directory():
