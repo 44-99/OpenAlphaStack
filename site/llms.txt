@@ -29,8 +29,11 @@ English discovery page: https://44-99.github.io/OpenAlphaStack/en.html
 - Roadmap: https://github.com/44-99/OpenAlphaStack/blob/master/docs/roadmap.md
 - Public MCP deployment: https://github.com/44-99/OpenAlphaStack/blob/master/docs/public-mcp.md
 - Privacy: https://44-99.github.io/OpenAlphaStack/privacy.html
+- Privacy (English): https://44-99.github.io/OpenAlphaStack/privacy-en.html
 - Terms: https://44-99.github.io/OpenAlphaStack/terms.html
+- Terms (English): https://44-99.github.io/OpenAlphaStack/terms-en.html
 - Support: https://44-99.github.io/OpenAlphaStack/support.html
+- Support (English): https://44-99.github.io/OpenAlphaStack/support-en.html
 
 ## Domain Skills
 

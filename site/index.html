@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OpenAlphaStack — Codex MCP + Skills A 股研究插件</title>
-    <meta name="description" content="OpenAlphaStack 是面向 A 股研究、回测与模拟交易的开源 Codex 插件，集成领域 Skills、本地 MCP、确定性 Python 引擎和可审计 Dashboard。">
-    <meta name="keywords" content="OpenAlphaStack,Codex,MCP,Skills,A股研究,量化交易,回测,模拟交易,AI Agent">
-    <meta name="theme-color" content="#071019">
+    <title>OpenAlphaStack — 面向 Codex 的可审计 A 股研究系统</title>
+    <meta name="description" content="OpenAlphaStack 是面向 Codex 的开源 A 股研究系统：用领域 Skills 复用方法，用只读 MCP 获取数据，用确定性 Python 引擎约束回测与模拟交易。">
+    <meta name="keywords" content="OpenAlphaStack,Codex,MCP,Skills,A股研究,量化研究,回测,模拟交易,Python,开源项目">
+    <meta name="theme-color" content="#050a11">
     <link rel="canonical" href="https://44-99.github.io/OpenAlphaStack/">
     <link rel="alternate" hreflang="zh-CN" href="https://44-99.github.io/OpenAlphaStack/">
     <link rel="alternate" hreflang="en" href="https://44-99.github.io/OpenAlphaStack/en.html">
@@ -14,8 +14,8 @@
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="OpenAlphaStack — Codex MCP + Skills A 股研究插件">
-    <meta property="og:description" content="Agent 负责研究，Python 负责确定性执行。本地优先、可审计、仅回测与模拟交易。">
+    <meta property="og:title" content="OpenAlphaStack — 可审计的 A 股研究系统">
+    <meta property="og:description" content="让智能体负责研究，让代码守住执行边界。本地优先、公开透明、仅限研究与模拟交易。">
     <meta property="og:url" content="https://44-99.github.io/OpenAlphaStack/">
     <meta property="og:image" content="https://44-99.github.io/OpenAlphaStack/assets/openalphastack-social-preview.png">
     <meta property="og:image:width" content="1280">
@@ -24,16 +24,35 @@
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "SoftwareSourceCode",
-        "name": "OpenAlphaStack",
-        "description": "面向 A 股研究、回测与模拟交易的开源 Codex MCP + Skills 插件栈。",
-        "codeRepository": "https://github.com/44-99/OpenAlphaStack",
-        "url": "https://44-99.github.io/OpenAlphaStack/",
-        "license": "https://opensource.org/licenses/MIT",
-        "programmingLanguage": ["Python", "TypeScript"],
-        "runtimePlatform": "Codex Desktop",
-        "applicationCategory": "DeveloperApplication",
-        "inLanguage": ["zh-CN", "en"]
+        "@graph": [
+          {
+            "@type": "SoftwareSourceCode",
+            "name": "OpenAlphaStack",
+            "description": "面向 Codex 的开源、可审计 A 股研究、回测与模拟交易系统。",
+            "codeRepository": "https://github.com/44-99/OpenAlphaStack",
+            "url": "https://44-99.github.io/OpenAlphaStack/",
+            "license": "https://opensource.org/licenses/MIT",
+            "programmingLanguage": ["Python", "TypeScript"],
+            "runtimePlatform": "Codex Desktop",
+            "applicationCategory": "DeveloperApplication",
+            "inLanguage": "zh-CN"
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "OpenAlphaStack 会连接真实券商吗？",
+                "acceptedAnswer": {"@type": "Answer", "text": "不会。公开模式只有研究、回测和模拟交易，不提供真实券商下单工具。"}
+              },
+              {
+                "@type": "Question",
+                "name": "为什么要把智能体研究和执行引擎分开？",
+                "acceptedAnswer": {"@type": "Answer", "text": "研究需要灵活推理，执行需要确定规则。OpenAlphaStack 让 Python 负责 T+1、费用、风险、状态和幂等，避免把模型文字当作执行许可。"}
+              }
+            ]
+          }
+        ]
       }
     </script>
   </head>
@@ -42,146 +61,264 @@
     <header class="site-header">
       <a class="brand" href="./" aria-label="OpenAlphaStack 首页">
         <span class="brand-mark" aria-hidden="true">OA</span>
-        <span>OpenAlphaStack</span>
+        <span class="brand-copy">OpenAlphaStack<small>A 股研究系统</small></span>
       </a>
       <nav aria-label="主导航">
-        <a href="#capabilities">能力</a>
-        <a href="#workflow">架构</a>
-        <a href="#quickstart">快速开始</a>
-        <a href="#faq">FAQ</a>
-        <a href="en.html" lang="en">English</a>
+        <a href="#why">设计原则</a>
+        <a href="#architecture">系统架构</a>
+        <a href="#demo">实机界面</a>
+        <a href="#start">快速开始</a>
+        <a href="#faq">常见问题</a>
       </nav>
-      <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">查看 GitHub</a>
+      <div class="header-actions">
+        <div class="language-switch" aria-label="选择语言">
+          <a href="./" lang="zh-CN" aria-current="page">中</a>
+          <a href="en.html" lang="en">英</a>
+        </div>
+        <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">查看源码</a>
+      </div>
     </header>
 
     <main id="main">
       <section class="hero section-shell">
         <div class="hero-copy">
-          <p class="eyebrow">OPEN-SOURCE CODEX PLUGIN</p>
-          <h1>把 A 股 Agent 研究，放进可审计的 <span>MCP + Skills</span> 边界</h1>
-          <p class="hero-lead">Codex Desktop 负责研究与调度，领域 Skills 复用分析方法，Python 负责 T+1、费用、状态和模拟执行。默认单 Agent，不把推理文字当作执行许可。</p>
+          <p class="release-pill"><a href="https://github.com/44-99/OpenAlphaStack/releases/tag/v0.1.0">v0.1.0 已正式发布</a></p>
+          <h1>让智能体负责研究，<span>让代码守住执行边界</span></h1>
+          <p class="hero-lead">OpenAlphaStack 是面向 Codex 的开源 A 股研究系统。领域 Skills 复用研究方法，MCP 提供有类型的数据工具，<strong>确定性 Python 引擎负责 T+1、费用、风险、状态和模拟执行。</strong></p>
           <div class="hero-actions">
-            <a class="button" href="#quickstart">开始本地体验</a>
-            <a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack">阅读源码</a>
+            <a class="button" href="#start">三分钟跑通离线示例 <span aria-hidden="true">→</span></a>
+            <a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack">在 GitHub 查看源码</a>
           </div>
-          <ul class="trust-list" aria-label="项目边界">
+          <ul class="trust-list" aria-label="项目信任信息">
             <li>MIT 开源</li>
             <li>本地优先</li>
-            <li>Paper Trading Only</li>
+            <li>仅限研究与模拟交易</li>
           </ul>
         </div>
-        <div class="hero-media">
-          <img src="assets/openalphastack-demo.gif" alt="OpenAlphaStack 股票搜索、K 线和三阶段审计工作流演示" width="960" height="600">
-          <p>真实本地模拟盘界面，不代表任何投资收益。</p>
+
+        <div class="hero-visual" aria-label="OpenAlphaStack 本地模拟盘界面">
+          <div class="floating-proof top">
+            <span class="proof-icon" aria-hidden="true">4</span>
+            <strong>四个领域 Skills</strong>
+            <span>市场、选股、个股、日内研究</span>
+          </div>
+          <div class="product-window">
+            <div class="window-bar" aria-hidden="true">
+              <i class="window-dot"></i><i class="window-dot"></i><i class="window-dot"></i>
+              <span class="window-title">本地只读观察面板</span>
+              <span class="window-badge">模拟盘</span>
+            </div>
+            <img src="assets/dashboard-stock-search.png" alt="OpenAlphaStack 中文股票搜索与 K 线界面" width="1600" height="1000" fetchpriority="high">
+          </div>
+          <div class="floating-proof bottom">
+            <span class="proof-icon" aria-hidden="true">✓</span>
+            <strong>确定性规则</strong>
+            <span>模型文字不是执行许可</span>
+          </div>
         </div>
       </section>
 
-      <section id="capabilities" class="section-shell section-block">
+      <section class="proof-strip" aria-label="项目验证数据">
+        <div class="proof-grid section-shell">
+          <div class="proof-item"><strong>4</strong><span>个领域 Skills</span></div>
+          <div class="proof-item"><strong>18</strong><span>个本地 MCP 工具</span></div>
+          <div class="proof-item"><strong>217</strong><span>项 Python 测试</span></div>
+          <div class="proof-item"><strong>0</strong><span>项高危前端依赖问题</span></div>
+        </div>
+      </section>
+
+      <section id="why" class="section-shell section-block">
         <div class="section-heading">
-          <p class="eyebrow">WHY OPENALPHASTACK</p>
-          <h2>减少 Agent 戏剧，增加可验证边界</h2>
-          <p>它不是自动盈利黑盒，而是一套可安装、可检查、可替换的 A 股研究基础设施。</p>
+          <p class="eyebrow">不是“智能炒股神器”</p>
+          <h2>研究可以灵活，执行必须确定</h2>
+          <p>我们不让一个模型同时扮演分析师、风控、交易所和审计员。每一层只做自己擅长的事，失败、过期和缺失数据都必须被明确暴露。</p>
         </div>
-        <div class="card-grid">
-          <article class="card">
-            <span class="card-index">01</span>
-            <h3>领域 Skills</h3>
-            <p>市场分析、选股、个股分析和底仓 T0 按可复用能力组织，由一个 Codex 任务按需组合。</p>
+        <div class="principle-grid">
+          <article class="principle-card" data-index="01">
+            <span class="card-icon" aria-hidden="true">研</span>
+            <h3>研究方法放进 Skills</h3>
+            <p>市场情绪、板块轮动、候选筛选和个股分析成为可复用的方法，而不是散落在聊天记录里的临时提示词。</p>
+            <p class="card-note">默认由一个 Codex 任务按需组合，不制造没有必要的多智能体戏剧。</p>
           </article>
-          <article class="card">
-            <span class="card-index">02</span>
-            <h3>有类型的本地 MCP</h3>
-            <p>行情、指标、新闻、回测和模拟计划通过稳定 schema 暴露，不提供 Shell 或真实下单工具。</p>
+          <article class="principle-card" data-index="02">
+            <span class="card-icon" aria-hidden="true">界</span>
+            <h3>实时能力放进 MCP</h3>
+            <p>行情、技术面、基本面、新闻、风险计算和基准回测通过稳定参数与版本化响应暴露。</p>
+            <p class="card-note">每个响应保留来源、截至时间、新鲜度和示例数据标记。</p>
           </article>
-          <article class="card">
-            <span class="card-index">03</span>
-            <h3>确定性 Python 引擎</h3>
-            <p>T+1、费用、幂等、状态迁移和账本由代码执行；置信度与风险文字只做非阻断审计信息。</p>
+          <article class="principle-card" data-index="03">
+            <span class="card-icon" aria-hidden="true">规</span>
+            <h3>硬规则留给 Python</h3>
+            <p>T+1、费用、仓位上限、幂等、状态迁移和账本提交由确定性代码执行，不由模型自行解释。</p>
+            <p class="card-note">公开能力只有研究、回测与模拟交易，不连接真实券商。</p>
           </article>
         </div>
       </section>
 
-      <section id="workflow" class="section-shell section-block split-section">
-        <div class="media-frame">
-          <img src="assets/dashboard-workflow.png" alt="OpenAlphaStack Research、Execution、Evaluation 三阶段 Dashboard" loading="lazy" width="1600" height="1000">
+      <section id="architecture" class="section-shell section-block">
+        <div class="section-heading centered">
+          <p class="eyebrow">四层清晰边界</p>
+          <h2>从研究意图到可复核证据</h2>
+          <p>智能体负责提出和解释，工具负责读取，规则负责执行，账本负责留下证据。</p>
         </div>
-        <div class="split-copy">
-          <p class="eyebrow">THREE CLEAR STAGES</p>
-          <h2>研究、执行、评估，仅此三层</h2>
-          <ol class="stage-list">
-            <li><strong>Research</strong><span>Codex 组合 Skills 与 MCP 数据，生成有来源的研究结论。</span></li>
-            <li><strong>Execution</strong><span>一次 <code>publish_paper_plan</code> 进入确定性硬约束与模拟执行。</span></li>
-            <li><strong>Evaluation</strong><span>SQLite、追加式账本和 Dashboard 留下可复核证据。</span></li>
-          </ol>
+        <div class="architecture-panel">
+          <div class="architecture-flow">
+            <article class="architecture-node">
+              <span class="node-label">第一层 · 对话与调度</span>
+              <h3>Codex 任务</h3>
+              <p>理解研究意图、组合方法、引用证据并生成可审阅结论。</p>
+            </article>
+            <article class="architecture-node gold">
+              <span class="node-label">第二层 · 研究方法</span>
+              <h3>领域 Skills</h3>
+              <p>封装市场分析、候选筛选、个股研究与底仓日内约束。</p>
+            </article>
+            <article class="architecture-node accent">
+              <span class="node-label">第三层 · 类型化能力</span>
+              <h3>MCP 工具</h3>
+              <p>提供行情、指标、新闻、回测与受限的模拟计划入口。</p>
+            </article>
+            <article class="architecture-node">
+              <span class="node-label">第四层 · 规则与证据</span>
+              <h3>Python 与 SQLite</h3>
+              <p>执行硬约束、原子状态变更，并生成追加式审计记录。</p>
+            </article>
+          </div>
+          <div class="architecture-caption">
+            <span><strong>研究阶段：</strong>来源、时间与示例标记随结果保留</span>
+            <span><strong>执行阶段：</strong>没有有效计划就保持观察，不擅自交易</span>
+            <span><strong>评估阶段：</strong>状态与账本可回放、可检查、可复现</span>
+          </div>
         </div>
       </section>
 
-      <section class="section-shell section-block split-section split-reverse">
-        <div class="split-copy">
-          <p class="eyebrow">A-SHARE WORKBENCH</p>
-          <h2>按代码、名称片段或拼音查找 A 股</h2>
-          <p>Dashboard 将股票搜索、K 线、计划、持仓、账本与诊断放在一个只读可观测界面里。它默认只监听本机，不是需要公开部署的 SaaS。</p>
-          <a class="text-link" href="https://github.com/44-99/OpenAlphaStack#快速开始">查看完整使用说明 →</a>
-        </div>
-        <div class="media-frame">
-          <img src="assets/dashboard-search-results.png" alt="OpenAlphaStack Dashboard 中文股票名称搜索结果" loading="lazy" width="1600" height="1000">
-        </div>
-      </section>
-
-      <section id="quickstart" class="section-shell section-block quickstart">
+      <section id="demo" class="section-shell section-block">
         <div class="section-heading">
-          <p class="eyebrow">LOCAL QUICK START</p>
-          <h2>在本地跑起来</h2>
-          <p>需要 Python 3.10+、Node.js 20+ 与 Codex Desktop。</p>
+          <p class="eyebrow">真实本地界面</p>
+          <h2>不是概念图，是可以跑起来的工作台</h2>
+          <p>股票搜索、K 线、计划、持仓、账本和三阶段工作流都来自真实本地模拟盘。界面负责观察，不负责替智能体执行命令。</p>
         </div>
-        <pre aria-label="PowerShell 快速开始命令"><code>git clone https://github.com/44-99/OpenAlphaStack.git
+        <div class="showcase">
+          <article class="showcase-main">
+            <div class="showcase-media"><img src="assets/dashboard-search-results.png" alt="OpenAlphaStack 中文股票搜索和分时 K 线结果" width="1600" height="1000" loading="lazy"></div>
+            <div class="showcase-copy">
+              <small>股票搜索与行情观察</small>
+              <h3>按代码、中文名称或拼音定位 A 股</h3>
+              <p>在同一个本地界面查看行情、计划、持仓和可追溯数据来源。</p>
+            </div>
+          </article>
+          <article class="showcase-card">
+            <div class="showcase-media"><img src="assets/dashboard-stock-search.png" alt="OpenAlphaStack 中文个股 K 线工作台" width="1600" height="1000" loading="lazy"></div>
+            <div class="showcase-copy">
+              <small>本地只读观察</small>
+              <h3>多周期 K 线与研究状态</h3>
+              <p>观察缓存链、指标和运行状态，不把浏览器变成智能体终端。</p>
+            </div>
+          </article>
+          <article class="showcase-card">
+            <div class="showcase-media"><img src="assets/openalphastack-demo.gif" alt="OpenAlphaStack 中文界面实机演示" width="960" height="600" loading="lazy"></div>
+            <div class="showcase-copy">
+              <small>完整操作演示</small>
+              <h3>从搜索到工作流复核</h3>
+              <p>先看真实演示，再决定这套架构是否适合你的研究流程。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="start" class="section-shell section-block split-section">
+        <div class="split-copy">
+          <p class="eyebrow">先完成第一次成功</p>
+          <h2>三分钟跑通离线示例</h2>
+          <p>不必先配置行情源或启动模拟引擎。用确定性的合成数据证明安装、Skill 发现和 MCP 调用链都正常，再进入真实研究。</p>
+          <ul class="check-list">
+            <li>支持 Python 3.10 及以上版本</li>
+            <li>离线示例明确标记，不伪装成真实行情</li>
+            <li>完整中文入门指南包含预期输出与常见错误</li>
+          </ul>
+          <a class="text-link" href="https://github.com/44-99/OpenAlphaStack/blob/master/docs/getting-started.md">阅读完整入门指南 →</a>
+        </div>
+        <div>
+          <div class="code-card">
+            <div class="code-card-header"><span>PowerShell</span><span>基础安装</span></div>
+            <pre><code>git clone https://github.com/44-99/OpenAlphaStack.git
 cd OpenAlphaStack
-pip install -e ".[all]"
-npm install
-npm run dashboard:build
-openalphastack doctor
-openalphastack app start</code></pre>
-        <p class="command-note">打开 <code>http://127.0.0.1:8800/dashboard</code>，再从 Codex 调用 <code>$market-analyzer</code>。网络或行情不可用时可先运行明确标记的离线 Demo。</p>
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+openalphastack doctor</code></pre>
+          </div>
+          <div class="prompt-card">
+            <small>可复制的首次提示词</small>
+            <p>使用市场分析 Skill 的离线示例模式，通过 OpenAlphaStack MCP 读取市场概览与市场新闻，并明确标注所有数据均为合成示例。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-shell section-block">
+        <div class="boundary-band">
+          <div>
+            <p class="eyebrow">边界比口号更重要</p>
+            <h2>它不会替你承诺收益</h2>
+            <p>回测和模拟结果只是研究证据。OpenAlphaStack 的价值是让假设、数据、规则、状态和结果更容易被检查，而不是把不确定性包装成确定答案。</p>
+          </div>
+          <div class="boundary-list" aria-label="明确不提供的能力">
+            <span>真实券商下单</span>
+            <span>任意命令执行</span>
+            <span>收益保证</span>
+            <span>缺失数据自动编造</span>
+          </div>
+        </div>
       </section>
 
       <section id="faq" class="section-shell section-block">
         <div class="section-heading">
-          <p class="eyebrow">FAQ</p>
-          <h2>先把边界说清楚</h2>
+          <p class="eyebrow">常见问题</p>
+          <h2>开始之前，先把边界说清楚</h2>
         </div>
         <div class="faq-list">
           <details>
             <summary>这是自动实盘交易软件吗？</summary>
-            <p>不是。公开模式只有研究、回测与模拟交易，MCP 不提供真实券商下单工具。</p>
+            <p>不是。公开模式只有研究、回测与模拟交易，不提供真实券商连接和下单工具。</p>
           </details>
           <details>
-            <summary>需要默认启动多个子 Agent 吗？</summary>
-            <p>不需要。默认由一个 Codex 任务组合领域 Skills；只有用户明确要求独立并行工作时才考虑子 Agent。</p>
+            <summary>为什么默认不启动多个子智能体？</summary>
+            <p>大多数研究任务由一个 Codex 任务组合领域 Skills 已经足够。只有用户明确要求独立并行工作时才考虑子智能体。</p>
           </details>
           <details>
-            <summary>静态官网会暴露我的 Dashboard 吗？</summary>
-            <p>不会。本站只有静态 HTML、CSS 与演示素材。本地 Dashboard 仍绑定 <code>127.0.0.1</code>，不能在缺少认证、TLS 和网络策略时公开。</p>
+            <summary>公开网站会暴露我的本地数据吗？</summary>
+            <p>不会。本站是静态页面；本地观察面板默认绑定 127.0.0.1。独立公网 MCP 也只保留无状态只读工具。</p>
           </details>
           <details>
-            <summary>项目是否保证盈利？</summary>
-            <p>不保证。回测和模拟结果只是研究证据，不是收益承诺；亏损和失败样本同样应该被记录与复盘。</p>
+            <summary>真实行情不可用时还能体验吗？</summary>
+            <p>可以。仓库提供明确标记的合成离线数据，用于验证安装、协议和研究工作流，不作为投资数据。</p>
           </details>
         </div>
       </section>
 
-      <section class="section-shell final-cta">
+      <section class="final-cta section-shell">
         <div>
-          <p class="eyebrow">BUILD AUDITABLE RESEARCH</p>
-          <h2>从可复现的模拟闭环开始</h2>
-          <p>查看源码、跑通 Demo，再决定它是否适合你的 A 股研究流程。</p>
+          <p class="eyebrow">从可复现开始</p>
+          <h2>先跑通，再相信</h2>
+          <p>查看源码、运行离线示例、检查真实边界。如果它解决了你的问题，欢迎留下一个 Star、报告问题或参与贡献。</p>
         </div>
-        <a class="button" href="https://github.com/44-99/OpenAlphaStack">在 GitHub 上查看</a>
+        <div class="cta-actions">
+          <a class="button" href="https://github.com/44-99/OpenAlphaStack">查看 GitHub</a>
+          <a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack/discussions">加入讨论</a>
+        </div>
       </section>
     </main>
 
     <footer class="site-footer section-shell">
-      <p>OpenAlphaStack · MIT License · 仅用于研究、回测与模拟交易</p>
-      <div><a href="https://github.com/44-99/OpenAlphaStack">GitHub</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="support.html">Support</a><a href="llms.txt">llms.txt</a></div>
+      <p>OpenAlphaStack · MIT 许可 · 仅用于研究、回测与模拟交易</p>
+      <div>
+        <a href="https://github.com/44-99/OpenAlphaStack">源码</a>
+        <a href="https://github.com/44-99/OpenAlphaStack/releases/tag/v0.1.0">版本</a>
+        <a href="privacy.html">隐私</a>
+        <a href="terms.html">条款</a>
+        <a href="support.html">支持</a>
+        <a href="en.html" lang="en">英文</a>
+      </div>
     </footer>
   </body>
 </html>

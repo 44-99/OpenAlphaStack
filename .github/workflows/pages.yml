@@ -8,6 +8,7 @@ on:
       - 'docs/assets/openalphastack-*.png'
       - 'docs/assets/openalphastack-*.gif'
       - 'docs/assets/dashboard-search-results.png'
+      - 'docs/assets/dashboard-stock-search.png'
       - 'docs/assets/dashboard-workflow.png'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -36,7 +37,9 @@ jobs:
           cp -R site/. _site/
           cp docs/assets/openalphastack-demo.gif _site/assets/
           cp docs/assets/openalphastack-social-preview.png _site/assets/
+          cp docs/assets/openalphastack-social-preview-en.png _site/assets/
           cp docs/assets/dashboard-search-results.png _site/assets/
+          cp docs/assets/dashboard-stock-search.png _site/assets/
           cp docs/assets/dashboard-workflow.png _site/assets/
 
       - uses: actions/configure-pages@v5

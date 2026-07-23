@@ -2,13 +2,23 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+import re
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site"
-PUBLIC_PAGES = ("index.html", "en.html", "privacy.html", "terms.html", "support.html")
+PUBLIC_PAGES = (
+    "index.html",
+    "en.html",
+    "privacy.html",
+    "privacy-en.html",
+    "terms.html",
+    "terms-en.html",
+    "support.html",
+    "support-en.html",
+)
 
 
 class LinkParser(HTMLParser):
@@ -49,8 +59,11 @@ def test_sitemap_lists_policy_and_support_pages():
     urls = {node.text for node in tree.findall("s:url/s:loc", namespace)}
 
     assert "https://44-99.github.io/OpenAlphaStack/privacy.html" in urls
+    assert "https://44-99.github.io/OpenAlphaStack/privacy-en.html" in urls
     assert "https://44-99.github.io/OpenAlphaStack/terms.html" in urls
+    assert "https://44-99.github.io/OpenAlphaStack/terms-en.html" in urls
     assert "https://44-99.github.io/OpenAlphaStack/support.html" in urls
+    assert "https://44-99.github.io/OpenAlphaStack/support-en.html" in urls
 
 
 def test_policy_pages_name_the_public_mcp_boundary():
@@ -58,6 +71,24 @@ def test_policy_pages_name_the_public_mcp_boundary():
     terms = (SITE / "terms.html").read_text(encoding="utf-8")
     support = (SITE / "support.html").read_text(encoding="utf-8")
 
-    assert "公网 MCP" in privacy and "不读取或保存本地模拟盘" in privacy
+    assert "公网 MCP" in privacy and "不读" in privacy and "本地模拟盘" in privacy
     assert "不接入券商" in terms and "不执行订单" in terms
-    assert "/health" in support and "Security Policy" in support
+    assert "/health" in support and "安全政策" in support
+
+
+def test_english_pages_do_not_mix_in_chinese_copy():
+    english_pages = ("en.html", "privacy-en.html", "terms-en.html", "support-en.html")
+    cjk = re.compile(r"[\u3400-\u9fff]")
+
+    for name in english_pages:
+        content = (SITE / name).read_text(encoding="utf-8")
+        assert cjk.search(content) is None, f"{name} contains mixed Chinese copy"
+
+
+def test_chinese_pages_do_not_use_english_marketing_labels():
+    chinese_pages = ("index.html", "privacy.html", "terms.html", "support.html")
+    disallowed = ("OPEN SOURCE", "PUBLIC SUPPORT", "English summary", "Privacy Policy /")
+
+    for name in chinese_pages:
+        content = (SITE / name).read_text(encoding="utf-8")
+        assert not any(label in content for label in disallowed), f"{name} contains mixed marketing copy"

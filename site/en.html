@@ -3,64 +3,310 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OpenAlphaStack — Codex MCP + Skills for A-share Research</title>
-    <meta name="description" content="An open-source Codex plugin combining domain Skills, a typed local MCP server, deterministic backtesting and paper trading for auditable A-share research.">
-    <meta name="theme-color" content="#071019">
+    <title>OpenAlphaStack — Auditable A-share Research for Codex</title>
+    <meta name="description" content="OpenAlphaStack is an open-source Codex stack for auditable A-share research, deterministic backtesting, and paper trading with Skills, MCP, Python, and SQLite.">
+    <meta name="keywords" content="OpenAlphaStack,Codex,MCP,Skills,A-share research,quant research,backtesting,paper trading,Python,open source">
+    <meta name="theme-color" content="#050a11">
     <link rel="canonical" href="https://44-99.github.io/OpenAlphaStack/en.html">
     <link rel="alternate" hreflang="zh-CN" href="https://44-99.github.io/OpenAlphaStack/">
     <link rel="alternate" hreflang="en" href="https://44-99.github.io/OpenAlphaStack/en.html">
+    <link rel="alternate" hreflang="x-default" href="https://44-99.github.io/OpenAlphaStack/">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="OpenAlphaStack — Codex MCP + Skills for A-share Research">
-    <meta property="og:description" content="Agent-led research with deterministic Python execution. Local-first, auditable, and paper-only.">
+    <meta property="og:title" content="OpenAlphaStack — Auditable A-share Research for Codex">
+    <meta property="og:description" content="Agent-led research. Code-owned execution. Local-first, transparent, and paper-only.">
     <meta property="og:url" content="https://44-99.github.io/OpenAlphaStack/en.html">
-    <meta property="og:image" content="https://44-99.github.io/OpenAlphaStack/assets/openalphastack-social-preview.png">
+    <meta property="og:image" content="https://44-99.github.io/OpenAlphaStack/assets/openalphastack-social-preview-en.png">
+    <meta property="og:image:width" content="1280">
+    <meta property="og:image:height" content="640">
     <meta name="twitter:card" content="summary_large_image">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "OpenAlphaStack",
+        "description": "An open-source Codex stack for auditable A-share research, backtesting, and paper trading.",
+        "codeRepository": "https://github.com/44-99/OpenAlphaStack",
+        "url": "https://44-99.github.io/OpenAlphaStack/en.html",
+        "license": "https://opensource.org/licenses/MIT",
+        "programmingLanguage": ["Python", "TypeScript"],
+        "runtimePlatform": "Codex Desktop",
+        "applicationCategory": "DeveloperApplication",
+        "inLanguage": "en"
+      }
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
-      <a class="brand" href="en.html"><span class="brand-mark" aria-hidden="true">OA</span><span>OpenAlphaStack</span></a>
-      <nav aria-label="Primary navigation"><a href="#capabilities">Capabilities</a><a href="#workflow">Architecture</a><a href="#quickstart">Quick start</a><a href="./" lang="zh-CN">简体中文</a></nav>
-      <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">View on GitHub</a>
+      <a class="brand" href="en.html" aria-label="OpenAlphaStack home">
+        <span class="brand-mark" aria-hidden="true">OA</span>
+        <span class="brand-copy">OpenAlphaStack<small>A-share research stack</small></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#why">Principles</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#start">Quick start</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="header-actions">
+        <div class="language-switch" aria-label="Choose language">
+          <a href="./" lang="zh-CN">ZH</a>
+          <a href="en.html" lang="en" aria-current="page">EN</a>
+        </div>
+        <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">View source</a>
+      </div>
     </header>
+
     <main id="main">
       <section class="hero section-shell">
         <div class="hero-copy">
-          <p class="eyebrow">OPEN-SOURCE CODEX PLUGIN</p>
-          <h1>Auditable A-share research with <span>MCP + Skills</span></h1>
-          <p class="hero-lead">Codex Desktop owns research and scheduling. Domain Skills encode reusable methods. Python owns T+1 rules, fees, state, backtests, and mechanical paper execution.</p>
-          <div class="hero-actions"><a class="button" href="#quickstart">Run it locally</a><a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack">Read the source</a></div>
-          <ul class="trust-list"><li>MIT licensed</li><li>Local-first</li><li>Paper trading only</li></ul>
+          <p class="release-pill"><a href="https://github.com/44-99/OpenAlphaStack/releases/tag/v0.1.0">Version 0.1.0 is available</a></p>
+          <h1>Agent-led research.<span>Code-owned execution.</span></h1>
+          <p class="hero-lead">OpenAlphaStack is an open-source Codex stack for A-share research. Domain Skills encode reusable methods, MCP exposes typed tools, and a <strong>deterministic Python engine owns T+1 rules, fees, risk, state, and paper execution.</strong></p>
+          <div class="hero-actions">
+            <a class="button" href="#start">Run the offline demo <span aria-hidden="true">→</span></a>
+            <a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack">Explore on GitHub</a>
+          </div>
+          <ul class="trust-list" aria-label="Project trust signals">
+            <li>MIT licensed</li>
+            <li>Local-first</li>
+            <li>Research and paper trading only</li>
+          </ul>
         </div>
-        <div class="hero-media"><img src="assets/openalphastack-demo.gif" alt="OpenAlphaStack stock search, K-line, and three-stage workflow demo" width="960" height="600"><p>Captured from the real local paper Dashboard. No return claim implied.</p></div>
-      </section>
-      <section id="capabilities" class="section-shell section-block">
-        <div class="section-heading"><p class="eyebrow">WHY OPENALPHASTACK</p><h2>Less agent theater, more verifiable boundaries</h2><p>An installable foundation for developers exploring China's A-share market—not an automated-profit black box.</p></div>
-        <div class="card-grid">
-          <article class="card"><span class="card-index">01</span><h3>Domain Skills</h3><p>Market analysis, screening, stock analysis, and T0 research are composed by one Codex task by default.</p></article>
-          <article class="card"><span class="card-index">02</span><h3>Typed local MCP</h3><p>Bounded tools expose market data, indicators, news, backtests, and paper plans—never arbitrary shell or live orders.</p></article>
-          <article class="card"><span class="card-index">03</span><h3>Deterministic engine</h3><p>Python enforces T+1, fees, idempotency, state transitions, and the audit ledger. Model prose is metadata, not permission.</p></article>
+
+        <div class="hero-visual" aria-label="Versioned MCP response example">
+          <div class="floating-proof top">
+            <span class="proof-icon" aria-hidden="true">4</span>
+            <strong>Four domain Skills</strong>
+            <span>Market, screening, stocks, intraday</span>
+          </div>
+          <div class="code-card">
+            <div class="code-card-header"><span>openalphastack.mcp/v1</span><span>read-only result</span></div>
+            <pre><code>{
+  "ok": true,
+  "data": {
+    "research_mode": "paper",
+    "market_bias": "neutral"
+  },
+  "meta": {
+    "source": "provider-or-demo",
+    "as_of": "2026-07-24T10:00:00+08:00",
+    "freshness": { "status": "fresh" },
+    "demo": false
+  }
+}</code></pre>
+          </div>
+          <div class="floating-proof bottom">
+            <span class="proof-icon" aria-hidden="true">✓</span>
+            <strong>Deterministic rules</strong>
+            <span>Model prose is never permission</span>
+          </div>
         </div>
       </section>
-      <section id="workflow" class="section-shell section-block split-section">
-        <div class="media-frame"><img src="assets/dashboard-workflow.png" alt="Research, Execution, and Evaluation workflow" loading="lazy" width="1600" height="1000"></div>
-        <div class="split-copy"><p class="eyebrow">THREE CLEAR STAGES</p><h2>Research → Execution → Evaluation</h2><ol class="stage-list"><li><strong>Research</strong><span>Codex composes Skills and cited MCP data.</span></li><li><strong>Execution</strong><span>One <code>publish_paper_plan</code> call enters deterministic checks.</span></li><li><strong>Evaluation</strong><span>SQLite, append-only projections, and the Dashboard preserve evidence.</span></li></ol></div>
+
+      <section class="proof-strip" aria-label="Project verification metrics">
+        <div class="proof-grid section-shell">
+          <div class="proof-item"><strong>4</strong><span>domain Skills</span></div>
+          <div class="proof-item"><strong>18</strong><span>local MCP tools</span></div>
+          <div class="proof-item"><strong>217</strong><span>Python tests</span></div>
+          <div class="proof-item"><strong>0</strong><span>high-severity frontend advisories</span></div>
+        </div>
       </section>
-      <section id="quickstart" class="section-shell section-block quickstart">
-        <div class="section-heading"><p class="eyebrow">LOCAL QUICK START</p><h2>Run it on your machine</h2><p>Requires Python 3.10+, Node.js 20+, and Codex Desktop.</p></div>
-        <pre><code>git clone https://github.com/44-99/OpenAlphaStack.git
+
+      <section id="why" class="section-shell section-block">
+        <div class="section-heading">
+          <p class="eyebrow">Not an AI stock oracle</p>
+          <h2>Flexible research, deterministic execution</h2>
+          <p>One model should not impersonate an analyst, risk engine, exchange, and auditor at the same time. OpenAlphaStack gives each layer a narrow job and makes missing, stale, or failed data visible.</p>
+        </div>
+        <div class="principle-grid">
+          <article class="principle-card" data-index="01">
+            <span class="card-icon" aria-hidden="true">S</span>
+            <h3>Methods live in Skills</h3>
+            <p>Market regimes, sector rotation, candidate screening, and stock review become reusable workflows instead of prompts trapped in chat history.</p>
+            <p class="card-note">One Codex task composes Skills by default. Multi-agent orchestration is optional, not theater.</p>
+          </article>
+          <article class="principle-card" data-index="02">
+            <span class="card-icon" aria-hidden="true">M</span>
+            <h3>Live capabilities live in MCP</h3>
+            <p>Quotes, technicals, fundamentals, news, risk calculations, and baseline backtests use typed inputs and versioned responses.</p>
+            <p class="card-note">Every market result preserves source, as-of time, freshness, and synthetic-demo status.</p>
+          </article>
+          <article class="principle-card" data-index="03">
+            <span class="card-icon" aria-hidden="true">P</span>
+            <h3>Hard rules stay in Python</h3>
+            <p>T+1 behavior, fees, position limits, idempotency, state transitions, and ledger commits are deterministic code paths.</p>
+            <p class="card-note">Public modes cover research, backtesting, and paper trading. There is no live broker integration.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="section-shell section-block">
+        <div class="section-heading centered">
+          <p class="eyebrow">Four explicit layers</p>
+          <h2>From research intent to inspectable evidence</h2>
+          <p>The agent proposes and explains. Tools retrieve. Rules execute. The ledger preserves evidence.</p>
+        </div>
+        <div class="architecture-panel">
+          <div class="architecture-flow">
+            <article class="architecture-node">
+              <span class="node-label">Layer 01 · intent</span>
+              <h3>Codex tasks</h3>
+              <p>Interpret research intent, compose methods, cite evidence, and produce reviewable conclusions.</p>
+            </article>
+            <article class="architecture-node gold">
+              <span class="node-label">Layer 02 · methods</span>
+              <h3>Domain Skills</h3>
+              <p>Encode market analysis, screening, stock research, and intraday guardrails.</p>
+            </article>
+            <article class="architecture-node accent">
+              <span class="node-label">Layer 03 · capabilities</span>
+              <h3>MCP tools</h3>
+              <p>Expose market data, indicators, news, backtests, and bounded paper-plan operations.</p>
+            </article>
+            <article class="architecture-node">
+              <span class="node-label">Layer 04 · evidence</span>
+              <h3>Python and SQLite</h3>
+              <p>Enforce invariants, commit state atomically, and preserve append-only audit records.</p>
+            </article>
+          </div>
+          <div class="architecture-caption">
+            <span><strong>Research:</strong> sources and timestamps travel with results</span>
+            <span><strong>Execution:</strong> no valid plan means observation mode</span>
+            <span><strong>Evaluation:</strong> state and ledger events remain replayable</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="evidence" class="section-shell section-block split-section">
+        <div class="split-copy">
+          <p class="eyebrow">Inspect before trusting</p>
+          <h2>A working stack, not a return claim</h2>
+          <p>The repository ships a reproducible synthetic demo, a typed MCP contract, a paper-only engine, a local observability dashboard, tests, release notes, and contributor entry points.</p>
+          <ul class="check-list">
+            <li>Versioned success and failure envelopes</li>
+            <li>Transactional state and append-only audit projections</li>
+            <li>Explicit stale-data and synthetic-demo metadata</li>
+            <li>A separate deployment-ready public read-only MCP surface</li>
+          </ul>
+          <a class="text-link" href="https://github.com/44-99/OpenAlphaStack/blob/master/docs/architecture.md">Read the architecture →</a>
+        </div>
+        <div>
+          <div class="code-card">
+            <div class="code-card-header"><span>Boundary contract</span><span>paper only</span></div>
+            <pre><code>Agent confidence   = audit metadata
+Research narrative = reviewable context
+
+Execution gates:
+  ✓ validated plan schema
+  ✓ deterministic risk rules
+  ✓ idempotency key
+  ✓ expected state version
+
+Never exposed:
+  × live broker orders
+  × arbitrary shell access
+  × fabricated missing data</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="start" class="section-shell section-block split-section">
+        <div class="split-copy">
+          <p class="eyebrow">Reach first success quickly</p>
+          <h2>Run the offline path first</h2>
+          <p>You do not need a market-data provider or a running paper engine to verify installation, Skill discovery, and MCP calls. Start with deterministic synthetic data, then move to live research.</p>
+          <ul class="check-list">
+            <li>Python 3.10 or newer</li>
+            <li>Synthetic data is always marked as demo data</li>
+            <li>Expected output and common failures are documented</li>
+          </ul>
+          <a class="text-link" href="https://github.com/44-99/OpenAlphaStack/blob/master/docs/getting-started.md">Open the getting-started guide →</a>
+        </div>
+        <div>
+          <div class="code-card">
+            <div class="code-card-header"><span>PowerShell</span><span>base install</span></div>
+            <pre><code>git clone https://github.com/44-99/OpenAlphaStack.git
 cd OpenAlphaStack
-pip install -e ".[all]"
-npm install
-npm run dashboard:build
-openalphastack doctor
-openalphastack app start</code></pre>
-        <p class="command-note">Open <code>http://127.0.0.1:8800/dashboard</code>, then invoke <code>$market-analyzer</code> from Codex. See the <a href="https://github.com/44-99/OpenAlphaStack/blob/master/README_EN.md">English README</a> for the concise evaluation guide.</p>
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+openalphastack doctor</code></pre>
+          </div>
+          <div class="prompt-card">
+            <small>First Codex prompt</small>
+            <p>Use the market-analysis Skill in offline demo mode. Read the market overview and market news through OpenAlphaStack MCP, and clearly label every value as synthetic demo data.</p>
+          </div>
+        </div>
       </section>
-      <section class="section-shell final-cta"><div><p class="eyebrow">BUILD AUDITABLE RESEARCH</p><h2>Start with a reproducible paper loop</h2><p>Inspect the code, run the offline demo, and decide whether the architecture fits your workflow.</p></div><a class="button" href="https://github.com/44-99/OpenAlphaStack">View on GitHub</a></section>
+
+      <section class="section-shell section-block">
+        <div class="boundary-band">
+          <div>
+            <p class="eyebrow">Boundaries over slogans</p>
+            <h2>No promise of profit</h2>
+            <p>Backtests and paper results are research evidence. OpenAlphaStack helps you inspect assumptions, data, rules, state, and outcomes; it does not turn uncertainty into a guaranteed answer.</p>
+          </div>
+          <div class="boundary-list" aria-label="Capabilities that are not provided">
+            <span>Live broker orders</span>
+            <span>Arbitrary command execution</span>
+            <span>Guaranteed returns</span>
+            <span>Fabricated missing data</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section-shell section-block">
+        <div class="section-heading">
+          <p class="eyebrow">Frequently asked questions</p>
+          <h2>Know the boundary before you begin</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Does OpenAlphaStack place live orders?</summary>
+            <p>No. Public modes cover research, backtesting, and paper trading. No live broker tool is exposed.</p>
+          </details>
+          <details>
+            <summary>Why not launch multiple agents by default?</summary>
+            <p>One Codex task can compose the domain Skills for most research. Parallel agents are reserved for explicitly independent work.</p>
+          </details>
+          <details>
+            <summary>Does the public website expose local data?</summary>
+            <p>No. This site is static, and the local dashboard binds to 127.0.0.1 by default. The separate public MCP surface is stateless and read-only.</p>
+          </details>
+          <details>
+            <summary>Can I evaluate it without live market data?</summary>
+            <p>Yes. The repository includes deterministic synthetic datasets for installation and workflow verification. They are never presented as investment data.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="final-cta section-shell">
+        <div>
+          <p class="eyebrow">Start with reproducibility</p>
+          <h2>Run it before you trust it</h2>
+          <p>Inspect the source, complete the offline demo, and verify the boundaries. If the architecture is useful, star the repository, report a problem, or contribute a focused improvement.</p>
+        </div>
+        <div class="cta-actions">
+          <a class="button" href="https://github.com/44-99/OpenAlphaStack">View on GitHub</a>
+          <a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack/discussions">Join the discussion</a>
+        </div>
+      </section>
     </main>
-    <footer class="site-footer section-shell"><p>OpenAlphaStack · MIT License · Research, backtesting, and paper trading only</p><div><a href="https://github.com/44-99/OpenAlphaStack">GitHub</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="support.html">Support</a><a href="llms.txt">llms.txt</a></div></footer>
+
+    <footer class="site-footer section-shell">
+      <p>OpenAlphaStack · MIT License · Research, backtesting, and paper trading only</p>
+      <div>
+        <a href="https://github.com/44-99/OpenAlphaStack">Source</a>
+        <a href="https://github.com/44-99/OpenAlphaStack/releases/tag/v0.1.0">Release</a>
+        <a href="privacy-en.html">Privacy</a>
+        <a href="terms-en.html">Terms</a>
+        <a href="support-en.html">Support</a>
+        <a href="./" lang="zh-CN">Chinese</a>
+      </div>
+    </footer>
   </body>
 </html>
