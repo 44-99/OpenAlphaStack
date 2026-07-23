@@ -1,4 +1,4 @@
-import { lazy, Suspense, type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpenCheck,
   BriefcaseBusiness,
@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   Radar,
+  Search,
   ShieldAlert,
   Square,
   type LucideIcon,
@@ -25,6 +26,7 @@ import type {
   PageKey,
   PlanData,
   RunRecord,
+  StockSearchItem,
   WatchlistItem,
   WorkflowEvent,
   WorkflowGraph,
@@ -81,6 +83,7 @@ export default function App() {
   const [runActionMessage, setRunActionMessage] = useState('');
   const [runActionBusy, setRunActionBusy] = useState('');
   const [selectedCode, setSelectedCode] = useState('000001');
+  const [searchedStock, setSearchedStock] = useState<StockSearchItem | null>(null);
   const [period, setPeriod] = useState<KlinePeriod>('1m');
   const [overlay, setOverlay] = useState<OverlayKind>('NONE');
   const [klineLayers, setKlineLayers] = useState<KlineLayerKey[]>(['trades']);
@@ -101,6 +104,7 @@ export default function App() {
   const [workflowGraph, setWorkflowGraph] = useState<WorkflowGraph | undefined>();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [leftWidth, setLeftWidth] = useState(190);
+  const selectionInitialized = useRef(false);
   const selectedRun = useMemo(() => runs.find((run) => run.run_id === selectedRunId), [runs, selectedRunId]);
 
   const watchlistNames = useMemo(() => {
@@ -201,14 +205,17 @@ export default function App() {
 
   useEffect(() => {
     const first = aiWatchlist[0]?.code || userWatchlist[0]?.code;
-    const available = new Set([...aiWatchlist, ...userWatchlist].map((item) => item.code));
-    if (first && (selectedCode === '000001' || !available.has(selectedCode))) setSelectedCode(first);
-  }, [aiWatchlist, selectedCode, userWatchlist]);
+    if (!selectionInitialized.current && first) {
+      selectionInitialized.current = true;
+      setSelectedCode(first);
+    }
+  }, [aiWatchlist, userWatchlist]);
 
   const selectedStockName = useMemo(() => {
+    if (searchedStock?.code === selectedCode) return searchedStock.name || '';
     const item = [...aiWatchlist, ...userWatchlist].find((candidate) => candidate.code === selectedCode);
     return item?.name || watchlistNames.get(selectedCode) || '';
-  }, [aiWatchlist, selectedCode, userWatchlist, watchlistNames]);
+  }, [aiWatchlist, searchedStock, selectedCode, userWatchlist, watchlistNames]);
 
   useEffect(() => {
     const source = new EventSource('/api/stream');
@@ -344,6 +351,15 @@ export default function App() {
         </nav>
         {!leftCollapsed ? (
           <>
+            <StockSearch
+              selected={selectedCode}
+              onSelect={(item) => {
+                selectionInitialized.current = true;
+                setSearchedStock(item);
+                setSelectedCode(item.code);
+                setPage('watch');
+              }}
+            />
             <WatchSection title="AI 盯盘" icon={BookOpenCheck} items={aiWatchlist} selected={selectedCode} onSelect={setSelectedCode} empty="暂无盯盘标的" />
             <WatchSection title="我的自选" icon={Radar} items={userWatchlist} selected={selectedCode} onSelect={setSelectedCode} empty="飞书 /portfolio 管理" />
           </>
@@ -601,6 +617,115 @@ function modeLabel(mode?: string) {
   if (mode === 'demo') return '演示';
   if (mode === 'agent') return 'Agent任务';
   return mode || '--';
+}
+
+export function chooseStockSearchResult(query: string, results: StockSearchItem[]) {
+  const normalized = query.trim().toLocaleLowerCase();
+  return results.find((item) => item.code === normalized)
+    || results.find((item) => item.name?.toLocaleLowerCase() === normalized)
+    || (results.length === 1 ? results[0] : undefined);
+}
+
+function StockSearch({ selected, onSelect }: {
+  selected: string;
+  onSelect: (item: StockSearchItem) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<StockSearchItem[]>([]);
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  function resultLimit(text: string) {
+    return /^[\u3400-\u9fff]$/.test(text) ? 100 : 20;
+  }
+
+  useEffect(() => {
+    const text = query.trim();
+    if (!text) {
+      setResults([]);
+      setMessage('');
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      api.stockSearch(text, resultLimit(text))
+        .then((data) => {
+          if (cancelled) return;
+          setResults(data.results || []);
+          if (!data.results?.length) setMessage('未找到沪深 A 股');
+          else if (resultLimit(text) === 100 && data.results.length === 100) setMessage('单字结果较多，请继续输入或从列表选择');
+          else setMessage('');
+        })
+        .catch((error: Error) => {
+          if (cancelled) return;
+          setResults([]);
+          setMessage(error.message || '搜索失败');
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 280);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  function select(item: StockSearchItem) {
+    onSelect(item);
+    setQuery('');
+    setResults([]);
+    setMessage('');
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = query.trim();
+    if (!text) return;
+    setLoading(true);
+    try {
+      const data = await api.stockSearch(text, resultLimit(text));
+      const match = chooseStockSearchResult(text, data.results || []);
+      if (match) select(match);
+      else if (data.results?.length) {
+        setResults(data.results);
+        setMessage(`找到 ${data.results.length} 个结果，请从列表选择`);
+      } else setMessage('未找到沪深 A 股');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '搜索失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="stock-search">
+      <form onSubmit={submit}>
+        <Search size={14} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="代码 / 中文名称"
+          aria-label="搜索股票代码或中文名称"
+          autoComplete="off"
+        />
+        {loading ? <span className="stock-search-loading">···</span> : null}
+      </form>
+      {results.length ? (
+        <div className="stock-search-results">
+          {results.map((item) => (
+            <button key={`${item.market}-${item.code}`} className={selected === item.code ? 'selected' : ''} onClick={() => select(item)}>
+              <span className="watch-primary">{item.name}</span>
+              <small>{item.code} · {item.market.toUpperCase()}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {message ? <p>{message}</p> : null}
+    </section>
+  );
 }
 
 function WatchSection({ title, icon: Icon, items, selected, empty, onSelect }: {

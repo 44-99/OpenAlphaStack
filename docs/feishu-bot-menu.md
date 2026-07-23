@@ -1,11 +1,9 @@
-# Feishu notifications
+# 飞书通知
 
-Feishu is an optional outbound notification adapter. OpenAlphaStack no longer
-uses a Feishu bot as an Agent conversation host and no longer creates dynamic
-Agent schedules from chat commands.
+飞书是可选的单向通知适配器。OpenAlphaStack 不再把飞书机器人作为 Agent 对话
+宿主，也不会根据聊天命令动态创建 Agent 定时任务。
 
-Supported notification categories include engine lifecycle, paper fills, risk
-alerts, backtest progress, and postclose summaries. Configure destination chat
-IDs through `.env` and keep all trading decisions in Codex Skills plus MCP.
+支持的通知包括引擎生命周期、模拟成交、风险告警、回测进度和盘后总结。
+通过 `.env` 配置目标群聊 ID，所有交易决策仍由 Codex Skills 与 MCP 完成。
 
-Do not expose run control, arbitrary prompts, or shell commands through Feishu.
+不要通过飞书暴露运行控制、任意提示词或 Shell 命令。

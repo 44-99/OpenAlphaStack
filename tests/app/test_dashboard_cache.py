@@ -44,6 +44,64 @@ def test_workflow_graph_model_serializes_edge_from_alias():
     assert "from_" not in payload["edges"][0]
 
 
+def test_stock_search_parser_keeps_only_shenzhen_and_shanghai_a_shares():
+    payload = (
+        'v_hint="sh~600519~\\u8d35\\u5dde\\u8305\\u53f0~gzmt~GP-A'
+        '^sz~000001~\\u5e73\\u5b89\\u94f6\\u884c~payh~GP-A'
+        '^sz~167001~\\u5e73\\u5b89\\u9f0e\\u6cf0~padt~LOF'
+        '^bj~920001~\\u5317\\u4ea4\\u6d4b\\u8bd5~bjcs~GP-A"'
+    )
+
+    results = app_dashboard._parse_stock_search_payload(payload, "贵州茅台", 8)
+
+    assert results == [
+        {
+            "code": "600519",
+            "name": "贵州茅台",
+            "market": "sh",
+            "pinyin": "gzmt",
+            "source": "腾讯证券搜索",
+        },
+        {
+            "code": "000001",
+            "name": "平安银行",
+            "market": "sz",
+            "pinyin": "payh",
+            "source": "腾讯证券搜索",
+        },
+    ]
+
+
+def test_stock_search_api_normalizes_query_and_limit(monkeypatch):
+    captured = {}
+
+    def fake_search(query, limit):
+        captured.update(query=query, limit=limit)
+        return [{"code": "600519", "name": "贵州茅台", "market": "sh"}]
+
+    monkeypatch.setattr(app_dashboard, "_search_a_share_stocks", fake_search)
+
+    result = asyncio.run(app_dashboard.api_stock_search("  贵州茅台  ", 999))
+
+    assert captured == {"query": "贵州茅台", "limit": 100}
+    assert result["results"][0]["code"] == "600519"
+
+
+def test_stock_search_matches_chinese_name_substrings_from_full_catalog(monkeypatch):
+    monkeypatch.setattr(
+        app_dashboard,
+        "_load_a_share_catalog",
+        lambda: [
+            {"code": "000001", "name": "平安银行", "market": "sz", "source": "A股目录"},
+            {"code": "600519", "name": "贵州茅台", "market": "sh", "source": "A股目录"},
+        ],
+    )
+    monkeypatch.setattr(app_dashboard, "_search_tencent_stock_suggestions", lambda query, limit: [])
+
+    assert app_dashboard._search_a_share_stocks("银行", 8)[0]["code"] == "000001"
+    assert app_dashboard._search_a_share_stocks("州", 8)[0]["code"] == "600519"
+
+
 def test_kline_cache_stats_counts_new_and_legacy_files(tmp_path, monkeypatch):
     _, kline_dir, legacy_minute_dir = _isolate_kline_cache(tmp_path, monkeypatch)
     (kline_dir / "day").mkdir(parents=True)

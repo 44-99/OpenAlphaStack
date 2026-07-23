@@ -513,6 +513,82 @@ button {
   margin-top: 16px;
 }
 
+.stock-search {
+  position: relative;
+  margin: 4px 0 14px;
+}
+
+.stock-search form {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  background: rgba(5, 9, 14, 0.92);
+}
+
+.stock-search form:focus-within {
+  border-color: rgba(65, 224, 201, 0.58);
+  box-shadow: 0 0 0 2px rgba(65, 224, 201, 0.08);
+}
+
+.stock-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 12px;
+}
+
+.stock-search input::placeholder,
+.stock-search-loading,
+.stock-search > p {
+  color: var(--muted);
+}
+
+.stock-search-loading {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.stock-search-results {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.sidebar .stock-search-results button {
+  min-height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.stock-search-results small {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.stock-search > p {
+  margin: 7px 3px 0;
+  font-size: 11px;
+}
+
 .watch-section h3 {
   display: flex;
   align-items: center;

@@ -1,55 +1,55 @@
-# OpenAlphaStack roadmap
+# OpenAlphaStack 路线图
 
-## Current architecture
+## 当前架构
 
-- ✅ Project and package renamed from AlphaClaude to OpenAlphaStack.
-- ✅ Codex Desktop selected as the primary Agent host.
-- ✅ Repository packaged as an `open-alpha-stack` Codex plugin.
-- ✅ Domain Skills retain the original market, screening, stock, and T0 taxonomy.
-- ✅ Local stdio MCP server exposes typed market and paper-plan tools.
-- ✅ MCP plan publication is paper-only, validated, idempotent, and atomic.
-- ✅ Paper engine reloads externally published plans and stays observation-only without one.
-- ✅ Embedded Agent terminal and in-process Agent scheduling removed from the main path.
-- ✅ Backtests no longer invoke an Agent internally.
-- ✅ Public live start/resume paths removed; historical live runs are read-only.
+- ✅ 项目和 Python 包已从 AlphaClaude 更名为 OpenAlphaStack。
+- ✅ Codex Desktop 是主要 Agent 宿主。
+- ✅ 仓库已打包为 `open-alpha-stack` Codex 插件。
+- ✅ 领域 Skills 保留市场、选股、个股和 T0 分类。
+- ✅ 本地 stdio MCP 服务提供类型化市场和模拟计划工具。
+- ✅ MCP 计划发布仅限模拟盘，且经过校验、幂等并原子提交。
+- ✅ 模拟引擎热加载外部发布的计划；没有计划时保持观察模式。
+- ✅ 主路径已移除内嵌 Agent 终端和进程内 Agent 调度。
+- ✅ 回测不再在内部调用 Agent。
+- ✅ 已删除公开实盘启动/恢复路径；历史实盘运行只读。
 
-## Next: MCP contract hardening
+## 下一步：MCP 契约强化
 
-- ✅ Added explicit JSON schemas and version fields for plans and run snapshots.
-- ✅ Added source freshness and provenance to every MCP market-data response.
-- ✅ Added structured MCP errors without provider exception text.
-- ✅ Added contract, Demo, run snapshot, and ledger resource URIs.
-- ✅ Added a read-only synthetic Demo dataset and Skill forward-contract tests.
-- Add dedicated report and strategy-metric resource URIs after their persisted schemas stabilize.
+- ✅ 为计划和运行快照增加显式 JSON Schema 与版本字段。
+- ✅ 每个 MCP 市场响应都包含数据来源、新鲜度和出处。
+- ✅ 提供结构化 MCP 错误，不暴露数据源异常原文。
+- ✅ 提供契约、Demo、运行快照和账本资源 URI。
+- ✅ 提供只读合成 Demo 数据集和 Skill 前向契约测试。
+- 报告和策略指标的持久化 Schema 稳定后，增加专用资源 URI。
 
-## Next: deterministic runtime
+## 下一步：确定性运行时
 
-- ✅ Persist state, active plans, and ledger events in a per-run SQLite source of truth.
-- ✅ Commit account mutations and matching ledger events atomically.
-- ✅ Reject missing intraday data instead of synthesizing minute bars from daily OHLC.
-- Run the paper engine as a long-lived local service that idles outside exchange sessions.
-- Make plan activation a first-class state transition with an audit event.
-- Add plan expiry and automatic observation fallback.
-- Add correlation, liquidity, suspension, limit-up/down, and stale-price gates.
-- Preserve T+1, fees, idempotency, and append-only ledger invariants.
+- ✅ 在每次运行的 SQLite 事实源中保存状态、有效计划和账本事件。
+- ✅ 原子提交账户变化和对应账本事件。
+- ✅ 缺少盘中数据时失败，不从日线 OHLC 合成分钟 K 线。
+- 将模拟引擎作为长时间运行的本地服务，在非交易时段空闲等待。
+- 把计划激活建模为带审计事件的一等状态迁移。
+- 增加计划过期和自动观察模式回退。
+- 增加相关性、流动性、停牌、涨跌停和价格过期硬约束。
+- 保持 T+1、费用、幂等和追加式账本不变量。
 
-## Next: validation and economics
+## 下一步：验证与经济性
 
-- Add walk-forward and untouched out-of-sample evaluation.
-- Compare every Agent-assisted workflow against cash, index, and pure-rule baselines.
-- Persist scheduled-run duration, failures, retries, and available usage metrics.
-- Report trading P&L and Agent operating cost separately.
-- Define stop conditions for strategies with persistent negative expectancy.
+- 增加滚动前推和完全未触碰的样本外评估。
+- 每个 Agent 辅助工作流都与现金、指数和纯规则基线比较。
+- 保存定时运行耗时、失败、重试和可获得的用量指标。
+- 分开报告交易盈亏与 Agent 运行成本。
+- 为长期负期望策略定义停止条件。
 
-## Next: product and distribution
+## 下一步：产品与传播
 
-- Remove the obsolete Agent-terminal screenshot and capture a verified current Dashboard image.
-- Record a short Codex Scheduled task -> Skill -> MCP -> paper plan demo.
-- Publish honest benchmark and failure reports rather than return promises.
-- Publish plugin installation and scheduled-task composition examples.
+- 删除过时的 Agent 终端截图，换成已验证的当前 Dashboard 图片。
+- 录制 Codex 定时任务 → Skill → MCP → 模拟计划短演示。
+- 发布诚实的基准和失败报告，不宣传收益承诺。
+- 发布插件安装和定时任务组合示例。
 
-## Live trading
+## 实盘交易
 
-Live trading remains unimplemented and inaccessible through the CLI and MCP. It requires a
-separate BrokerAdapter, explicit human confirmation, order idempotency, restart
-recovery, kill switches, authenticated deployment, and a new security review.
+实盘交易尚未实现，CLI 与 MCP 均不可访问。实现前必须单独设计
+BrokerAdapter、明确人工确认、订单幂等、重启恢复、熔断开关、认证部署并完成
+新的安全评审。

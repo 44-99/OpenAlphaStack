@@ -23,6 +23,7 @@ engine = [
     "pyarrow>=16.0.0",
 ]
 dashboard = [
+    "akshare>=1.16.0",
     "fastapi==0.115.6",
     "uvicorn==0.34.0",
     "pyarrow>=16.0.0",

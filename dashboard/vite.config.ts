@@ -5,7 +5,7 @@ const apiTarget = process.env.DASHBOARD_API_TARGET || 'http://127.0.0.1:8800';
 
 export default defineConfig({
   root: 'dashboard',
-  base: '/dashboard/assets/',
+  base: '/dashboard/',
   plugins: [react()],
   build: {
     outDir: 'dist',

@@ -3,7 +3,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
+import time as time_module
 import argparse
 from datetime import datetime, time, timedelta
 from typing import Any, Literal
@@ -41,6 +43,10 @@ KLINE_PERIODS = {"day", "week", "month", "1m", "5m", "15m", "60m"}
 MINUTE_PERIODS = {"1m", "5m", "15m", "60m"}
 RESAMPLE_RULES = {"5m": "5min", "15m": "15min", "60m": "60min"}
 DEMO_RUN_ID = "demo_run"
+STOCK_SEARCH_URL = "https://smartbox.gtimg.cn/s3/"
+STOCK_CATALOG_CACHE_PATH = str(DATA_DIR / "cache" / "stock_catalog.json")
+STOCK_CATALOG_MAX_AGE_SECONDS = 7 * 86400
+_stock_catalog_lock = threading.Lock()
 
 
 class WorkflowGraphNodeModel(BaseModel):
@@ -313,6 +319,165 @@ def _stock_name(code: str, known_names: dict[str, str]) -> str:
     except Exception:
         return ""
     return ""
+
+
+def _parse_stock_search_payload(payload: str, query: str, limit: int) -> list[dict[str, str]]:
+    """Parse Tencent suggestions and keep Shanghai/Shenzhen A-share equities only."""
+    match = re.search(r"v_hint\s*=\s*(\"(?:\\.|[^\"])*\")", payload)
+    if not match:
+        return []
+    try:
+        raw_items = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return []
+
+    normalized_query = query.strip().casefold()
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in raw_items.split("^"):
+        fields = raw.split("~")
+        if len(fields) < 5:
+            continue
+        market, code, name, pinyin, security_type = fields[:5]
+        if market not in {"sh", "sz"} or security_type != "GP-A":
+            continue
+        if not re.fullmatch(r"\d{6}", code) or code in seen:
+            continue
+        seen.add(code)
+        results.append(
+            {
+                "code": code,
+                "name": name,
+                "market": market,
+                "pinyin": pinyin,
+                "source": "腾讯证券搜索",
+            }
+        )
+
+    def rank(item: dict[str, str]) -> tuple[int, str]:
+        code = item["code"].casefold()
+        name = item["name"].casefold()
+        pinyin = item["pinyin"].casefold()
+        if normalized_query in {code, name}:
+            return (0, code)
+        if code.startswith(normalized_query) or name.startswith(normalized_query) or pinyin.startswith(normalized_query):
+            return (1, code)
+        return (2, code)
+
+    return sorted(results, key=rank)[:limit]
+
+
+def _search_tencent_stock_suggestions(query: str, limit: int = 8) -> list[dict[str, str]]:
+    """Return Tencent's lightweight prefix/popularity suggestions."""
+    import requests as _r
+
+    try:
+        response = _r.get(
+            STOCK_SEARCH_URL,
+            params={"q": query, "t": "all"},
+            timeout=6,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        return _parse_stock_search_payload(response.text, query, limit)
+    except _r.RequestException as exc:
+        logger.warning("Stock search failed: %s", type(exc).__name__)
+        return []
+
+
+def _read_stock_catalog_cache() -> list[dict[str, str]]:
+    if not os.path.exists(STOCK_CATALOG_CACHE_PATH):
+        return []
+    if time_module.time() - os.path.getmtime(STOCK_CATALOG_CACHE_PATH) > STOCK_CATALOG_MAX_AGE_SECONDS:
+        return []
+    try:
+        with open(STOCK_CATALOG_CACHE_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _fetch_a_share_catalog() -> list[dict[str, str]]:
+    """Fetch the complete Shanghai/Shenzhen A-share code-name directory."""
+    import akshare as ak
+
+    frame = ak.stock_info_a_code_name()
+    results: list[dict[str, str]] = []
+    for _, row in frame.iterrows():
+        code = str(row.get("code") or "").strip().zfill(6)
+        name = str(row.get("name") or "").strip()
+        if not re.fullmatch(r"[036]\d{5}", code) or not name:
+            continue
+        results.append(
+            {
+                "code": code,
+                "name": name,
+                "market": "sh" if code.startswith("6") else "sz",
+                "source": "A股目录",
+            }
+        )
+    return results
+
+
+def _write_stock_catalog_cache(catalog: list[dict[str, str]]) -> None:
+    os.makedirs(os.path.dirname(STOCK_CATALOG_CACHE_PATH), exist_ok=True)
+    temp_path = f"{STOCK_CATALOG_CACHE_PATH}.{os.getpid()}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(catalog, f, ensure_ascii=False)
+    os.replace(temp_path, STOCK_CATALOG_CACHE_PATH)
+
+
+def _load_a_share_catalog() -> list[dict[str, str]]:
+    """Load a seven-day local catalog; degrade cleanly when market extras are absent."""
+    cached = _read_stock_catalog_cache()
+    if cached:
+        return cached
+    with _stock_catalog_lock:
+        cached = _read_stock_catalog_cache()
+        if cached:
+            return cached
+        try:
+            catalog = _fetch_a_share_catalog()
+        except Exception as exc:
+            logger.warning("A-share catalog unavailable: %s", type(exc).__name__)
+            return []
+        if catalog:
+            try:
+                _write_stock_catalog_cache(catalog)
+            except OSError as exc:
+                logger.warning("A-share catalog cache write failed: %s", type(exc).__name__)
+        return catalog
+
+
+def _stock_search_rank(item: dict[str, str], query: str) -> tuple[int, int, int, str]:
+    code = item.get("code", "").casefold()
+    name = item.get("name", "").casefold()
+    pinyin = item.get("pinyin", "").casefold()
+    if query in {code, name}:
+        return (0, 0, len(name), code)
+    if code.startswith(query) or name.startswith(query) or pinyin.startswith(query):
+        return (1, 0, len(name), code)
+    name_position = name.find(query)
+    if name_position >= 0:
+        return (2, name_position, len(name), code)
+    return (3, 0, len(name), code)
+
+
+def _search_a_share_stocks(query: str, limit: int = 8) -> list[dict[str, str]]:
+    """Search codes, name prefixes and arbitrary Chinese-name substrings."""
+    normalized_query = query.strip().casefold()
+    catalog_matches = [
+        item
+        for item in _load_a_share_catalog()
+        if normalized_query in item.get("code", "").casefold()
+        or normalized_query in item.get("name", "").casefold()
+    ]
+    suggestions = _search_tencent_stock_suggestions(query, max(limit, 20))
+    merged: dict[str, dict[str, str]] = {item["code"]: item for item in catalog_matches}
+    for item in suggestions:
+        merged[item["code"]] = {**merged.get(item["code"], {}), **item}
+    return sorted(merged.values(), key=lambda item: _stock_search_rank(item, normalized_query))[:limit]
 
 
 def _enrich_plan_stock_names(plan: dict) -> dict:
@@ -1498,6 +1663,17 @@ async def api_ledger(limit: int = 50, code: str = "", run_id: str | None = None)
     if code:
         entries = [e for e in entries if e.get("symbol", "") == code or e.get("code", "") == code]
     return entries
+
+
+@router.get("/api/stocks/search")
+async def api_stock_search(q: str = "", limit: int = 8):
+    query = q.strip()
+    if not query:
+        return {"query": "", "results": []}
+    if len(query) > 32:
+        return JSONResponse({"error": "搜索内容过长"}, status_code=400)
+    safe_limit = max(1, min(int(limit), 100))
+    return {"query": query, "results": _search_a_share_stocks(query, safe_limit)}
 
 
 @router.get("/api/quote/{code}")

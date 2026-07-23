@@ -60,6 +60,16 @@ export interface WatchlistItem {
   change_pct?: number;
 }
 
+export interface StockSearchItem extends WatchlistItem {
+  market: 'sh' | 'sz';
+  pinyin?: string;
+}
+
+export interface StockSearchResponse {
+  query: string;
+  results: StockSearchItem[];
+}
+
 export interface LedgerEntry {
   run_id?: string;
   seq?: number;

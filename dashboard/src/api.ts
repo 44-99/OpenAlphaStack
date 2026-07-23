@@ -8,6 +8,7 @@ import type {
   LedgerEntry,
   PlanData,
   RunsResponse,
+  StockSearchResponse,
   WatchlistItem,
   AgentRunTimeline,
   WorkflowEvent,
@@ -64,6 +65,8 @@ export const api = {
   engineStatus: (runId?: string) => getJson<EngineStatus>(`/api/engine/status${runId ? `?${runQuery(runId)}` : ''}`),
   cacheStatus: () => getJson<CacheStatus>('/api/cache/status'),
   watchlist: () => getJson<unknown[]>('/api/watchlist'),
+  stockSearch: (query: string, limit = 8) =>
+    getJson<StockSearchResponse>(`/api/stocks/search?q=${encodeURIComponent(query)}&limit=${limit}`),
   kline: (code: string, period: KlinePeriod, limit = 200) =>
     getJson<KlineData>(`/api/kline/${code}?period=${period}&limit=${limit}`),
   klineAnnotations: (code: string, period: KlinePeriod, runId?: string) =>
