@@ -194,13 +194,8 @@ def calc_volume_price(df: pd.DataFrame) -> dict:
     }
 
 
-def get_technical(code: str, indicator: str = "all") -> dict:
-    """Compute technical indicators for app context and CLI output."""
-    cache_key = f"{code}_{indicator}"
-    cached = _read_cache(cache_key)
-    if cached:
-        return cached
-
+def calculate_technical(code: str, indicator: str = "all") -> dict:
+    """Fetch history and calculate indicators without using the local cache."""
     df = fetch_hist(code)
     if df.empty:
         return {"error": f"No historical data for {code}", "code": code}
@@ -221,7 +216,18 @@ def get_technical(code: str, indicator: str = "all") -> dict:
     if indicator in ("volume", "all"):
         result["volume_price"] = calc_volume_price(df)
 
-    _write_cache(cache_key, result)
+    return result
+
+
+def get_technical(code: str, indicator: str = "all") -> dict:
+    """Compute technical indicators for app context and CLI output."""
+    cache_key = f"{code}_{indicator}"
+    cached = _read_cache(cache_key)
+    if cached:
+        return cached
+    result = calculate_technical(code, indicator)
+    if "error" not in result:
+        _write_cache(cache_key, result)
     return result
 
 

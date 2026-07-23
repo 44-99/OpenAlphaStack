@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- 独立无状态公网只读 MCP，包含 12 个市场读取、确定性计算与
+  合成 Demo 工具，以及 Streamable HTTP 和 Docker 部署入口。
+- 公网 MCP 的 Privacy、Terms、Support 页面、域名验证端点和官方目录
+  提交检查清单。
+
+### Security
+
+- 公网工具统一声明只读、非破坏、幂等 annotations，并限制股票代码、
+  新闻数量、回测天数和价格序列大小。
+- 公网入口排除本地 run、快照、账本、草稿与模拟计划发布，并启用
+  Host/Origin 防护。
+
 ## [0.1.0] - 2026-07-24
 
 ### Added

@@ -48,6 +48,12 @@ The recording comes from the local paper-trading Dashboard. The public
 [website](https://44-99.github.io/OpenAlphaStack/en.html) is static and never
 exposes local account data, market-data services, or execution endpoints.
 
+GitHub Pages cannot execute MCP requests. A separate stateless Streamable HTTP
+entrypoint is available for deployment to an HTTPS container host. It exposes
+only read-only market research, deterministic calculations, and synthetic demo
+tools; it excludes local runs, ledgers, plan publication, broker access, files,
+and shell execution. See the [public MCP deployment guide](docs/public-mcp.md).
+
 ## What it provides
 
 - Codex Skills for market analysis, screening, stock analysis and T0 research.

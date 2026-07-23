@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Privacy Policy — OpenAlphaStack</title>
+    <meta name="description" content="OpenAlphaStack public website and read-only MCP privacy policy.">
+    <link rel="canonical" href="https://44-99.github.io/OpenAlphaStack/privacy.html">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">OA</span><span>OpenAlphaStack</span></a>
+      <nav aria-label="政策导航"><a href="privacy.html" aria-current="page">Privacy</a><a href="terms.html">Terms</a><a href="support.html">Support</a></nav>
+      <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">GitHub</a>
+    </header>
+    <main id="main" class="section-shell policy-page">
+      <p class="eyebrow">LAST UPDATED · 2026-07-24</p>
+      <h1>Privacy Policy / 隐私政策</h1>
+      <p class="policy-lead">本政策适用于 OpenAlphaStack 静态官网以及单独部署的公网只读 MCP 服务。代码仓库中的本地 Dashboard、stdio MCP 和模拟盘数据默认只在用户自己的设备上运行。</p>
+
+      <h2>我们处理什么</h2>
+      <p>静态官网不要求账户，也不主动收集交易账户、持仓或身份资料。公网 MCP 处理调用者提交的工具名与参数，例如公开股票代码、指标选项和用于计算的价格序列，以生成响应。</p>
+
+      <h2>基础设施日志</h2>
+      <p>GitHub Pages、MCP 托管商、反向代理或安全服务可能为运行和防滥用而记录 IP 地址、请求时间、路径、User-Agent、状态码及诊断信息。OpenAlphaStack 不会要求调用者在 MCP 参数中提交 API Key、券商账户、本地账本或其他敏感信息。</p>
+
+      <h2>第三方数据</h2>
+      <p>实时只读工具可能向公开市场数据提供方发送股票代码等查询参数。当前实现可能使用新浪财经、腾讯财经和 AkShare 所连接的数据源。第三方对其服务和日志采用各自的条款与政策。</p>
+
+      <h2>保存与共享</h2>
+      <p>公网 MCP 设计为无会话状态，不读取或保存本地模拟盘、计划、持仓或账本。为安全、可用性和法律合规所需的基础设施日志，其保留期限由实际托管配置决定。我们不会出售个人信息。</p>
+
+      <h2>安全与选择</h2>
+      <p>不要把个人信息、凭证或未公开投资数据传给公共工具。需要完全本地处理时，请使用仓库提供的本地 stdio MCP。安全问题请按 <a href="https://github.com/44-99/OpenAlphaStack/blob/master/SECURITY.md">Security Policy</a> 私下报告。</p>
+
+      <h2>English summary</h2>
+      <p>The public MCP processes tool names and bounded inputs to return research data or calculations. It is stateless with respect to portfolios, paper plans, ledgers, and local files. Hosting providers may retain ordinary security and access logs. Do not submit credentials, personal data, broker information, or confidential investment data. Public market-data tools may query third-party providers under their own terms.</p>
+
+      <h2>联系</h2>
+      <p>隐私问题可通过 <a href="support.html">Support 页面</a>所列的公开渠道提出；安全漏洞请不要公开披露。</p>
+    </main>
+    <footer class="site-footer section-shell"><p>OpenAlphaStack · MIT License · Research and paper trading only</p><div><a href="./">Home</a><a href="terms.html">Terms</a><a href="support.html">Support</a></div></footer>
+  </body>
+</html>

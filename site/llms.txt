@@ -17,6 +17,8 @@ English discovery page: https://44-99.github.io/OpenAlphaStack/en.html
 - Python owns deterministic validation, T+1 behavior, fees, state, and paper execution.
 - The default workflow uses one Agent that composes domain Skills.
 - The local Dashboard is not part of the public static website.
+- The separately hosted public MCP is stateless and read-only; it cannot access local runs,
+  portfolios, plans, ledgers, files, brokers, or order execution.
 
 ## Primary documentation
 
@@ -25,6 +27,10 @@ English discovery page: https://44-99.github.io/OpenAlphaStack/en.html
 - Architecture: https://github.com/44-99/OpenAlphaStack/blob/master/docs/architecture.md
 - Skills: https://github.com/44-99/OpenAlphaStack/blob/master/docs/skills.md
 - Roadmap: https://github.com/44-99/OpenAlphaStack/blob/master/docs/roadmap.md
+- Public MCP deployment: https://github.com/44-99/OpenAlphaStack/blob/master/docs/public-mcp.md
+- Privacy: https://44-99.github.io/OpenAlphaStack/privacy.html
+- Terms: https://44-99.github.io/OpenAlphaStack/terms.html
+- Support: https://44-99.github.io/OpenAlphaStack/support.html
 
 ## Domain Skills
 

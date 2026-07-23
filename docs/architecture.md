@@ -120,5 +120,11 @@ Research -> Execution -> Evaluation（可选）
 
 ## 部署
 
-默认监听 `127.0.0.1`。远程部署需要独立的认证反向代理和安全评审。无论网络
-如何配置，当前 MCP 写入契约始终仅限模拟盘。
+本地 Dashboard、引擎和完整 stdio MCP 默认监听或运行在 `127.0.0.1`，不应
+公开。完整 MCP 包含模拟计划写入，不属于公网服务边界。
+
+`openalphastack.public_mcp_server` 是单独的无状态 Streamable HTTP 入口，
+只暴露市场只读与确定性计算工具。它不导入 `agent_gateway`，不读取
+运行数据，不注册计划写入工具。详细边界与部署见
+[公网只读 MCP](public-mcp.md)。GitHub Pages 仍只托管静态站点，真实 MCP
+终端需要独立的 HTTPS 容器或 ASGI 托管。

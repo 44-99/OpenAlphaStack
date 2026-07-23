@@ -6,7 +6,7 @@
     "name": "44-99",
     "url": "https://github.com/44-99"
   },
-  "homepage": "https://github.com/44-99/OpenAlphaStack",
+  "homepage": "https://44-99.github.io/OpenAlphaStack/",
   "repository": "https://github.com/44-99/OpenAlphaStack",
   "license": "MIT",
   "keywords": ["codex", "mcp", "skills", "quant", "a-share", "paper-trading"],
@@ -19,7 +19,9 @@
     "developerName": "44-99",
     "category": "Developer Tools",
     "capabilities": ["Research", "MCP", "Paper Trading", "Backtesting"],
-    "websiteURL": "https://github.com/44-99/OpenAlphaStack",
+    "websiteURL": "https://44-99.github.io/OpenAlphaStack/",
+    "privacyPolicyURL": "https://44-99.github.io/OpenAlphaStack/privacy.html",
+    "termsOfServiceURL": "https://44-99.github.io/OpenAlphaStack/terms.html",
     "defaultPrompt": [
       "Analyze today's A-share market with OpenAlphaStack.",
       "Screen and review a small set of A-share candidates.",

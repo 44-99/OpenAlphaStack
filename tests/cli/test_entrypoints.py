@@ -62,7 +62,19 @@ def test_pyproject_keeps_heavy_integrations_optional():
     extras = data["project"]["optional-dependencies"]
 
     assert not any(item.startswith(("fastapi", "uvicorn", "akshare", "pyarrow", "lark-oapi")) for item in dependencies)
-    assert {"market", "engine", "dashboard", "feishu", "all"} <= set(extras)
+    assert {"market", "engine", "dashboard", "public", "feishu", "all"} <= set(extras)
+
+
+def test_unified_public_mcp_routes_to_public_server(monkeypatch):
+    calls = []
+
+    from openalphastack import public_mcp_server
+
+    monkeypatch.setattr(public_mcp_server, "run", lambda: calls.append("public"))
+
+    app_cli.main(["mcp", "serve-public"])
+
+    assert calls == ["public"]
 
 
 def test_legacy_root_launchers_are_removed():

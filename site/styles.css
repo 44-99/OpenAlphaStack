@@ -83,13 +83,22 @@ details p { color: var(--muted); margin-bottom: 0; }
 .final-cta p { margin-bottom: 0; }
 .site-footer { min-height: 110px; display: flex; justify-content: space-between; align-items: center; gap: 2rem; border-top: 1px solid rgba(158, 172, 192, .17); color: var(--muted); font-size: .9rem; }
 .site-footer div { display: flex; gap: 1.2rem; }
+.policy-page { max-width: 900px; padding-block: 6rem; }
+.policy-page h1 { max-width: 800px; }
+.policy-page h2 { margin-top: 3rem; font-size: clamp(1.45rem, 2.4vw, 2rem); }
+.policy-page p, .policy-page li { color: var(--muted); }
+.policy-page a { color: var(--teal); }
+.policy-lead { max-width: 800px; color: var(--text) !important; font-size: 1.2rem; }
+.support-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-block: 3rem; }
+.support-grid .card { min-height: 320px; }
+.support-grid .card h2 { margin-top: 0; color: var(--text); }
 
 @media (max-width: 900px) {
   .site-header nav { display: none; }
   .site-header .button { margin-left: auto; }
   .hero, .split-section, .split-reverse, .quickstart { grid-template-columns: 1fr; }
   .hero { padding-block: 4rem; min-height: auto; }
-  .card-grid { grid-template-columns: 1fr; }
+  .card-grid, .support-grid { grid-template-columns: 1fr; }
   .card { min-height: 0; }
   .card-index { margin-bottom: 1.25rem; }
   .command-note { grid-column: 1; margin: 0; }

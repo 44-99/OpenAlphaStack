@@ -128,22 +128,16 @@ def _fetch_sina(code: str) -> dict | None:
         return None
 
 
-def get_stock_quote(code: str) -> dict:
-    """Get real-time quote. Primary: Tencent → Sina → akshare Sina spot."""
-    cached = _read_cache(code)
-    if cached:
-        return cached
-
+def fetch_stock_quote(code: str) -> dict:
+    """Fetch a real-time quote without reading or writing the local cache."""
     # Source 1: Tencent (fastest, most complete)
     data = _fetch_tencent(code)
     if data:
-        _write_cache(code, data)
         return data
 
     # Source 2: Sina (fast, basic fields)
     data = _fetch_sina(code)
     if data:
-        _write_cache(code, data)
         return data
 
     # Source 3: akshare Sina spot (slow, last resort)
@@ -167,7 +161,6 @@ def get_stock_quote(code: str) -> dict:
                 "source": "akshare_sina",
                 "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             }
-            _write_cache(code, data)
             return data
     except Exception:
         pass
@@ -175,12 +168,19 @@ def get_stock_quote(code: str) -> dict:
     return {"error": f"所有数据源均无法获取 {code}", "code": code}
 
 
-def get_market_overview() -> dict:
-    """Get market overview: major indices via Sina batch API."""
-    cached = _read_cache("market")
+def get_stock_quote(code: str) -> dict:
+    """Get a real-time quote with a short-lived local cache."""
+    cached = _read_cache(code)
     if cached:
         return cached
+    data = fetch_stock_quote(code)
+    if "error" not in data:
+        _write_cache(code, data)
+    return data
 
+
+def fetch_market_overview() -> dict:
+    """Fetch major A-share indices without reading or writing the local cache."""
     sina_codes = ",".join(v[0] for v in MARKET_INDICES.values())
     try:
         session = get_session()
@@ -213,11 +213,21 @@ def get_market_overview() -> dict:
             "indices": indices,
             "source": "sina",
         }
-        _write_cache("market", data)
         return data
 
     except (requests.RequestException, ValueError, IndexError) as e:
         return {"error": f"大盘数据获取失败: {str(e)[:150]}"}
+
+
+def get_market_overview() -> dict:
+    """Get market overview with a short-lived local cache."""
+    cached = _read_cache("market")
+    if cached:
+        return cached
+    data = fetch_market_overview()
+    if "error" not in data:
+        _write_cache("market", data)
+    return data
 
 
 def main():

@@ -30,7 +30,8 @@ def _print_help() -> None:
         "usage: openalphastack <command> [<args>]\n\n"
         "commands:\n"
         "  app start                         Start local Dashboard/FastAPI app\n"
-        "  mcp serve                         Start the stdio MCP server\n"
+        "  mcp serve                         Start the local stdio MCP server\n"
+        "  mcp serve-public                  Start the read-only HTTP MCP server\n"
         "  doctor [--json]                   Check local plugin and MCP setup\n"
         "  engine start [engine args]         Start paper/backtest engine\n"
         "  engine list [--mode MODE]          List known engine runs\n"
@@ -98,14 +99,19 @@ def main(argv: list[str] | None = None) -> None:
 
     if command == "mcp":
         if not args or args[0] in {"-h", "--help"}:
-            print("usage: openalphastack mcp serve")
+            print("usage: openalphastack mcp {serve|serve-public}")
             return
         if args == ["serve"]:
             from openalphastack.mcp_server import run
 
             run()
             return
-        print("usage: openalphastack mcp serve", file=sys.stderr)
+        if args == ["serve-public"]:
+            from openalphastack.public_mcp_server import run
+
+            run()
+            return
+        print("usage: openalphastack mcp {serve|serve-public}", file=sys.stderr)
         raise SystemExit(2)
 
     if command == "doctor":

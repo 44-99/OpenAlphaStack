@@ -236,6 +236,16 @@ MCP 服务、模拟引擎或 Dashboard，因此仓库不提供 webhook 式定时
 历史 `live_*` 目录只为迁移和审计保留只读访问。系统不暴露 Shell 或任意文件
 写入工具。
 
+### 独立公网只读 MCP
+
+GitHub Pages 只托管静态官网与 Privacy / Terms / Support，不能执行 MCP
+协议。仓库另提供 `openalphastack mcp serve-public`：一个无状态的
+Streamable HTTP 服务，只保留市场读取、确定性计算和合成 Demo，不暴露
+本地运行、账本、计划写入或任何券商能力。
+
+公网 HTTPS 部署、Docker 镜像、Host/Origin 防护、域名验证和官方目录检查清单见
+[公网只读 MCP 部署指南](docs/public-mcp.md)。
+
 ## 引擎命令
 
 ```powershell

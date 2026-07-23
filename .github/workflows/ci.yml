@@ -82,3 +82,22 @@ jobs:
       - name: Signal validator help
         run: |
           openalphastack tools signal --help
+
+  public-mcp-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build standalone public MCP image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.public
+          push: false
+          tags: openalphastack-public-mcp:ci
+          cache-from: type=gha,scope=public-mcp
+          cache-to: type=gha,mode=max,scope=public-mcp

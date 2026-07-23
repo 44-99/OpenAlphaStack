@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Support — OpenAlphaStack</title>
+    <meta name="description" content="OpenAlphaStack installation, public MCP, issue, discussion, and security support routes.">
+    <link rel="canonical" href="https://44-99.github.io/OpenAlphaStack/support.html">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">OA</span><span>OpenAlphaStack</span></a>
+      <nav aria-label="政策导航"><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="support.html" aria-current="page">Support</a></nav>
+      <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">GitHub</a>
+    </header>
+    <main id="main" class="section-shell policy-page">
+      <p class="eyebrow">PUBLIC SUPPORT</p>
+      <h1>Support / 支持</h1>
+      <p class="policy-lead">先区分本地插件与公网只读 MCP，再提交一份不含敏感信息的最小复现。</p>
+
+      <div class="support-grid">
+        <article class="card"><span class="card-index">01</span><h2>首次安装</h2><p>按照 Getting Started 完成 <code>install → doctor → Demo → MCP → Dashboard</code>。</p><a class="text-link" href="https://github.com/44-99/OpenAlphaStack/blob/master/docs/getting-started.md">阅读指南 →</a></article>
+        <article class="card"><span class="card-index">02</span><h2>Bug</h2><p>请提供版本、系统、复现步骤、预期与实际结果，以及已脱敏日志。</p><a class="text-link" href="https://github.com/44-99/OpenAlphaStack/issues/new/choose">创建 Issue →</a></article>
+        <article class="card"><span class="card-index">03</span><h2>讨论与建议</h2><p>首次体验、数据源建议和公开路线讨论集中在 GitHub Discussions。</p><a class="text-link" href="https://github.com/44-99/OpenAlphaStack/discussions">进入 Discussions →</a></article>
+      </div>
+
+      <h2>公网 MCP 自检</h2>
+      <ol>
+        <li>访问服务的 <code>/health</code>，确认返回 <code>status: ok</code>。</li>
+        <li>确认客户端连接的是 HTTPS <code>/mcp</code>，而不是本静态网站 URL。</li>
+        <li>先调用 <code>get_public_capabilities</code> 或 <code>read_demo_dataset</code>，再判断是否为上游市场数据故障。</li>
+        <li>报告问题时请附时间、工具名、参数类别和响应中的错误代码，不要附凭证或账户信息。</li>
+      </ol>
+
+      <h2>安全问题</h2>
+      <p>漏洞、凭证泄露或可访问非公开状态的问题不得发到公开 Issue 或 Discussion。请遵循仓库的 <a href="https://github.com/44-99/OpenAlphaStack/blob/master/SECURITY.md">Security Policy</a>。</p>
+
+      <h2>服务边界</h2>
+      <p>社区维护不提供投资判断、收益承诺、代客操作或紧急交易支持。公开服务不接入真实券商。</p>
+    </main>
+    <footer class="site-footer section-shell"><p>OpenAlphaStack · MIT License · Research and paper trading only</p><div><a href="./">Home</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a></div></footer>
+  </body>
+</html>
