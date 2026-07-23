@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from datetime import datetime
+
+from openalphastack.engine.run_store import RunStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class Ledger:
@@ -14,40 +20,41 @@ class Ledger:
     def __init__(self, output_dir: str):
         self.path = os.path.join(output_dir, "ledger.jsonl")
         self._lock = threading.Lock()
-        self._seq = self._count()
+        self.store = RunStore(output_dir)
+        legacy = self._read_legacy()
+        self.store.import_ledger(legacy)
+        self._seq = self.store.ledger_count()
 
-    def _count(self) -> int:
-        if not os.path.exists(self.path):
-            return 0
-        c = 0
-        with open(self.path, "r", encoding="utf-8") as f:
-            for _ in f:
-                c += 1
-        return c
-
-    def append(self, entry: dict) -> int:
-        """Append a decision entry. Returns sequence number."""
-        with self._lock:
-            self._seq += 1
-            entry["seq"] = self._seq
-            entry["time"] = entry.get("time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        return self._seq
-
-    def read_all(self) -> list[dict]:
+    def _read_legacy(self) -> list[dict]:
         if not os.path.exists(self.path):
             return []
         entries = []
         with open(self.path, "r", encoding="utf-8") as f:
             for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+                try:
+                    value = json.loads(line)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    entries.append(value)
         return entries
+
+    def append(self, entry: dict) -> int:
+        """Append a decision entry. Returns sequence number."""
+        with self._lock:
+            payload = dict(entry)
+            payload["time"] = payload.get("time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._seq = self.store.append_ledger(payload)
+            entry.update(payload)
+            entry["seq"] = self._seq
+            try:
+                self.export_jsonl()
+            except OSError as exc:
+                logger.warning("Ledger projection refresh failed; SQLite remains canonical: %s", exc)
+        return self._seq
+
+    def read_all(self) -> list[dict]:
+        return self.store.read_ledger()
 
     def read_recent(self, n: int = 20) -> list[dict]:
         return self.read_all()[-n:]
@@ -55,3 +62,11 @@ class Ledger:
     @property
     def next_seq(self) -> int:
         return self._seq + 1
+
+    def export_jsonl(self) -> None:
+        """Refresh the human-readable projection from the SQLite source of truth."""
+        temp = self.path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as handle:
+            for entry in self.store.read_ledger():
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        os.replace(temp, self.path)

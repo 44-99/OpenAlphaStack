@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import runpy
 import sys
 
@@ -30,7 +31,8 @@ def _print_help() -> None:
         "commands:\n"
         "  app start                         Start local Dashboard/FastAPI app\n"
         "  mcp serve                         Start the stdio MCP server\n"
-        "  engine start [engine args]         Start paper/backtest/live engine\n"
+        "  doctor [--json]                   Check local plugin and MCP setup\n"
+        "  engine start [engine args]         Start paper/backtest engine\n"
         "  engine list [--mode MODE]          List known engine runs\n"
         "  engine status <run_id>             Show one engine run\n"
         "  engine stop <run_id>               Stop one engine run\n"
@@ -42,10 +44,10 @@ def _print_help() -> None:
 
 def _print_engine_start_help() -> None:
     print(
-        "usage: openalphastack engine start [-h] --mode {paper,backtest,live} [options]\n\n"
+        "usage: openalphastack engine start [-h] --mode {paper,backtest} [options]\n\n"
         "options:\n"
         "  -h, --help                 show this help message and exit\n"
-        "  --mode, -m MODE            paper, backtest, or live\n"
+        "  --mode, -m MODE            paper or backtest\n"
         "  --capital, -c CAPITAL      Initial capital (default: 100000)\n"
         "  --start START              Backtest start date (YYYY-MM-DD)\n"
         "  --end END                  Backtest end date (YYYY-MM-DD)\n"
@@ -105,6 +107,18 @@ def main(argv: list[str] | None = None) -> None:
             return
         print("usage: openalphastack mcp serve", file=sys.stderr)
         raise SystemExit(2)
+
+    if command == "doctor":
+        if any(arg not in {"--json"} for arg in args):
+            print("usage: openalphastack doctor [--json]", file=sys.stderr)
+            raise SystemExit(2)
+        from openalphastack.doctor import build_report, render_text
+
+        report = build_report()
+        print(json.dumps(report, ensure_ascii=False, indent=2) if "--json" in args else render_text(report))
+        if not report["ok"]:
+            raise SystemExit(1)
+        return
 
     if command == "engine":
         if not args or args[0] in {"-h", "--help"}:

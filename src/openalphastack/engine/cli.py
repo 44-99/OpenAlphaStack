@@ -231,14 +231,14 @@ def resume_run_daemon(run_id: str, base_args: argparse.Namespace | None = None) 
 
 
 def main() -> None:
-    """Run the paper/backtest/live engine."""
+    """Run the paper/backtest engine."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(
-        description="OpenAlphaStack deterministic engine — paper/backtest/live")
+        description="OpenAlphaStack deterministic engine — paper/backtest")
     parser.add_argument("--mode", "-m",
-                        choices=["paper", "backtest", "live"],
+                        choices=["paper", "backtest"],
                         help="Operating mode")
     parser.add_argument("--capital", "-c", type=float, default=100000,
                         help="Initial capital (default: 100000)")
@@ -255,9 +255,9 @@ def main() -> None:
     parser.add_argument("--daemon", action="store_true",
                         help="Start the engine as a detached background process and return immediately")
     parser.add_argument("--stop-running", action="store_true",
-                        help="Stop running paper/backtest/live engines recorded in data/output")
+                        help="Stop running paper/backtest engines recorded in data/output")
     parser.add_argument("--list-runs", action="store_true",
-                        help="List known paper/backtest/live runs from data/output")
+                        help="List known runs from data/output, including historical read-only live runs")
     parser.add_argument("--status-run",
                         help="Return one run record by run_id as JSON")
     parser.add_argument("--stop-run",

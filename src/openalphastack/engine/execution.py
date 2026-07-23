@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from collections.abc import Callable
 from datetime import datetime
 
@@ -62,8 +63,9 @@ class ExecutionEngine:
         if total > 0 and pos_value / total > max_pos / 100:
             return {"error": f"单仓位超限 {max_pos}%"}
 
+        before = self.state.snapshot()
         trade = self.state.add_holding(
-            code, shares, price, strategy, stop_loss, take_profit
+            code, shares, price, strategy, stop_loss, take_profit, persist=False
         )
         trade["trade_id"] = f"{datetime.now().strftime('%Y%m%d')}_{code}_{uuid.uuid4().hex[:6]}"
 
@@ -88,7 +90,11 @@ class ExecutionEngine:
             entry["refined_resolution"] = refined_resolution
         if entry_bar_ts:
             entry["entry_bar_ts"] = entry_bar_ts
-        self.ledger.append(entry)
+        try:
+            self.state.commit_trade(self.ledger, entry)
+        except Exception:
+            self.state.restore(before)
+            raise
         self._notify_trade(
             "buy",
             code,
@@ -111,14 +117,15 @@ class ExecutionEngine:
         signal_detail: str = "",
     ) -> dict:
         """Validate and execute a sell order."""
-        trade = self.state.remove_holding(code, shares, price)
+        before = self.state.snapshot()
+        trade = self.state.remove_holding(code, shares, price, persist=False)
         if trade is None:
             return {"error": f"无 {code} 持仓或无可卖股数", "code": code}
 
         trade["trade_id"] = f"{datetime.now().strftime('%Y%m%d')}_{code}_{uuid.uuid4().hex[:6]}"
 
         pnl = trade.get("pnl", 0)
-        self.ledger.append({
+        entry = {
             "decision": "close_position",
             "symbol": code,
             "shares": shares,
@@ -128,7 +135,12 @@ class ExecutionEngine:
             "trade_id": trade["trade_id"],
             "pnl": round(pnl, 2),
             "pnl_pct": trade.get("pnl_pct", 0),
-        })
+        }
+        try:
+            self.state.commit_trade(self.ledger, entry)
+        except Exception:
+            self.state.restore(before)
+            raise
         action = "stop_loss" if "止损" in reason else "sell"
         self._notify_trade(
             action,

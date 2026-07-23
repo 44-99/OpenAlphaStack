@@ -8,15 +8,36 @@ version = "0.1.0"
 description = "Open-source Codex plugin stack for auditable A-share research and paper trading"
 requires-python = ">=3.10"
 dependencies = [
+    "mcp>=1.2.0,<2.0.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "python-dotenv==1.0.1",
+    "pandas>=2.2.0",
+    "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+market = [
+    "akshare>=1.16.0",
+]
+engine = [
+    "pyarrow>=16.0.0",
+]
+dashboard = [
+    "fastapi==0.115.6",
+    "uvicorn==0.34.0",
+    "pyarrow>=16.0.0",
+]
+feishu = [
+    "httpx==0.28.1",
+    "lark-oapi>=1.4.0",
+]
+all = [
+    "akshare>=1.16.0",
+    "pyarrow>=16.0.0",
     "fastapi==0.115.6",
     "uvicorn==0.34.0",
     "httpx==0.28.1",
-    "pandas>=2.2.0",
-    "akshare>=1.16.0",
-    "python-dotenv==1.0.1",
     "lark-oapi>=1.4.0",
-    "pyarrow>=16.0.0",
-    "mcp>=1.2.0,<2.0.0",
 ]
 
 [project.scripts]

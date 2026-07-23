@@ -12,7 +12,7 @@ def test_generate_day_bars_respects_a_share_sessions():
     assert [b.strftime("%H:%M") for b in bars] == ["10:30", "11:30", "14:00", "15:00"]
 
 
-def test_synthetic_bars_and_minute_quote_use_cached_daily_data():
+def test_minute_quote_uses_real_cached_intraday_and_previous_close():
     feed = BacktestDataFeed("2025-03-13", "2025-03-14", ["600036"], bar_period=60)
     feed._index_loaded = True
     feed._daily_cache["600036"] = pd.DataFrame([
@@ -35,15 +35,25 @@ def test_synthetic_bars_and_minute_quote_use_cached_daily_data():
             "amount": 20000.0,
         },
     ])
-    feed._minute_cache["600036"] = feed._synthetic_bars("600036", feed._daily_cache["600036"])
+    feed._minute_cache["600036"] = pd.DataFrame([
+        {
+            "time": pd.Timestamp("2025-03-14 10:30"),
+            "open": 41.5,
+            "high": 42.0,
+            "low": 41.2,
+            "close": 41.8,
+            "volume": 500,
+            "amount": 5000.0,
+        }
+    ])
 
     quote = feed.get_minute_quote("600036", pd.Timestamp("2025-03-14 10:30"))
 
     assert quote["code"] == "600036"
-    assert quote["price"] == 42.5
+    assert quote["price"] == 41.8
     assert quote["prev_close"] == 41.0
-    assert quote["change_pct"] == 3.66
-    assert quote["volume_ratio"] == 2.0
+    assert quote["change_pct"] == 1.95
+    assert quote["volume_ratio"] == 0.5
 
 
 def test_trading_days_and_previous_day_can_use_loaded_index_cache():

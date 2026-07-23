@@ -56,6 +56,15 @@ def test_pyproject_exposes_only_unified_console_script():
     }
 
 
+def test_pyproject_keeps_heavy_integrations_optional():
+    data = tomllib.loads((paths.PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = data["project"]["dependencies"]
+    extras = data["project"]["optional-dependencies"]
+
+    assert not any(item.startswith(("fastapi", "uvicorn", "akshare", "pyarrow", "lark-oapi")) for item in dependencies)
+    assert {"market", "engine", "dashboard", "feishu", "all"} <= set(extras)
+
+
 def test_legacy_root_launchers_are_removed():
     dockerfile = (paths.PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -105,14 +114,24 @@ def test_unified_engine_start_help_hides_internal_control_flags(capsys):
     assert "--resume-run" not in out
 
 
-def test_unified_engine_resume_routes_to_daemon_resume(monkeypatch):
+def test_unified_engine_resume_routes_paper_run_to_daemon_resume(monkeypatch):
     calls = []
 
     monkeypatch.setattr(app_cli, "_run_engine", lambda args, **_kwargs: calls.append(args))
 
-    app_cli.main(["engine", "resume", "live_test_run", "--daemon"])
+    app_cli.main(["engine", "resume", "paper_test_run", "--daemon"])
 
-    assert calls == [["--resume-run", "live_test_run", "--daemon"]]
+    assert calls == [["--resume-run", "paper_test_run", "--daemon"]]
+
+
+def test_engine_cli_rejects_live_mode(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["openalphastack engine", "--mode", "live"])
+
+    with pytest.raises(SystemExit) as exc:
+        engine_cli.main()
+
+    assert exc.value.code == 2
+    assert "invalid choice: 'live'" in capsys.readouterr().err
 
 
 def test_unified_tools_routes_to_tool_module(monkeypatch):
@@ -313,10 +332,10 @@ def test_engine_cli_resume_run_requires_daemon(monkeypatch, capsys):
 
 def test_engine_cli_resume_run_starts_detached_process(monkeypatch, capsys):
     plan = engine_cli.run_registry.ResumePlan(
-        run_id="live_test_run",
-        mode="live",
+        run_id="paper_test_run",
+        mode="paper",
         args=[],
-        safe_status="observation",
+        safe_status="running",
         resume_count=3,
     )
     marked = []
@@ -324,14 +343,14 @@ def test_engine_cli_resume_run_starts_detached_process(monkeypatch, capsys):
     monkeypatch.setattr(engine_cli.run_registry, "build_resume_plan", lambda run_id: plan)
     monkeypatch.setattr(engine_cli.run_registry, "mark_resume_started", lambda resume_plan, pid: marked.append((resume_plan, pid)))
     monkeypatch.setattr(engine_cli, "start_daemon", lambda args: {"pid": 23456, "run_id": args.resume})
-    monkeypatch.setattr(sys, "argv", ["openalphastack engine", "--resume-run", "live_test_run", "--daemon"])
+    monkeypatch.setattr(sys, "argv", ["openalphastack engine", "--resume-run", "paper_test_run", "--daemon"])
 
     engine_cli.main()
 
     out = json.loads(capsys.readouterr().out)
     assert out["pid"] == 23456
-    assert out["run_id"] == "live_test_run"
-    assert out["resume"]["safe_status"] == "observation"
+    assert out["run_id"] == "paper_test_run"
+    assert out["resume"]["safe_status"] == "running"
     assert marked == [(plan, 23456)]
 
 

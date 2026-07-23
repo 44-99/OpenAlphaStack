@@ -1,4 +1,4 @@
-"""Top-level paper/backtest/live engine orchestration."""
+"""Top-level paper/backtest engine orchestration."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ os.makedirs(OUTPUT_BASE, exist_ok=True)
 
 @contextmanager
 def _prevent_windows_sleep(enabled: bool = True):
-    """Keep Windows awake while a paper/live engine is expected to trade."""
+    """Keep Windows awake while a paper engine is expected to trade."""
     if not enabled or os.name != "nt":
         yield
         return
@@ -75,6 +75,8 @@ class PaperEngine:
                  backtest_start: str = None, backtest_end: str = None,
                  resume_run_id: str = None,
                  bar_period: int = 60):
+        if mode not in {"paper", "backtest"}:
+            raise ValueError(f"Unsupported engine mode: {mode}")
         self.mode = mode
         self.bar_period = bar_period
         self.universe = universe or []
@@ -139,7 +141,7 @@ class PaperEngine:
         self.state.set_engine_meta(**meta)
 
     def _has_actionable_plan_for_today(self) -> bool:
-        """Return whether paper/live can trade without generating a new plan."""
+        """Return whether paper mode can trade without generating a new plan."""
         if self.mode == "paper":
             self.plan.refresh_external()
         plan = self.plan.load()
@@ -321,12 +323,12 @@ class PaperEngine:
             print(f"[Workflow] record failed: {exc}", flush=True)
 
     def run_paper(self) -> None:
-        """Run paper/live mode: pre-market plan, intraday execution, post-close report."""
-        with _prevent_windows_sleep(self.mode in {"paper", "live"}):
+        """Run paper mode: pre-market plan, intraday execution, post-close report."""
+        with _prevent_windows_sleep(self.mode == "paper"):
             self._run_paper_loop()
 
     def _run_paper_loop(self) -> None:
-        """Internal paper/live loop. Wrapped by run_paper for OS wake lock handling."""
+        """Internal paper loop. Wrapped by run_paper for OS wake lock handling."""
         print(f"[Engine] Mode: {self.mode.upper()} | Run ID: {self.run_id}", flush=True)
         print(f"[Engine] Output: {self.output_dir}", flush=True)
 

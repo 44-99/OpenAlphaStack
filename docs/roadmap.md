@@ -11,17 +11,22 @@
 - ✅ Paper engine reloads externally published plans and stays observation-only without one.
 - ✅ Embedded Agent terminal and in-process Agent scheduling removed from the main path.
 - ✅ Backtests no longer invoke an Agent internally.
+- ✅ Public live start/resume paths removed; historical live runs are read-only.
 
 ## Next: MCP contract hardening
 
-- Add explicit JSON schemas and version fields for plans and run snapshots.
-- Add source freshness and provenance to every market-data response.
-- Add structured MCP errors rather than provider-specific exception text.
-- Add resource URIs for plan, state, ledger, reports, and strategy metrics.
-- Add a read-only demo dataset for Skill forward tests.
+- ✅ Added explicit JSON schemas and version fields for plans and run snapshots.
+- ✅ Added source freshness and provenance to every MCP market-data response.
+- ✅ Added structured MCP errors without provider exception text.
+- ✅ Added contract, Demo, run snapshot, and ledger resource URIs.
+- ✅ Added a read-only synthetic Demo dataset and Skill forward-contract tests.
+- Add dedicated report and strategy-metric resource URIs after their persisted schemas stabilize.
 
 ## Next: deterministic runtime
 
+- ✅ Persist state, active plans, and ledger events in a per-run SQLite source of truth.
+- ✅ Commit account mutations and matching ledger events atomically.
+- ✅ Reject missing intraday data instead of synthesizing minute bars from daily OHLC.
 - Run the paper engine as a long-lived local service that idles outside exchange sessions.
 - Make plan activation a first-class state transition with an audit event.
 - Add plan expiry and automatic observation fallback.
@@ -38,13 +43,13 @@
 
 ## Next: product and distribution
 
-- Replace the old screenshot with a Dashboard image without the Agent terminal.
+- Remove the obsolete Agent-terminal screenshot and capture a verified current Dashboard image.
 - Record a short Codex Scheduled task -> Skill -> MCP -> paper plan demo.
 - Publish honest benchmark and failure reports rather than return promises.
 - Publish plugin installation and scheduled-task composition examples.
 
 ## Live trading
 
-Live trading remains unimplemented and inaccessible through MCP. It requires a
+Live trading remains unimplemented and inaccessible through the CLI and MCP. It requires a
 separate BrokerAdapter, explicit human confirmation, order idempotency, restart
 recovery, kill switches, authenticated deployment, and a new security review.

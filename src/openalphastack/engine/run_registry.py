@@ -309,7 +309,13 @@ def stop_run(run_id: str) -> StopResult:
 
 def build_resume_plan(run_id: str) -> ResumePlan:
     record = get_run(run_id)
-    safe_status = "observation" if record.mode == "live" else "running"
+    if record.mode == "live":
+        raise RunControlError(
+            "Historical live runs are read-only and cannot be resumed"
+        )
+    if record.mode not in {"paper", "backtest"}:
+        raise RunControlError(f"Run mode cannot be resumed: {record.mode}")
+    safe_status = "running"
     resume_count = record.resume_count + 1
     args = [
         sys.executable,
@@ -331,9 +337,6 @@ def build_resume_plan(run_id: str) -> ResumePlan:
 
 
 def mark_resume_started(plan: ResumePlan, process_id: int) -> None:
-    observation_reason = ""
-    if plan.mode == "live":
-        observation_reason = "live resume is conservative until Phase 3 safety gates are complete"
     _update_engine_meta(
         plan.run_id,
         {
@@ -342,7 +345,7 @@ def mark_resume_started(plan: ResumePlan, process_id: int) -> None:
             "resume_count": plan.resume_count,
             "started_at": datetime.now().isoformat(timespec="seconds"),
             "stopped_at": "",
-            "observation_mode": plan.mode == "live",
-            "observation_reason": observation_reason,
+            "observation_mode": False,
+            "observation_reason": "",
         },
     )

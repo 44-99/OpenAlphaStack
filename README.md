@@ -23,8 +23,6 @@ missing trading plan.
 
 > Paper trading only. OpenAlphaStack does not place real orders and does not promise investment returns.
 
-![OpenAlphaStack Dashboard](docs/assets/dashboard-workbench.jpg)
-
 ## Why OpenAlphaStack?
 
 - **One plugin, two extension layers** — package reusable domain Skills and a
@@ -78,10 +76,22 @@ Requirements:
 ```powershell
 git clone https://github.com/44-99/OpenAlphaStack.git
 cd OpenAlphaStack
-pip install -r requirements.txt
 pip install -e .
+openalphastack doctor
+```
+
+The base install supports the Codex plugin, MCP contracts, and offline Demo path.
+Install only the surfaces you use:
+
+```powershell
+pip install -e ".[market]"             # AkShare-backed market providers
+pip install -e ".[engine]"             # paper/backtest Parquet runtime
+pip install -e ".[dashboard]"          # FastAPI Dashboard
+pip install -e ".[all]"                # complete local development runtime
+
 npm install
 npm run dashboard:build
+openalphastack doctor
 openalphastack app start
 ```
 
@@ -94,6 +104,22 @@ Use $market-analyzer to assess today's A-share market, cite the MCP data used,
 and finish with risks and invalidation conditions.
 ```
 
+### Offline first run
+
+Market providers may be unavailable outside trading hours or behind a restricted
+network. To verify the complete Skill → MCP path without treating sample values
+as market facts, ask Codex:
+
+```text
+Use $market-analyzer in offline demo mode. Read the market_overview and
+market_news demo datasets, show their schema version, source, as-of time and
+freshness status, then produce a short report clearly labelled as synthetic data.
+```
+
+The `read_demo_dataset` MCP tool is read-only and deterministic. Skills must not
+publish Demo-derived values into a paper plan. Available datasets cover market
+overview, screening, quote, technical, fundamentals, news and a baseline backtest.
+
 The repository is also a Codex plugin: `.codex-plugin/plugin.json` discovers the
 Skills and `.mcp.json` registers the stdio server. After installing the Python
 package, install/open the plugin in Codex and verify the `open-alpha-stack` MCP
@@ -103,6 +129,13 @@ Start the MCP server manually for diagnostics:
 
 ```powershell
 openalphastack mcp serve
+```
+
+Check the local installation at any time:
+
+```powershell
+openalphastack doctor
+openalphastack doctor --json
 ```
 
 ## Codex Skills
@@ -121,13 +154,35 @@ Codex Desktop to remain running.
 Read tools expose paper/backtest runs, market data, indicators, news, screens,
 risk calculations, and deterministic baseline backtests.
 
+Every MCP tool returns a versioned envelope:
+
+```json
+{
+  "schema_version": "openalphastack.mcp/v1",
+  "ok": true,
+  "data": {},
+  "meta": {
+    "source": "provider-or-demo-dataset",
+    "as_of": "2026-07-23T10:00:00+08:00",
+    "freshness": {"status": "fresh"},
+    "demo": false
+  }
+}
+```
+
+Callers must check `ok` before reading `data`. Failures use a stable
+`error.code` and do not expose provider exception text. JSON schemas are
+available through `get_contracts` and `openalphastack://contracts/v1`.
+
 The only plan mutations are:
 
 1. `save_plan_draft` — writes a non-executable `plan.codex-draft.json`.
 2. `publish_paper_plan` — validates, requires an idempotency key, checks the
    expected plan version, and atomically updates a paper run only.
 
-Live runs are hidden from MCP mutations. No shell, arbitrary file-write, or live-order tool is exposed.
+There is no public live mode: the CLI cannot start or resume one, and MCP has no
+live-order tool. Historical `live_*` directories remain read-only for migration
+and audit. No shell or arbitrary file-write tool is exposed.
 
 ## Engine commands
 
@@ -145,6 +200,16 @@ openalphastack engine start --mode backtest \
 The paper engine can stay running outside trading hours. It idles according to
 the trading calendar and remains observation-only until Codex publishes a valid
 plan for the current date.
+
+Each run uses `run.sqlite3` as the transactional source of truth for account
+state, the active plan, and ledger events. `state.json`, `plan.json`, and
+`ledger.jsonl` are human-readable projections. A trade updates account state and
+its matching ledger event in one SQLite transaction.
+
+Backtests require real cached or provider minute bars. Missing intraday data now
+fails closed instead of fabricating bars from daily OHLC. Backtest output remains
+experimental evidence—not a profitability claim—until walk-forward,
+out-of-sample, and baseline comparisons are implemented.
 
 ## Verification
 

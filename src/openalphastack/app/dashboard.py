@@ -12,6 +12,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from openalphastack.demo_data import dashboard_ledger, dashboard_plan, dashboard_state
+
 from openalphastack.engine import run_registry
 from openalphastack.engine import cli as engine_cli
 from openalphastack.engine.agent_event import validate_agent_events
@@ -423,115 +425,15 @@ def _read_json_any(path: str):
 
 
 def _demo_state() -> dict:
-    return {
-        "run_id": DEMO_RUN_ID,
-        "total_asset": 103280.0,
-        "cash": 72180.0,
-        "position_value": 31100.0,
-        "day_pnl": 3280.0,
-        "day_return_pct": 3.28,
-        "trade_count": 3,
-        "win_count": 2,
-        "positions": {
-            "300913": {
-                "shares": 1000,
-                "avg_cost": 30.8,
-                "current_price": 31.1,
-                "stop_loss": 29.4,
-                "strategy": "AI计划突破",
-                "unrealized_pnl": 300.0,
-            },
-        },
-        "engine_meta": {"mode": "demo", "status": "demo"},
-        "data_time": "2026-06-04 10:30:00",
-    }
+    return dashboard_state()
 
 
 def _demo_plan() -> dict:
-    return {
-        "updated": "2026-06-04T08:45:00",
-        "updated_by": "demo",
-        "market_bias": "谨慎偏多",
-        "bias_confidence": 68,
-        "bias_reasoning": "指数在关键均线附近企稳，优先选择有量能确认的弹性标的。",
-        "buy_candidates": [
-            {
-                "code": "300913",
-                "strategy_type": "突破回踩",
-                "entry_min": 30.2,
-                "entry_max": 31.2,
-                "stop_loss": 29.4,
-                "take_profit": 34.6,
-                "valid_until": "2026-06-04",
-                "position_pct": 20,
-                "reasoning": "计划等待回踩不破入场区间，上沿突破后由成交量确认。",
-            },
-            {
-                "code": "000001",
-                "name": "上证指数",
-                "strategy_type": "指数观察",
-                "entry_min": 10.4,
-                "entry_max": 10.8,
-                "stop_loss": 10.1,
-                "take_profit": 11.5,
-                "valid_until": "2026-06-04",
-                "position_pct": 10,
-                "reasoning": "作为大盘联动观察样例，不代表真实交易建议。",
-            },
-        ],
-        "rules": {
-            "max_single_position_pct": 25,
-            "max_total_position_pct": 80,
-            "stop_loss_mode": "hard",
-        },
-    }
+    return dashboard_plan()
 
 
 def _demo_ledger(limit: int = 50, code: str = "") -> list[dict]:
-    rows = [
-        {
-            "seq": 3,
-            "time": "2026-06-04 10:12:00",
-            "decision": "buy",
-            "symbol": "300913",
-            "price": 31.1,
-            "shares": 1000,
-            "strategy": "突破回踩",
-            "reasoning": "回踩计划区间后放量重新站上分时均线。",
-            "stop_loss": 29.4,
-            "take_profit": 34.6,
-            "avg_cost": 30.8,
-        },
-        {
-            "seq": 2,
-            "time": "2026-06-04 09:48:00",
-            "decision": "sell",
-            "symbol": "300913",
-            "price": 32.2,
-            "shares": 500,
-            "strategy": "T+0降成本",
-            "reasoning": "冲高接近分时压力，先兑现一半日内仓。",
-            "stop_loss": 29.4,
-            "take_profit": 34.6,
-            "avg_cost": 30.8,
-        },
-        {
-            "seq": 1,
-            "time": "2026-06-04 09:35:00",
-            "decision": "buy",
-            "symbol": "300913",
-            "price": 30.8,
-            "shares": 1500,
-            "strategy": "计划入场",
-            "reasoning": "价格进入计划区间，风控校验通过。",
-            "stop_loss": 29.4,
-            "take_profit": 34.6,
-            "avg_cost": 30.8,
-        },
-    ]
-    if code:
-        rows = [row for row in rows if row.get("symbol") == code or row.get("code") == code]
-    return rows[:limit]
+    return dashboard_ledger(limit=limit, code=code)
 
 
 def _demo_workflow_events(limit: int = 500) -> list[dict]:
@@ -2145,4 +2047,3 @@ async def dashboard_page():
         f"window.__DATA__ = {json.dumps(initial_data, ensure_ascii=False)};",
     )
     return HTMLResponse(html)
-

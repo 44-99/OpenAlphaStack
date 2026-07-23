@@ -12,7 +12,7 @@ validation, state, risk rules, backtests, and mechanical paper execution.
 3. Put Agent workflow instructions in `skills/`.
 4. Put live data and domain actions behind typed MCP tools.
 5. Keep risk limits, T+1 behavior, fees, state transitions, and idempotency in Python.
-6. MCP mutations are paper-only. Never expose a live-order tool before an explicit safety design and separate approval.
+6. Public engine modes are paper and backtest only. MCP mutations are paper-only; historical live runs remain read-only.
 7. Missing or stale plans keep the engine in observation mode; the engine must not invent a plan.
 8. The Dashboard is an observability surface, not an Agent terminal.
 
@@ -22,7 +22,8 @@ validation, state, risk rules, backtests, and mechanical paper execution.
 - Do not expose arbitrary shell execution through HTTP, WebSocket, or MCP.
 - Do not commit `.env` or runtime data under `data/`.
 - Do not reveal private Feishu conversations or local secrets.
-- Preserve atomic writes and append-only ledgers.
+- Treat per-run SQLite as canonical; JSON/JSONL files are human-readable projections.
+- Preserve atomic state-plus-ledger commits and append-only ledger semantics.
 
 ## Development rules
 

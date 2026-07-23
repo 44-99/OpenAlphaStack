@@ -1,3 +1,5 @@
+# Full local development/runtime environment. End users should prefer
+# `pip install -e .` or `pip install -e ".[all]"` as documented in README.md.
 fastapi==0.115.6
 uvicorn==0.34.0
 httpx==0.28.1
@@ -7,3 +9,5 @@ python-dotenv==1.0.1
 lark-oapi>=1.4.0
 pyarrow>=16.0.0
 mcp>=1.2.0,<2.0.0
+pydantic>=2.10.0,<3.0.0
+requests>=2.32.0

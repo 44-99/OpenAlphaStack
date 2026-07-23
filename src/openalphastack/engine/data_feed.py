@@ -205,15 +205,7 @@ class BacktestDataFeed:
             self._minute_cache[code] = df
             return df
 
-        print(f"[DataFeed] {code}: building synthetic {period}m bars from daily OHLC")
-        daily_df = self._load_one_daily(code)
-        if daily_df is not None and not daily_df.empty:
-            synthetic = self._synthetic_bars(code, daily_df)
-            if not synthetic.empty:
-                self._minute_cache[code] = synthetic
-                return synthetic
-
-        print(f"[DataFeed] {code}: NO data available — quotes will be empty")
+        print(f"[DataFeed] {code}: NO real {period}m data available — quotes will be empty")
         self._minute_cache[code] = pd.DataFrame()
         return pd.DataFrame()
 
@@ -327,13 +319,6 @@ class BacktestDataFeed:
             self._bars_cache[cache_key] = df
             return df
 
-        daily_df = self._load_one_daily(code)
-        if daily_df is not None and not daily_df.empty:
-            synthetic = self._synthetic_bars_for_period(code, daily_df, period)
-            if not synthetic.empty:
-                self._bars_cache[cache_key] = synthetic
-                return synthetic
-
         self._bars_cache[cache_key] = pd.DataFrame()
         return pd.DataFrame()
 
@@ -398,30 +383,6 @@ class BacktestDataFeed:
         if best_price is None:
             return None
         return best_price, best_resolution, best_time
-
-    def _synthetic_bars_for_period(self, code: str, daily_df: pd.DataFrame,
-                                   period: int) -> pd.DataFrame:
-        """Build synthetic bars from daily OHLC at a given period."""
-        bars = []
-        for _, row in daily_df.iterrows():
-            day = pd.Timestamp(row["date"])
-            if day < self.start or day > self.end:
-                continue
-            for ts in _generate_day_bars(day, period):
-                bars.append({
-                    "time": ts,
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                    "volume": int(row.get("volume", 0)),
-                    "amount": float(row.get("amount", 0)) if "amount" in row else 0,
-                })
-        return pd.DataFrame(bars) if bars else pd.DataFrame()
-
-    def _synthetic_bars(self, code: str, daily_df: pd.DataFrame) -> pd.DataFrame:
-        """Build synthetic bars from daily OHLC at self.bar_period intervals."""
-        return self._synthetic_bars_for_period(code, daily_df, self.bar_period)
 
     def _ensure_index(self) -> None:
         """Lazy-load Shanghai Composite index data."""
@@ -507,8 +468,6 @@ class BacktestDataFeed:
             return {}
         row = self._index_cache[self._index_cache["date"] == date]
         if row.empty:
-            row = self._index_cache[self._index_cache["date"] <= date].tail(1)
-        if row.empty:
             return {}
         row = row.iloc[-1]
         prev_idx = self._index_cache[self._index_cache["date"] < date]
@@ -546,8 +505,6 @@ class BacktestDataFeed:
             if df.empty:
                 continue
             row = df[df["date"] == date]
-            if row.empty:
-                row = df[df["date"] <= date].tail(1)
             if row.empty:
                 continue
             row = row.iloc[-1]

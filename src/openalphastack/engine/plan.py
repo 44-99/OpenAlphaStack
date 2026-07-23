@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from datetime import datetime, timedelta
+
+from openalphastack.contracts import normalize_published_plan
+from openalphastack.engine.run_store import RunStore
+
+
+logger = logging.getLogger(__name__)
 
 
 class PlanManager:
@@ -14,9 +21,14 @@ class PlanManager:
 
     def __init__(self, output_dir: str):
         self.path = os.path.join(output_dir, "plan.json")
+        self.store = RunStore(output_dir)
         self._lock = threading.Lock()
         self._now_override = None
-        if os.path.exists(self.path):
+        stored, self._last_store_revision = self.store.load_plan()
+        if stored:
+            self._data = normalize_published_plan(stored)
+            self._export_best_effort()
+        elif os.path.exists(self.path):
             with open(self.path, "r", encoding="utf-8") as f:
                 self._data = json.load(f)
             if "daily_bias" in self._data and "market_bias" not in self._data:
@@ -28,6 +40,8 @@ class PlanManager:
             for key, default in self._default_v2_fields().items():
                 if key not in self._data:
                     self._data[key] = default
+            self._data = normalize_published_plan(self._data)
+            self._last_store_revision = self.store.save_plan(self._data)
         else:
             self._data = self._default_plan()
             self.save("init")
@@ -84,25 +98,35 @@ class PlanManager:
         with self._lock:
             self._data["updated"] = self._now.isoformat()
             self._data["updated_by"] = updated_by
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
-            last_error: PermissionError | None = None
-            for attempt in range(8):
-                try:
-                    os.replace(tmp, self.path)
-                    break
-                except PermissionError as exc:
-                    last_error = exc
-                    time.sleep(min(0.02 * (2 ** attempt), 0.5))
-            else:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                if last_error is not None:
-                    raise last_error
+            self._data = normalize_published_plan(self._data)
+            self._last_store_revision = self.store.save_plan(self._data)
+            self._export_best_effort()
             self._last_mtime_ns = self._plan_mtime_ns()
+
+    def _export_best_effort(self) -> None:
+        try:
+            self._export_json()
+        except OSError as exc:
+            logger.warning("Plan projection refresh failed; SQLite remains canonical: %s", exc)
+
+    def _export_json(self) -> None:
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        last_error: PermissionError | None = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(min(0.02 * (2 ** attempt), 0.5))
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        if last_error is not None:
+            raise last_error
 
     def refresh_external(self) -> bool:
         """Reload a newer atomically-published plan from MCP.
@@ -112,6 +136,15 @@ class PlanManager:
         comparison prevents an older external snapshot from overwriting newer
         in-process execution updates.
         """
+        stored, revision = self.store.load_plan()
+        if stored and revision > self._last_store_revision:
+            with self._lock:
+                self._data = normalize_published_plan(stored)
+                self._last_store_revision = revision
+                self._last_mtime_ns = self._plan_mtime_ns()
+                self._export_best_effort()
+            return True
+
         next_mtime = self._plan_mtime_ns()
         if next_mtime <= self._last_mtime_ns:
             return False
@@ -126,9 +159,8 @@ class PlanManager:
                 return False
             if not isinstance(data, dict):
                 return False
-            for key, default in self._default_v2_fields().items():
-                data.setdefault(key, default)
-            self._data = data
+            self._data = normalize_published_plan(data)
+            self._last_store_revision = self.store.save_plan(self._data)
             self._last_mtime_ns = next_mtime
             return True
 

@@ -10,7 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from openalphastack.contracts import (
+    PLAN_SCHEMA_VERSION,
+    RUN_SNAPSHOT_SCHEMA_VERSION,
+    normalize_published_plan,
+)
 from openalphastack.engine import run_registry
+from openalphastack.engine.run_store import PlanRevisionConflict, RunStore
 
 
 _CODE_RE = re.compile(r"^\d{6}$")
@@ -46,19 +54,28 @@ def list_run_summaries(mode: str = "paper", limit: int = 20) -> list[dict[str, A
 
 def get_run_snapshot(run_id: str) -> dict[str, Any]:
     run_dir = _run_dir(run_id)
-    state = _read_json(run_dir / "state.json")
-    plan = _read_json(run_dir / "plan.json")
+    stored = RunStore(run_dir).read_snapshot(ledger_limit=100)
+    state = stored["state"] or _read_json(run_dir / "state.json")
+    plan = stored["plan"] or _read_json(run_dir / "plan.json")
     return {
+        "schema_version": RUN_SNAPSHOT_SCHEMA_VERSION,
         "run_id": run_id,
         "state": state,
         "plan": plan,
-        "ledger_tail": get_ledger_tail(run_id, limit=100),
+        "state_revision": stored["state_revision"],
+        "plan_revision": stored["plan_revision"],
+        "ledger_tail": stored["ledger_tail"] or get_ledger_tail(run_id, limit=100),
     }
 
 
 def get_ledger_tail(run_id: str, limit: int = 100) -> list[dict[str, Any]]:
-    path = _run_dir(run_id) / "ledger.jsonl"
+    run_dir = _run_dir(run_id)
     limit = max(1, min(int(limit), 1000))
+    store = RunStore(run_dir)
+    rows = store.read_ledger(limit)
+    if rows:
+        return rows
+    path = run_dir / "ledger.jsonl"
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -76,7 +93,12 @@ def validate_paper_plan(plan: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     if not isinstance(plan, dict):
-        return {"valid": False, "errors": ["plan must be an object"], "warnings": []}
+        return {
+            "schema_version": PLAN_SCHEMA_VERSION,
+            "valid": False,
+            "errors": ["plan must be an object"],
+            "warnings": [],
+        }
 
     plan_date = str(plan.get("plan_date") or "")
     try:
@@ -141,13 +163,29 @@ def validate_paper_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(adjustments, list):
         errors.append("holding_adjustments must be a list")
 
-    return {"valid": not errors, "errors": errors, "warnings": warnings}
+    provenance = plan.get("provenance") or {}
+    if isinstance(provenance, dict) and provenance.get("contains_demo_data") is True:
+        errors.append("plans derived from Demo data cannot be published")
+
+    if not errors:
+        try:
+            normalize_published_plan(plan)
+        except (TypeError, ValueError, ValidationError) as exc:
+            errors.append(f"plan contract validation failed: {exc}")
+
+    return {
+        "schema_version": PLAN_SCHEMA_VERSION,
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+    }
 
 
 def save_plan_draft(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
     run_dir = _run_dir(run_id, paper_only=True)
     validation = validate_paper_plan(plan)
-    draft = dict(plan)
+    draft = normalize_published_plan(plan) if validation["valid"] else dict(plan)
+    draft["schema_version"] = PLAN_SCHEMA_VERSION
     draft["validation"] = validation
     draft["draft_saved_at"] = datetime.now().isoformat(timespec="seconds")
     path = run_dir / "plan.codex-draft.json"
@@ -169,22 +207,19 @@ def publish_paper_plan(
     if not validation["valid"]:
         return {"published": False, **validation}
 
-    mutation_path = run_dir / "agent_mutations.jsonl"
-    existing = _find_mutation(mutation_path, idempotency_key)
-    if existing:
-        return {"published": True, "replayed": True, "mutation": existing, **validation}
-
     plan_path = run_dir / "plan.json"
-    current = _read_json(plan_path)
-    if expected_updated and str(current.get("updated") or "") != expected_updated:
-        raise GatewayError("plan changed since it was read; fetch a fresh snapshot and retry")
+    store = RunStore(run_dir)
+    current, _revision = store.load_plan()
+    if not current:
+        current = _read_json(plan_path)
+        if current:
+            store.save_plan(current)
 
-    published = dict(plan)
+    published = normalize_published_plan(plan)
     published["updated"] = datetime.now().isoformat(timespec="seconds")
     published["updated_by"] = "codex-skill"
     published["source"] = "openalphastack-mcp"
     published["idempotency_key"] = idempotency_key
-    _atomic_write_json(plan_path, published)
 
     mutation = {
         "idempotency_key": idempotency_key,
@@ -193,22 +228,24 @@ def publish_paper_plan(
         "published_at": published["updated"],
         "plan_date": published.get("plan_date", ""),
     }
-    with mutation_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(mutation, ensure_ascii=False) + "\n")
-    return {"published": True, "replayed": False, "mutation": mutation, **validation}
+    try:
+        _revision, replayed, committed_mutation = store.publish_plan(
+            published,
+            mutation,
+            expected_updated=expected_updated,
+        )
+    except PlanRevisionConflict as exc:
+        raise GatewayError("plan changed since it was read; fetch a fresh snapshot and retry") from exc
 
-
-def _find_mutation(path: Path, key: str) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    for line in path.read_text(encoding="utf-8").splitlines():
+    if not replayed:
         try:
-            row = json.loads(line)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(row, dict) and row.get("idempotency_key") == key:
-            return row
-    return None
+            _atomic_write_json(plan_path, published)
+            mutation_path = run_dir / "agent_mutations.jsonl"
+            with mutation_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(mutation, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+    return {"published": True, "replayed": replayed, "mutation": committed_mutation, **validation}
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
+from copy import deepcopy
 from datetime import datetime
 
 from openalphastack.engine.constants import (
@@ -15,6 +17,10 @@ from openalphastack.engine.constants import (
     PRICE_LIMIT_PCT,
     STAMP_DUTY,
 )
+from openalphastack.engine.run_store import RunStore
+
+
+logger = logging.getLogger(__name__)
 
 
 def calc_fees(price: float, shares: int, side: str) -> float:
@@ -41,10 +47,16 @@ class EngineState:
     def __init__(self, output_dir: str, initial_capital: float = 100000):
         self.output_dir = output_dir
         self.path = os.path.join(output_dir, "state.json")
+        self.store = RunStore(output_dir)
         self._lock = threading.Lock()
-        if os.path.exists(self.path):
+        stored, self._revision = self.store.load_state()
+        if stored:
+            self._data = stored
+            self._export_best_effort()
+        elif os.path.exists(self.path):
             with open(self.path, "r", encoding="utf-8") as f:
                 self._data = json.load(f)
+            self.save()
         else:
             self._data = {
                 "initial_capital": initial_capital,
@@ -62,27 +74,37 @@ class EngineState:
 
     def save(self):
         with self._lock:
-            tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2, default=str)
-            last_error: OSError | None = None
-            for attempt in range(8):
-                try:
-                    os.replace(tmp, self.path)
-                    return
-                except PermissionError as exc:
-                    last_error = exc
-                    time.sleep(min(0.05 * (2 ** attempt), 1.0))
+            self._revision = self.store.save_state(self._data)
+            self._export_best_effort()
+
+    def _export_best_effort(self) -> None:
+        try:
+            self._export_json()
+        except OSError as exc:
+            logger.warning("State projection refresh failed; SQLite remains canonical: %s", exc)
+
+    def _export_json(self) -> None:
+        tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self._data, f, ensure_ascii=False, indent=2, default=str)
+        last_error: OSError | None = None
+        for attempt in range(8):
             try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            if last_error is not None:
-                raise last_error
+                os.replace(tmp, self.path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(min(0.05 * (2 ** attempt), 1.0))
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        if last_error is not None:
+            raise last_error
 
     def load(self) -> dict:
         with self._lock:
-            return dict(self._data)
+            return deepcopy(self._data)
 
     @property
     def initial_capital(self) -> float:
@@ -117,7 +139,7 @@ class EngineState:
 
     def add_holding(self, code: str, shares: int, price: float,
                     strategy: str, stop_loss: float = 0,
-                    take_profit: float = 0) -> dict:
+                    take_profit: float = 0, *, persist: bool = True) -> dict:
         """Add shares to holdings. Returns trade record."""
         cost = price * shares + calc_fees(price, shares, "buy")
         self._data["cash"] -= cost
@@ -149,7 +171,8 @@ class EngineState:
 
         self._data["trade_count"] += 1
         self.snapshot_nav()
-        self.save()
+        if persist:
+            self.save()
         return {
             "status": "executed",
             "action": "buy",
@@ -159,7 +182,7 @@ class EngineState:
             "fees": round(cost - price * shares, 2),
         }
 
-    def remove_holding(self, code: str, shares: int, price: float) -> dict | None:
+    def remove_holding(self, code: str, shares: int, price: float, *, persist: bool = True) -> dict | None:
         """Remove shares. Returns trade record or None."""
         if code not in self._data["holdings"]:
             return None
@@ -189,7 +212,8 @@ class EngineState:
 
         self._data["trade_count"] += 1
         self.snapshot_nav()
-        self.save()
+        if persist:
+            self.save()
         return {
             "status": "executed",
             "action": "sell",
@@ -199,6 +223,24 @@ class EngineState:
             "pnl": round(pnl, 2),
             "pnl_pct": round((price - h["avg_cost"]) / h["avg_cost"] * 100, 2),
         }
+
+    def snapshot(self) -> dict:
+        return deepcopy(self._data)
+
+    def restore(self, payload: dict) -> None:
+        self._data = deepcopy(payload)
+
+    def commit_trade(self, ledger, entry: dict) -> int:
+        """Commit current state and the matching ledger event in one DB transaction."""
+        revision, seq = self.store.commit_trade(self._data, entry)
+        self._revision = revision
+        ledger._seq = seq
+        self._export_best_effort()
+        try:
+            ledger.export_jsonl()
+        except OSError as exc:
+            logger.warning("Ledger projection refresh failed; SQLite remains canonical: %s", exc)
+        return seq
 
     def release_t1_locks(self) -> None:
         """Release T+1 locks at end of trading day."""

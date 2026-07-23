@@ -13,6 +13,7 @@ import pytest
 from openalphastack.engine.clock import TradingClock
 from openalphastack.engine.execution import ExecutionEngine
 from openalphastack.engine.fast_lane import FastLane
+from openalphastack.engine.ledger import Ledger
 from openalphastack.engine.plan import PlanManager
 from openalphastack.engine.state import EngineState
 from openalphastack.tools import engine_status
@@ -211,7 +212,7 @@ def engine_parts(engine_dir: Path):
     plan = PlanManager(str(engine_dir))
     plan.set_sim_now(datetime(2025, 3, 14, 9, 35))
     clock = TradingClock(mode="backtest", sim_start=datetime(2025, 3, 14, 9, 35))
-    ledger = MagicMock()
+    ledger = Ledger(str(engine_dir))
     execution = ExecutionEngine(state, plan, ledger, mode="backtest")
     return state, plan, clock, ledger, execution
 
@@ -256,7 +257,7 @@ def test_execute_buy_ledger_contains_chart_risk_fields(engine_parts):
         reasoning="chart fields",
     )
 
-    entry = ledger.append.call_args.args[0]
+    entry = ledger.read_all()[-1]
     assert entry["decision"] == "open_position"
     assert entry["symbol"] == "000002"
     assert entry["avg_cost"] == 12.34
@@ -316,7 +317,7 @@ def test_stop_loss_triggers_sell_and_cooldown(engine_parts):
     })
 
     assert any(t["event"] == "stop_loss_hit" and t["code"] == "300488" for t in triggers)
-    assert any("close_position" in str(call) for call in ledger.append.call_args_list)
+    assert any(entry["decision"] == "close_position" for entry in ledger.read_all())
     assert plan.is_on_cooldown("300488")
     assert "300488" in plan._data["today_stopped_out"]
 
@@ -329,7 +330,7 @@ def test_take_profit_triggers_sell_and_cooldown(engine_parts):
     })
 
     assert any(t["event"] == "take_profit_hit" and t["code"] == "600036" for t in triggers)
-    assert any("close_position" in str(call) for call in ledger.append.call_args_list)
+    assert any(entry["decision"] == "close_position" for entry in ledger.read_all())
     assert plan.is_on_cooldown("600036")
 
 
@@ -352,7 +353,10 @@ def test_time_condition_close_uses_mocked_backtest_feed(engine_parts, monkeypatc
     assert not any(e.get("code") == "300488" and e["event"] == "max_hold_close" for e in result["events"])
     assert "600036" in state.holdings
     assert plan.is_on_cooldown("002594")
-    assert any("close_position" in str(call) and "002594" in str(call) for call in ledger.append.call_args_list)
+    assert any(
+        entry["decision"] == "close_position" and entry["symbol"] == "002594"
+        for entry in ledger.read_all()
+    )
 
 
 def test_t0_forward_cycle_uses_point_price_triggers(engine_parts):
@@ -378,7 +382,10 @@ def test_t0_forward_cycle_uses_point_price_triggers(engine_parts):
     tracker = fast_lane._t0_trackers["600036"]
     assert tracker.state == "active_buy"
     assert any(e["event"] == "t0_entry" and e["code"] == "600036" for e in events)
-    assert any("open_position" in str(call) and "600036" in str(call) for call in ledger.append.call_args_list)
+    assert any(
+        entry["decision"] == "open_position" and entry["symbol"] == "600036"
+        for entry in ledger.read_all()
+    )
 
     events.clear()
     fast_lane._run_t0_cycle(
@@ -407,7 +414,10 @@ def test_cooldown_prevents_rebuy_with_mocked_feed(engine_parts, monkeypatch):
     result = fast_lane.tick()
 
     assert not any(e.get("code") == "300488" and "buy" in e.get("event", "") for e in result["events"])
-    assert not any("open_position" in str(call) and "300488" in str(call) for call in ledger.append.call_args_list)
+    assert not any(
+        entry["decision"] == "open_position" and entry["symbol"] == "300488"
+        for entry in ledger.read_all()
+    )
 
 
 def test_bucket_allocation_fixture_matches_expected_exposures(engine_parts):

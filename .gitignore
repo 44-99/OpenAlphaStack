@@ -26,6 +26,9 @@ data/output/
 data/memory/
 data/state/
 data/test_tmp/
+data/**/*.sqlite3
+data/**/*.sqlite3-wal
+data/**/*.sqlite3-shm
 data/*.json
 data/*.md
 *.log

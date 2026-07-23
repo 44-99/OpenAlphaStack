@@ -9,6 +9,8 @@ description: >
 
 # A股底仓做T策略
 
+先调用 `get_run_snapshot` 确认目标是 paper run 且存在可用底仓，再调用 `stock_quote`、`stock_technical` 和 `calculate_volatility` 验证流动性、趋势与波动。每次 MCP 调用都必须先检查 `schema_version` 和 `ok`，只从 `data` 读取业务字段，并在输出中保留 `meta.source`、`meta.as_of` 与 `meta.freshness.status`。任何行情为 `stale`/`unknown`、`ok=false` 或持仓状态不完整时，结论只能是“不执行”。Demo 数据只能演示计算流程，禁止发布到模拟盘计划。
+
 ## 1. 基础概念
 
 A股实行T+1制度，但持有底仓（前日已买入的股票）可实现变相T+0：

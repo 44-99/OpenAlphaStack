@@ -157,18 +157,12 @@ def test_stop_run_is_idempotent_when_pid_dead(workspace_tmp, monkeypatch):
     assert result.signalled is False
 
 
-def test_build_resume_plan_is_conservative_for_live(workspace_tmp, monkeypatch):
+def test_build_resume_plan_rejects_historical_live_run(workspace_tmp, monkeypatch):
     output = workspace_tmp / "output"
     _write_run(output, "live_2026-05-16T09-00-00", meta={"process_id": 0, "status": "stopped", "resume_count": 2})
 
     monkeypatch.setattr(run_registry, "_output_base", lambda: output)
     monkeypatch.setattr(run_registry, "_is_pid_alive", lambda pid: False)
 
-    plan = run_registry.build_resume_plan("live_2026-05-16T09-00-00")
-
-    assert plan.run_id == "live_2026-05-16T09-00-00"
-    assert plan.mode == "live"
-    assert plan.safe_status == "observation"
-    assert "--resume" in plan.args
-    assert "live_2026-05-16T09-00-00" in plan.args
-    assert "--daemon" not in plan.args
+    with pytest.raises(run_registry.RunControlError, match="live runs are read-only"):
+        run_registry.build_resume_plan("live_2026-05-16T09-00-00")

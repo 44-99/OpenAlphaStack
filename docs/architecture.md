@@ -27,9 +27,10 @@ Scheduled premarket task
   -> validate_paper_plan
   -> save_plan_draft
   -> publish_paper_plan (paper only, idempotent, optimistic concurrency)
-  -> paper engine refreshes newer plan.json
+  -> paper engine refreshes the newer validated plan from run.sqlite3
   -> FastLane applies deterministic rules
-  -> append ledger and workflow events
+  -> atomically commit account state + ledger event to run.sqlite3
+  -> refresh human-readable JSON/JSONL projections and workflow events
   -> scheduled postclose prompt reviews facts without mutation
 ```
 
@@ -40,7 +41,10 @@ Scheduled premarket task
 - The engine may execute a valid current plan; it may not call a model.
 - Emergency handling is deterministic and notification-based.
 - A missing, stale, or invalid plan produces observation mode.
-- Ledger records are append-only.
+- SQLite is the per-run source of truth; JSON and JSONL are projections.
+- Account mutations and their ledger events commit in one SQLite transaction.
+- Missing intraday bars fail closed; backtests never synthesize minute bars from daily OHLC.
+- Public engine modes are paper and backtest only. Historical live runs are read-only.
 
 ## MCP surface
 
@@ -62,6 +66,36 @@ Mutation group:
 
 Every publication requires an idempotency key. Optional `expected_updated`
 provides optimistic concurrency against a plan changed since the Agent read it.
+
+### Versioned response contract
+
+All MCP tools return the `openalphastack.mcp/v1` envelope. Consumers check `ok`
+before reading `data`; failures contain a stable `error.code`, retryability and
+non-sensitive details. Market responses expose `meta.source`, `meta.as_of` and
+`meta.freshness`. Plans and run snapshots use the separate
+`openalphastack.plan/v1` and `openalphastack.run-snapshot/v1` contracts.
+
+Resources:
+
+- `openalphastack://contracts/v1`
+- `openalphastack://demo/catalog`
+- `openalphastack://demo/{dataset}`
+- `openalphastack://runs/{run_id}/snapshot`
+- `openalphastack://runs/{run_id}/ledger`
+
+The bundled Demo datasets are static synthetic fixtures. They support offline
+Skill verification and cannot mutate or publish a trading plan. Dashboard Demo
+account, plan, and ledger fixtures share the same `demo_data` ownership boundary;
+chart and workflow fixtures remain explicitly UI-only presentation data.
+
+## Persistence boundary
+
+Every paper or backtest run owns a `run.sqlite3` database containing runtime
+state, the active validated plan, and append-only ledger events. SQLite WAL,
+full synchronous commits, and immediate write transactions provide the
+cross-record atomicity boundary. `state.json`, `plan.json`, and `ledger.jsonl`
+exist for operator inspection and compatibility; corrupt or stale projections
+must not override a valid database.
 
 ## Scheduling boundary
 
