@@ -1,0 +1,34 @@
+# OpenAlphaStack
+
+OpenAlphaStack is an MIT-licensed Codex plugin for auditable A-share research,
+backtesting, and paper trading. It combines reusable domain Skills, a typed
+local MCP server, a deterministic Python engine, and a local read-only
+Dashboard.
+
+Canonical repository: https://github.com/44-99/OpenAlphaStack
+Canonical Chinese page: https://44-99.github.io/OpenAlphaStack/
+English discovery page: https://44-99.github.io/OpenAlphaStack/en.html
+
+## Product boundaries
+
+- Research, backtesting, and paper trading only.
+- No live broker order tool and no guaranteed return claim.
+- Codex Desktop owns conversation, scheduling, and research.
+- Python owns deterministic validation, T+1 behavior, fees, state, and paper execution.
+- The default workflow uses one Agent that composes domain Skills.
+- The local Dashboard is not part of the public static website.
+
+## Primary documentation
+
+- README: https://github.com/44-99/OpenAlphaStack/blob/master/README.md
+- English README: https://github.com/44-99/OpenAlphaStack/blob/master/README_EN.md
+- Architecture: https://github.com/44-99/OpenAlphaStack/blob/master/docs/architecture.md
+- Skills: https://github.com/44-99/OpenAlphaStack/blob/master/docs/skills.md
+- Roadmap: https://github.com/44-99/OpenAlphaStack/blob/master/docs/roadmap.md
+
+## Domain Skills
+
+- market-analyzer: A-share market regime, sentiment, sectors, and leaders.
+- stock-screener: deterministic screening and candidate review.
+- stock-analyzer: technical, fundamental, news, position, and risk analysis.
+- t0-intraday: position-based T0 feasibility and constraints.

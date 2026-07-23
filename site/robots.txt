@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://44-99.github.io/OpenAlphaStack/sitemap.xml

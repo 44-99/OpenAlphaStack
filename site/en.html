@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenAlphaStack — Codex MCP + Skills for A-share Research</title>
+    <meta name="description" content="An open-source Codex plugin combining domain Skills, a typed local MCP server, deterministic backtesting and paper trading for auditable A-share research.">
+    <meta name="theme-color" content="#071019">
+    <link rel="canonical" href="https://44-99.github.io/OpenAlphaStack/en.html">
+    <link rel="alternate" hreflang="zh-CN" href="https://44-99.github.io/OpenAlphaStack/">
+    <link rel="alternate" hreflang="en" href="https://44-99.github.io/OpenAlphaStack/en.html">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="OpenAlphaStack — Codex MCP + Skills for A-share Research">
+    <meta property="og:description" content="Agent-led research with deterministic Python execution. Local-first, auditable, and paper-only.">
+    <meta property="og:url" content="https://44-99.github.io/OpenAlphaStack/en.html">
+    <meta property="og:image" content="https://44-99.github.io/OpenAlphaStack/assets/openalphastack-social-preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="en.html"><span class="brand-mark" aria-hidden="true">OA</span><span>OpenAlphaStack</span></a>
+      <nav aria-label="Primary navigation"><a href="#capabilities">Capabilities</a><a href="#workflow">Architecture</a><a href="#quickstart">Quick start</a><a href="./" lang="zh-CN">简体中文</a></nav>
+      <a class="button button-small" href="https://github.com/44-99/OpenAlphaStack">View on GitHub</a>
+    </header>
+    <main id="main">
+      <section class="hero section-shell">
+        <div class="hero-copy">
+          <p class="eyebrow">OPEN-SOURCE CODEX PLUGIN</p>
+          <h1>Auditable A-share research with <span>MCP + Skills</span></h1>
+          <p class="hero-lead">Codex Desktop owns research and scheduling. Domain Skills encode reusable methods. Python owns T+1 rules, fees, state, backtests, and mechanical paper execution.</p>
+          <div class="hero-actions"><a class="button" href="#quickstart">Run it locally</a><a class="button button-ghost" href="https://github.com/44-99/OpenAlphaStack">Read the source</a></div>
+          <ul class="trust-list"><li>MIT licensed</li><li>Local-first</li><li>Paper trading only</li></ul>
+        </div>
+        <div class="hero-media"><img src="assets/openalphastack-demo.gif" alt="OpenAlphaStack stock search, K-line, and three-stage workflow demo" width="960" height="600"><p>Captured from the real local paper Dashboard. No return claim implied.</p></div>
+      </section>
+      <section id="capabilities" class="section-shell section-block">
+        <div class="section-heading"><p class="eyebrow">WHY OPENALPHASTACK</p><h2>Less agent theater, more verifiable boundaries</h2><p>An installable foundation for developers exploring China's A-share market—not an automated-profit black box.</p></div>
+        <div class="card-grid">
+          <article class="card"><span class="card-index">01</span><h3>Domain Skills</h3><p>Market analysis, screening, stock analysis, and T0 research are composed by one Codex task by default.</p></article>
+          <article class="card"><span class="card-index">02</span><h3>Typed local MCP</h3><p>Bounded tools expose market data, indicators, news, backtests, and paper plans—never arbitrary shell or live orders.</p></article>
+          <article class="card"><span class="card-index">03</span><h3>Deterministic engine</h3><p>Python enforces T+1, fees, idempotency, state transitions, and the audit ledger. Model prose is metadata, not permission.</p></article>
+        </div>
+      </section>
+      <section id="workflow" class="section-shell section-block split-section">
+        <div class="media-frame"><img src="assets/dashboard-workflow.png" alt="Research, Execution, and Evaluation workflow" loading="lazy" width="1600" height="1000"></div>
+        <div class="split-copy"><p class="eyebrow">THREE CLEAR STAGES</p><h2>Research → Execution → Evaluation</h2><ol class="stage-list"><li><strong>Research</strong><span>Codex composes Skills and cited MCP data.</span></li><li><strong>Execution</strong><span>One <code>publish_paper_plan</code> call enters deterministic checks.</span></li><li><strong>Evaluation</strong><span>SQLite, append-only projections, and the Dashboard preserve evidence.</span></li></ol></div>
+      </section>
+      <section id="quickstart" class="section-shell section-block quickstart">
+        <div class="section-heading"><p class="eyebrow">LOCAL QUICK START</p><h2>Run it on your machine</h2><p>Requires Python 3.10+, Node.js 20+, and Codex Desktop.</p></div>
+        <pre><code>git clone https://github.com/44-99/OpenAlphaStack.git
+cd OpenAlphaStack
+pip install -e ".[all]"
+npm install
+npm run dashboard:build
+openalphastack doctor
+openalphastack app start</code></pre>
+        <p class="command-note">Open <code>http://127.0.0.1:8800/dashboard</code>, then invoke <code>$market-analyzer</code> from Codex. See the <a href="https://github.com/44-99/OpenAlphaStack/blob/master/README_EN.md">English README</a> for the concise evaluation guide.</p>
+      </section>
+      <section class="section-shell final-cta"><div><p class="eyebrow">BUILD AUDITABLE RESEARCH</p><h2>Start with a reproducible paper loop</h2><p>Inspect the code, run the offline demo, and decide whether the architecture fits your workflow.</p></div><a class="button" href="https://github.com/44-99/OpenAlphaStack">View on GitHub</a></section>
+    </main>
+    <footer class="site-footer section-shell"><p>OpenAlphaStack · MIT License · Research, backtesting, and paper trading only</p><div><a href="https://github.com/44-99/OpenAlphaStack">GitHub</a><a href="./">中文</a><a href="llms.txt">llms.txt</a></div></footer>
+  </body>
+</html>
