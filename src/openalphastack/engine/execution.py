@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from copy import deepcopy
 from collections.abc import Callable
 from datetime import datetime
@@ -13,6 +14,10 @@ from openalphastack.engine.plan import PlanManager
 from openalphastack.engine.state import EngineState, calc_fees, round_lot
 
 TradeNotifier = Callable[..., None]
+
+HARD_MAX_SINGLE_POSITION_PCT = 25.0
+HARD_MAX_TOTAL_POSITION_PCT = 80.0
+_STOCK_CODE_RE = re.compile(r"^\d{6}$")
 
 
 class ExecutionEngine:
@@ -49,19 +54,48 @@ class ExecutionEngine:
         strategy_type: str = "",
     ) -> dict:
         """Validate and execute a buy order."""
+        if not _STOCK_CODE_RE.fullmatch(str(code)):
+            return {"error": "证券代码必须是六位数字", "code": code}
+        if price <= 0:
+            return {"error": "成交价格必须大于 0", "code": code}
         shares = round_lot(shares)
         if shares < LOT_SIZE:
             return {"error": f"最少交易 {LOT_SIZE} 股", "code": code}
 
         estimated_cost = price * shares + calc_fees(price, shares, "buy")
-        if estimated_cost > self.state.cash:
-            return {"error": f"资金不足: 需要 {estimated_cost:.0f}, 可用 {self.state.cash:.0f}"}
+        rules = self.plan.load().get("rules") or {}
+        min_cash_reserve = max(0.0, float(rules.get("min_cash_reserve", 0) or 0))
+        spendable_cash = max(0.0, self.state.cash - min_cash_reserve)
+        if estimated_cost > spendable_cash:
+            return {
+                "error": (
+                    f"可用资金不足: 需要 {estimated_cost:.0f}, "
+                    f"扣除保留现金后可用 {spendable_cash:.0f}"
+                )
+            }
 
-        max_pos = self.plan.load()["rules"]["max_single_position_pct"]
+        max_pos = min(
+            HARD_MAX_SINGLE_POSITION_PCT,
+            float(rules.get("max_single_position_pct", HARD_MAX_SINGLE_POSITION_PCT)),
+        )
+        max_total = min(
+            HARD_MAX_TOTAL_POSITION_PCT,
+            float(rules.get("max_total_position_pct", HARD_MAX_TOTAL_POSITION_PCT)),
+        )
         pos_value = price * shares
         total = self.state.total_value
-        if total > 0 and pos_value / total > max_pos / 100:
+        holding = self.state.holdings.get(code, {})
+        existing_pos_value = float(holding.get("shares", 0) or 0) * float(
+            holding.get("current_price", price) or price
+        )
+        if total > 0 and (existing_pos_value + pos_value) / total > max_pos / 100:
             return {"error": f"单仓位超限 {max_pos}%"}
+        invested_value = sum(
+            float(item.get("shares", 0) or 0) * float(item.get("current_price", 0) or 0)
+            for item in self.state.holdings.values()
+        )
+        if total > 0 and (invested_value + pos_value) / total > max_total / 100:
+            return {"error": f"总仓位超限 {max_total}%"}
 
         before = self.state.snapshot()
         trade = self.state.add_holding(
@@ -117,6 +151,10 @@ class ExecutionEngine:
         signal_detail: str = "",
     ) -> dict:
         """Validate and execute a sell order."""
+        if not _STOCK_CODE_RE.fullmatch(str(code)):
+            return {"error": "证券代码必须是六位数字", "code": code}
+        if price <= 0:
+            return {"error": "成交价格必须大于 0", "code": code}
         before = self.state.snapshot()
         trade = self.state.remove_holding(code, shares, price, persist=False)
         if trade is None:

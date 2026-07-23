@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from openalphastack.demo_data import dashboard_ledger, dashboard_plan, dashboard_state
 
@@ -18,7 +18,12 @@ from openalphastack.engine import run_registry
 from openalphastack.engine import cli as engine_cli
 from openalphastack.engine.agent_event import validate_agent_events
 from openalphastack.engine.trading_calendar import is_trading_day, non_trading_reason
-from openalphastack.engine.workflow_events import WorkflowEventStore, default_workflow_config, default_workflow_edges
+from openalphastack.engine.workflow_events import (
+    WORKFLOW_STAGES,
+    WorkflowEventStore,
+    default_workflow_edges,
+    workflow_stage_id,
+)
 from openalphastack.paths import DATA_DIR, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -36,24 +41,11 @@ KLINE_PERIODS = {"day", "week", "month", "1m", "5m", "15m", "60m"}
 MINUTE_PERIODS = {"1m", "5m", "15m", "60m"}
 RESAMPLE_RULES = {"5m": "5min", "15m": "15min", "60m": "60min"}
 DEMO_RUN_ID = "demo_run"
-RERUN_REQUESTS_FILE = "workflow_rerun_requests.jsonl"
-SAFE_RERUN_NODES = {
-    "market_snapshot",
-    "agent_research",
-    "risk_validation",
-    "plan_writer",
-    "daily_report",
-    "trade_attribution",
-    "strategy_feedback",
-}
-BLOCKED_RERUN_NODES = {"state_watcher", "fastlane_tick", "intraday_event_stream"}
 
 
 class WorkflowGraphNodeModel(BaseModel):
     id: str
     name: str
-    enabled: bool = True
-    locked: bool = False
     status: str = "idle"
     summary: str = ""
     last_event_id: str = ""
@@ -90,23 +82,6 @@ class WorkflowGraphModel(BaseModel):
     is_trading_day: bool = True
     market_status: Literal["trading", "closed", "stale"] = "trading"
     market_message: str = ""
-
-
-class WorkflowConfigNodeModel(BaseModel):
-    enabled: bool = True
-    locked: bool = False
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkflowConfigModel(BaseModel):
-    version: int = 1
-    nodes: dict[str, WorkflowConfigNodeModel] = Field(default_factory=dict)
-    updated_at: str = ""
-
-
-def _workflow_config_payload(payload: Any) -> dict[str, Any]:
-    """Validate workflow config while preserving dict shape for the store."""
-    return WorkflowConfigModel.model_validate(payload).model_dump()
 
 
 # SSE event queues: one per connected client
@@ -396,12 +371,6 @@ def _read_jsonl(path: str, limit: int = 100) -> list[dict]:
     return lines[-limit:]
 
 
-def _append_jsonl(path: str, row: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
 def _read_json(path: str) -> dict | None:
     """Read a JSON file, return None if missing or unparseable."""
     if not os.path.exists(path):
@@ -519,24 +488,23 @@ def _demo_workflow_events(limit: int = 500) -> list[dict]:
             "artifact_dir": "demo",
         },
     ]
+    for row in rows:
+        row["stage_id"] = workflow_stage_id(row["node_id"], row["phase"])
     return rows[-limit:]
 
 
 def _demo_workflow_graph() -> dict:
-    config = default_workflow_config()
-    latest_by_node = {event["node_id"]: event for event in _demo_workflow_events(limit=2000)}
+    latest_by_stage = {event["stage_id"]: event for event in _demo_workflow_events(limit=2000)}
     nodes = []
-    for node_id, node in config["nodes"].items():
-        latest = latest_by_node.get(node_id, {})
+    for stage_id, stage in WORKFLOW_STAGES.items():
+        latest = latest_by_stage.get(stage_id, {})
         nodes.append({
-            "id": node_id,
-            "name": latest.get("node_name") or node_id,
-            "enabled": node.get("enabled", True),
-            "locked": node.get("locked", False),
+            "id": stage_id,
+            "name": stage["name"],
             "status": latest.get("status", "idle"),
             "summary": latest.get("summary", ""),
             "last_event_id": latest.get("event_id", ""),
-            "phase": latest.get("phase", ""),
+            "phase": stage["phase"],
         })
     return {"run_id": DEMO_RUN_ID, "nodes": nodes, "edges": default_workflow_edges()}
 
@@ -1809,70 +1777,6 @@ async def api_workflow_graph(run_id: str) -> dict[str, Any] | JSONResponse:
     meta.update(_workflow_calendar_meta(store.run_id, meta.get("data_time", ""), _workflow_event_display_date(graph)))
     graph.update(meta)
     return graph
-
-
-@router.get("/api/workflow/runs/{run_id}/config", response_model=WorkflowConfigModel)
-async def api_workflow_config(run_id: str) -> dict[str, Any] | JSONResponse:
-    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
-        return default_workflow_config()
-    store = _workflow_store_for_run(run_id)
-    if not store:
-        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
-    return store.read_config()
-
-
-@router.post("/api/workflow/runs/{run_id}/config", response_model=WorkflowConfigModel)
-async def api_workflow_config_update(run_id: str, request: Request) -> dict[str, Any] | JSONResponse:
-    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
-        return JSONResponse({"error": "Demo 模式不保存流程配置"}, status_code=409)
-    store = _workflow_store_for_run(run_id)
-    if not store:
-        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
-    try:
-        payload = _workflow_config_payload(await request.json())
-    except ValidationError as exc:
-        return JSONResponse({"error": "Invalid workflow config", "details": exc.errors()}, status_code=400)
-    config = store.write_config(payload)
-    enabled = sum(1 for node in config.get("nodes", {}).values() if node.get("enabled"))
-    total = len(config.get("nodes", {}))
-    store.record_config_update(summary=f"流程配置已更新: {enabled}/{total} 个节点启用", config=config)
-    _broadcast_sse("workflow_config_updated", {"run_id": store.run_id, "config": config})
-    return config
-
-
-@router.post("/api/workflow/runs/{run_id}/nodes/{node_id}/rerun")
-async def api_workflow_node_rerun(run_id: str, node_id: str):
-    if node_id in BLOCKED_RERUN_NODES or node_id not in SAFE_RERUN_NODES:
-        return JSONResponse(
-            {"error": f"节点不允许从 Dashboard 重跑: {node_id}. 盘中执行、订单、账本相关节点必须保持幂等后才能开放。"},
-            status_code=409,
-        )
-    if run_id in {"active", DEMO_RUN_ID} and not _get_active_output_dir():
-        return JSONResponse({"error": "Demo 模式不登记重跑请求"}, status_code=409)
-    store = _workflow_store_for_run(run_id)
-    output_dir = _get_run_output_dir(run_id)
-    if not store or not output_dir:
-        return JSONResponse({"error": f"Run not found: {run_id}"}, status_code=404)
-
-    request_row = {
-        "request_id": f"rerun_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{node_id}",
-        "run_id": store.run_id,
-        "node_id": node_id,
-        "status": "queued",
-        "requested_at": datetime.now().isoformat(timespec="seconds"),
-        "policy": "safe_premarket_postclose_only",
-    }
-    _append_jsonl(os.path.join(output_dir, RERUN_REQUESTS_FILE), request_row)
-    event = store.record_node_finish(
-        phase="system",
-        node_id=node_id,
-        node_name=f"重跑请求/{node_id}",
-        summary=f"已登记安全重跑请求: {node_id}。当前版本只入队，不直接执行订单或账本节点。",
-        output_refs=[RERUN_REQUESTS_FILE],
-        output_payload=request_row,
-    )
-    _broadcast_sse("workflow_event", event)
-    return JSONResponse({"run_id": store.run_id, "request": request_row, "event": event}, status_code=202)
 
 
 @router.get("/api/workflow/runs/{run_id}/artifacts/{event_id}/{name}")

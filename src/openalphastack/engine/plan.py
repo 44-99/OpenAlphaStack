@@ -338,35 +338,15 @@ class PlanManager:
 
     @staticmethod
     def normalize_candidate_strategy(candidate: dict) -> dict:
-        """Normalize candidate strategy type for paper-mode alpha routing.
+        """Normalize only the explicit execution strategy.
 
-        Paper mode defaults to automatic execution. Ambiguous entries become
-        breakout candidates unless the published plan marks them watch_only.
+        Narrative reasoning, confidence and risk-report text are audit metadata;
+        they must never select an execution path.
         """
         c = dict(candidate)
         valid_types = {"breakout", "pullback", "defensive", "watch_only"}
         raw_type = str(c.get("strategy_type") or "").strip().lower()
-        if raw_type in valid_types:
-            strategy_type = raw_type
-        else:
-            reasoning = str(c.get("reasoning") or "")
-            source = str(c.get("source") or "").strip().upper()
-            volatility = c.get("volatility") or {}
-            annualized_vol = float(volatility.get("annualized_volatility") or 0)
-            vol_pct = float(volatility.get("volatility_percentile") or 0)
-
-            pullback_words = ("回踩", "缩量", "低吸", "支撑", "ma5", "ma10", "MA5", "MA10")
-            defensive_words = ("防御", "高股息", "红利", "银行", "煤炭", "电力", "低波动")
-            breakout_words = ("涨停", "突破", "放量", "强势", "高换手", "首板")
-
-            if c.get("pullback_zone") or c.get("support_price") or any(w in reasoning for w in pullback_words):
-                strategy_type = "pullback"
-            elif any(w in reasoning for w in defensive_words):
-                strategy_type = "defensive"
-            elif source == "B" or annualized_vol >= 0.55 or vol_pct >= 80 or any(w in reasoning for w in breakout_words):
-                strategy_type = "breakout"
-            else:
-                strategy_type = "breakout"
+        strategy_type = raw_type if raw_type in valid_types else "breakout"
 
         c["strategy_type"] = strategy_type
         if strategy_type == "breakout":
@@ -416,7 +396,6 @@ class PlanManager:
             "source_c_max_pct": variant.get("source_c_max_pct", 7.5),
             "source_c_stop_pct": variant.get("source_c_stop_pct", -5),
             "max_single_position_pct": variant.get("max_single_position_pct", 25.0),
-            "signal_min_confidence": variant.get("signal_min_confidence", 65),
             "signal_position_pct": variant.get("signal_position_pct", 0.075),
             "max_total_position_pct": variant.get("max_total_position_pct", 80.0),
         }

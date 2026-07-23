@@ -146,7 +146,6 @@ def engine_dir() -> Path:
             "source_c_max_pct": 7.5,
             "source_c_stop_pct": -5,
             "max_single_position_pct": 25.0,
-            "signal_min_confidence": 65,
             "signal_position_pct": 0.075,
             "max_total_position_pct": 80.0,
         },

@@ -8,8 +8,6 @@ from datetime import time as dtime
 STAMP_DUTY = 0.001         # 0.1% (sell only)
 COMMISSION = 0.0003        # 0.03% (buy + sell)
 LOT_SIZE = 100             # 100-share board lot
-T1_LOCK = True             # T+1: shares bought today cannot be sold
-PRICE_LIMIT_PCT = 0.10     # 10% daily limit (ChiNext/STAR use 20%)
 MIN_COMMISSION = 5.0       # minimum commission per trade
 
 PRE_MARKET_START = dtime(8, 0)

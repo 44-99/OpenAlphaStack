@@ -173,13 +173,13 @@ def get_ledger_tail(run_id: str, limit: int = 100) -> dict[str, Any]:
 
 @mcp.tool()
 def validate_paper_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Validate a proposed plan against the versioned paper-only contract."""
+    """Preview hard publication checks for manual authoring; automated flows skip this tool."""
     return call("validate_paper_plan", lambda: agent_gateway.validate_paper_plan(plan))
 
 
 @mcp.tool()
 def save_plan_draft(run_id: str, plan: dict[str, Any]) -> dict[str, Any]:
-    """Save a non-executable Codex draft beside an active paper plan."""
+    """Optionally save a non-executable draft for explicit human review."""
     return call("save_plan_draft", lambda: agent_gateway.save_plan_draft(run_id, plan))
 
 
@@ -190,7 +190,7 @@ def publish_paper_plan(
     idempotency_key: str,
     expected_updated: str = "",
 ) -> dict[str, Any]:
-    """Atomically publish a validated paper plan with optimistic concurrency."""
+    """Validate and atomically publish a paper plan in one automated operation."""
     return call(
         "publish_paper_plan",
         lambda: agent_gateway.publish_paper_plan(run_id, plan, idempotency_key, expected_updated),

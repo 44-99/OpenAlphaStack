@@ -47,6 +47,23 @@ def test_validate_paper_plan_rejects_cap_overflow_and_bad_code():
     assert any("exceeds" in error for error in result["errors"])
 
 
+def test_publish_treats_model_authored_metadata_as_non_blocking(monkeypatch, tmp_path):
+    patch_run(monkeypatch, tmp_path)
+    plan = valid_plan()
+    plan["buy_candidates"][0].pop("stop_loss_pct")
+    plan["bias_confidence"] = "not calibrated"
+    plan["bias_reasoning"] = {"freeform": "narrative only"}
+    plan["risk_report"] = ["unstructured", "advice"]
+
+    result = agent_gateway.publish_paper_plan("paper_test", plan, "metadata-20260723")
+
+    assert result["published"] is True
+    stored = json.loads((tmp_path / "plan.json").read_text(encoding="utf-8"))
+    assert stored["bias_confidence"] == 0
+    assert "narrative only" in stored["bias_reasoning"]
+    assert stored["risk_report"] == {"unstructured": ["unstructured", "advice"]}
+
+
 def test_publish_is_paper_only(monkeypatch, tmp_path):
     patch_run(monkeypatch, tmp_path, mode="live")
 

@@ -159,7 +159,6 @@ class PaperEngine:
         return bool(
             valid_candidates
             or plan.get("holding_adjustments")
-            or plan.get("bias_reasoning")
         )
 
     def _set_observation_mode(self, enabled: bool, reason: str = "") -> None:

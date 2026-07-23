@@ -21,6 +21,10 @@ server exposes typed market, risk, backtest, and paper-plan tools. Python valida
 plans and executes them mechanically; it never launches an Agent or invents a
 missing trading plan.
 
+The default path is intentionally single-Agent: one Codex task composes the
+market, screening, and stock-analysis Skills as needed. OpenAlphaStack does not
+spawn three model workers simply because it exposes three analysis Skills.
+
 > Paper trading only. OpenAlphaStack does not place real orders and does not promise investment returns.
 
 ## Why OpenAlphaStack?
@@ -149,6 +153,12 @@ Scheduled tasks compose these domain Skills; premarket and postclose are task
 prompts, not duplicate Skills. A local scheduled task requires the computer and
 Codex Desktop to remain running.
 
+Scheduling belongs to Codex Desktop, not GitHub Actions. A hosted runner cannot
+wake the local MCP server, paper engine, or Dashboard, so this repository does
+not ship a webhook-based scheduled-analysis workflow. Prove the manual
+Skill → MCP → paper-run path first, then add premarket and postclose automations
+from the Codex Scheduled UI.
+
 ## MCP safety contract
 
 Read tools expose paper/backtest runs, market data, indicators, news, screens,
@@ -176,9 +186,16 @@ available through `get_contracts` and `openalphastack://contracts/v1`.
 
 The only plan mutations are:
 
-1. `save_plan_draft` — writes a non-executable `plan.codex-draft.json`.
-2. `publish_paper_plan` — validates, requires an idempotency key, checks the
-   expected plan version, and atomically updates a paper run only.
+1. `publish_paper_plan` — the only executable mutation. It validates hard
+   invariants, requires an idempotency key, checks the expected plan version,
+   and atomically updates a paper run only.
+2. `save_plan_draft` — an optional, non-executable authoring aid for manual
+   review. Automated tasks do not call it. `validate_paper_plan` is likewise an
+   optional preview; publication always validates internally.
+
+Confidence, narrative reasoning, and Agent-authored risk reports are retained
+for audit and display only. They cannot make a plan executable or block an
+otherwise valid publication.
 
 There is no public live mode: the CLI cannot start or resume one, and MCP has no
 live-order tool. Historical `live_*` directories remain read-only for migration
@@ -187,7 +204,7 @@ and audit. No shell or arbitrary file-write tool is exposed.
 ## Engine commands
 
 ```powershell
-openalphastack engine start --mode paper -u default --daemon
+openalphastack engine start --mode paper --daemon
 openalphastack engine list
 openalphastack engine status <run_id>
 openalphastack engine stop <run_id>
@@ -219,6 +236,22 @@ npm run dashboard:build
 python -m pytest -q
 python -m compileall -q src\openalphastack
 ```
+
+To exercise the real stdio MCP transport and a safe paper-plan publication,
+start a paper run and pass its run id to the smoke script:
+
+```powershell
+openalphastack engine start --mode paper --daemon
+openalphastack engine list --mode paper
+python scripts\smoke_paper_loop.py <paper_run_id> `
+  --command ".\.venv\Scripts\openalphastack.exe" `
+  --cwd "$PWD"
+openalphastack engine stop <paper_run_id>
+```
+
+The script reads the clearly labelled Demo dataset, then makes exactly one
+`publish_paper_plan` call for a zero-candidate observation plan and verifies the
+SQLite revision and empty ledger. It never submits an order.
 
 ## Documentation
 

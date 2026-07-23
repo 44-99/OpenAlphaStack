@@ -14,7 +14,6 @@ from openalphastack.engine.constants import (
     COMMISSION,
     LOT_SIZE,
     MIN_COMMISSION,
-    PRICE_LIMIT_PCT,
     STAMP_DUTY,
 )
 from openalphastack.engine.run_store import RunStore
@@ -34,11 +33,6 @@ def calc_fees(price: float, shares: int, side: str) -> float:
 def round_lot(shares: int) -> int:
     """Round down to nearest 100-share lot."""
     return (shares // LOT_SIZE) * LOT_SIZE
-
-
-def check_price_limit(price: float, prev_close: float) -> bool:
-    """Check if price is within +/-10% daily limit."""
-    return abs(price - prev_close) / prev_close <= PRICE_LIMIT_PCT if prev_close > 0 else True
 
 
 class EngineState:

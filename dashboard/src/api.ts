@@ -10,7 +10,6 @@ import type {
   RunsResponse,
   WatchlistItem,
   AgentRunTimeline,
-  WorkflowConfig,
   WorkflowEvent,
   WorkflowGraph,
 } from './types';
@@ -75,24 +74,6 @@ export const api = {
     getJson<{ run_id: string; events: WorkflowEvent[] }>(`/api/workflow/runs/${runId}/events?limit=${limit}`),
   workflowGraph: (runId = 'active') =>
     getJson<WorkflowGraph>(`/api/workflow/runs/${runId}/graph`),
-  workflowConfig: (runId = 'active') =>
-    getJson<WorkflowConfig>(`/api/workflow/runs/${runId}/config`),
-  saveWorkflowConfig: (runId: string, config: WorkflowConfig) =>
-    fetch(`/api/workflow/runs/${runId}/config`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
-    }).then(async (response) => {
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error || `${response.status}`);
-      return data as WorkflowConfig;
-    }),
-  workflowNodeRerun: (runId: string, nodeId: string) =>
-    fetch(`/api/workflow/runs/${runId}/nodes/${nodeId}/rerun`, { method: 'POST' }).then(async (response) => {
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error || `${response.status}`);
-      return data as { run_id: string; request: Record<string, unknown>; event: WorkflowEvent };
-    }),
   workflowArtifact: (runId: string, eventId: string, name: string) =>
     getJson<{ run_id: string; event_id: string; name: string; content: string }>(
       `/api/workflow/runs/${runId}/artifacts/${eventId}/${name}`,

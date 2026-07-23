@@ -1,4 +1,4 @@
-# OpenAlphaStack Architecture v4
+# OpenAlphaStack Architecture v5
 
 ## Positioning
 
@@ -22,10 +22,8 @@ Python runtime provider-neutral. It does not embed or spawn an Agent CLI.
 
 ```text
 Scheduled premarket task
-  -> compose market-analyzer + stock-screener + stock-analyzer
+  -> one Codex Agent composes market-analyzer + stock-screener + stock-analyzer
   -> read market/run data through MCP
-  -> validate_paper_plan
-  -> save_plan_draft
   -> publish_paper_plan (paper only, idempotent, optimistic concurrency)
   -> paper engine refreshes the newer validated plan from run.sqlite3
   -> FastLane applies deterministic rules
@@ -37,6 +35,9 @@ Scheduled premarket task
 ## Boundary rules
 
 - Skills may propose; Python validates.
+- The default workflow never spawns subagents; Skills are instruction modules used by one Agent.
+- Confidence, reasoning, and Agent-authored risk reports are non-blocking audit metadata.
+- Python rejects only contract violations and concrete mechanical execution failures; it does not second-guess strategy quality.
 - MCP may publish paper plans; it may not place live orders.
 - The engine may execute a valid current plan; it may not call a model.
 - Emergency handling is deterministic and notification-based.
@@ -57,12 +58,15 @@ Read and calculation groups:
 - deterministic candidate screens and baseline backtests
 - paper/backtest run snapshots and ledger tails
 - volatility and position sizing
-- plan validation
+- optional plan-validation preview
 
-Mutation group:
+Executable mutation:
 
-- save a non-executable plan draft
 - atomically publish a validated paper plan
+
+`save_plan_draft` remains an optional, non-executable manual-review aid. An
+automated task calls `publish_paper_plan` exactly once; publication performs its
+own validation.
 
 Every publication requires an idempotency key. Optional `expected_updated`
 provides optimistic concurrency against a plan changed since the Agent read it.
@@ -104,11 +108,26 @@ postclose review, or periodic evaluation. Those time-based recipes belong in
 the task prompt rather than separate Skills. Scheduled tasks are not the
 real-time trading clock; Python owns intraday timing and execution.
 
+GitHub Actions is intentionally not an Agent scheduler. Hosted runners cannot
+reach the operator's local Codex task, stdio MCP process, or paper-run database.
+Repository workflows are limited to CI and deployment checks; local research
+automation is configured in Codex Desktop after the manual workflow is proven.
+
 ## Dashboard boundary
 
 The Dashboard no longer exposes PowerShell, Claude Code, or Codex terminal
 WebSockets. Workflow prompts can be copied into Codex Desktop, but the browser
 cannot execute arbitrary local commands.
+
+The workflow view has three product stages only:
+
+```text
+Research -> Execution -> Evaluation (optional)
+```
+
+Historical ten-node events are mapped into these stages at read time. The
+Dashboard does not expose workflow toggles or fake rerun queues; scheduling and
+reruns belong to Codex Desktop, while execution remains owned by the engine.
 
 ## Deployment
 

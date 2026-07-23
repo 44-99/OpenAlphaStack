@@ -10,8 +10,25 @@ from pathlib import Path
 from typing import Any
 
 WORKFLOW_EVENTS_FILE = "workflow_events.jsonl"
-WORKFLOW_CONFIG_FILE = "workflow_config.json"
 WORKFLOW_ARTIFACTS_DIR = "workflow_artifacts"
+
+WORKFLOW_STAGES: dict[str, dict[str, Any]] = {
+    "research": {
+        "name": "Research",
+        "phase": "research",
+        "members": {"market_snapshot", "agent_research", "risk_validation", "plan_writer", "research"},
+    },
+    "execution": {
+        "name": "Execution",
+        "phase": "execution",
+        "members": {"state_watcher", "fastlane_tick", "intraday_event_stream", "execution"},
+    },
+    "evaluation": {
+        "name": "Evaluation",
+        "phase": "evaluation",
+        "members": {"daily_report", "trade_attribution", "strategy_feedback", "evaluation"},
+    },
+}
 
 
 def _now_iso() -> str:
@@ -22,104 +39,41 @@ def _new_event_id() -> str:
     return f"wf_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-def default_workflow_config() -> dict[str, Any]:
-    """Return the safe built-in workflow template."""
-    return {
-        "version": 1,
-        "nodes": {
-            "market_snapshot": {"enabled": True, "locked": False, "params": {}},
-            "agent_research": {"enabled": True, "locked": False, "params": {"timeout_sec": 900}},
-            "risk_validation": {
-                "enabled": True,
-                "locked": True,
-                "params": {"max_single_position_pct": 25, "max_total_position_pct": 80},
-            },
-            "plan_writer": {"enabled": True, "locked": True, "params": {}},
-            "state_watcher": {"enabled": True, "locked": False, "params": {}},
-            "fastlane_tick": {"enabled": True, "locked": False, "params": {"tick_interval_sec": 1}},
-            "intraday_event_stream": {"enabled": True, "locked": True, "params": {}},
-            "daily_report": {"enabled": True, "locked": False, "params": {}},
-            "trade_attribution": {"enabled": True, "locked": False, "params": {}},
-            "strategy_feedback": {"enabled": True, "locked": False, "params": {}},
-        },
-    }
-
-
 def default_workflow_edges() -> list[dict[str, Any]]:
     return [
         {
-            "from": "market_snapshot",
-            "to": "agent_research",
+            "from": "research",
+            "to": "execution",
             "kind": "data",
-            "label": "Agent 任务上下文",
-            "refs": ["artifact.market.snapshot", "account.state", "rule.skills"],
+            "label": "Published paper plan",
+            "refs": ["market.snapshot", "account.state", "plan.published"],
             "required": True,
         },
         {
-            "from": "agent_research",
-            "to": "risk_validation",
+            "from": "execution",
+            "to": "evaluation",
             "kind": "data",
-            "label": "Agent 计划草案",
-            "refs": ["artifact.agent.plan_draft", "artifact.agent.research"],
-            "required": True,
-        },
-        {
-            "from": "risk_validation",
-            "to": "plan_writer",
-            "kind": "data",
-            "label": "风控结果",
-            "refs": ["plan.buy_candidates", "plan.risk_report"],
-            "required": True,
-        },
-        {
-            "from": "plan_writer",
-            "to": "state_watcher",
-            "kind": "data",
-            "label": "交易计划",
-            "refs": ["artifact.plan.json"],
-            "required": True,
-        },
-        {
-            "from": "state_watcher",
-            "to": "fastlane_tick",
-            "kind": "data",
-            "label": "账户状态",
-            "refs": ["account.state", "artifact.plan.json"],
-            "required": True,
-        },
-        {
-            "from": "fastlane_tick",
-            "to": "intraday_event_stream",
-            "kind": "data",
-            "label": "关键 tick",
-            "refs": ["artifact.fastlane.tick", "account.state", "artifact.plan.json"],
-            "required": True,
-        },
-        {
-            "from": "intraday_event_stream",
-            "to": "daily_report",
-            "kind": "data",
-            "label": "盘中账本",
+            "label": "State and ledger",
             "refs": ["account.state", "account.ledger"],
-            "required": True,
-        },
-        {
-            "from": "daily_report",
-            "to": "trade_attribution",
-            "kind": "data",
-            "label": "日报与成交",
-            "refs": ["review.daily_report", "account.ledger"],
-            "required": True,
-        },
-        {
-            "from": "trade_attribution",
-            "to": "strategy_feedback",
-            "kind": "data",
-            "label": "交易归因",
-            "refs": ["review/trade_attribution.json"],
-            "required": True,
+            "required": False,
         },
     ]
+
+
+def workflow_stage_id(node_id: str, phase: str = "") -> str:
+    """Map detailed and historical event names onto the stable product stages."""
+    for stage_id, stage in WORKFLOW_STAGES.items():
+        if node_id in stage["members"]:
+            return stage_id
+    phase_aliases = {
+        "premarket": "research",
+        "research": "research",
+        "intraday": "execution",
+        "execution": "execution",
+        "postclose": "evaluation",
+        "evaluation": "evaluation",
+    }
+    return phase_aliases.get(phase, "")
 
 
 class WorkflowEventStore:
@@ -129,7 +83,6 @@ class WorkflowEventStore:
         self.output_dir = Path(output_dir)
         self.run_id = run_id or self.output_dir.name
         self.events_path = self.output_dir / WORKFLOW_EVENTS_FILE
-        self.config_path = self.output_dir / WORKFLOW_CONFIG_FILE
         self.artifacts_root = self.output_dir / WORKFLOW_ARTIFACTS_DIR
 
     def record_node_finish(
@@ -256,22 +209,6 @@ class WorkflowEventStore:
             summary=summary,
         )
 
-    def record_config_update(self, *, summary: str, config: dict[str, Any]) -> dict[str, Any]:
-        event_id = _new_event_id()
-        artifact_dir = self._write_artifacts(event_id, output_payload=config)
-        return self._append_event(
-            event_id=event_id,
-            phase="system",
-            node_id="workflow_config",
-            node_name="流程配置",
-            status="success",
-            started_at=_now_iso(),
-            ended_at=_now_iso(),
-            duration_ms=0,
-            summary=summary,
-            artifact_dir=artifact_dir,
-        )
-
     def read_events(self, limit: int = 500) -> list[dict[str, Any]]:
         if not self.events_path.exists():
             return []
@@ -284,6 +221,7 @@ class WorkflowEventStore:
                 event = json.loads(line)
                 if _is_noisy_legacy_tick(event):
                     continue
+                event.setdefault("stage_id", workflow_stage_id(str(event.get("node_id") or ""), str(event.get("phase") or "")))
                 rows.append(event)
             except json.JSONDecodeError as exc:
                 rows.append({
@@ -304,58 +242,23 @@ class WorkflowEventStore:
                 })
         return rows[-limit:]
 
-    def read_config(self) -> dict[str, Any]:
-        if not self.config_path.exists():
-            return self.write_config(default_workflow_config())
-        try:
-            stored = json.loads(self.config_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return default_workflow_config()
-        current_node_ids = set(default_workflow_config()["nodes"])
-        stored_node_ids = set((stored.get("nodes") or {}).keys()) if isinstance(stored, dict) else set()
-        if not current_node_ids.issubset(stored_node_ids) or not stored_node_ids.issubset(current_node_ids):
-            return self.write_config(stored)
-        return stored
-
-    def write_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        merged = default_workflow_config()
-        incoming_nodes = config.get("nodes") if isinstance(config, dict) else {}
-        if not isinstance(incoming_nodes, dict):
-            incoming_nodes = {}
-
-        for node_id, incoming in incoming_nodes.items():
-            if node_id not in merged["nodes"] or not isinstance(incoming, dict):
-                continue
-            node = merged["nodes"][node_id]
-            incoming_params = incoming.get("params") if isinstance(incoming.get("params"), dict) else {}
-            node["params"].update(incoming_params)
-            node["enabled"] = True if node.get("locked") else bool(incoming.get("enabled", node["enabled"]))
-
-        merged["updated_at"] = _now_iso()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
-        return merged
-
     def build_graph(self) -> dict[str, Any]:
-        config = self.read_config()
-        latest_by_node: dict[str, dict[str, Any]] = {}
+        latest_by_stage: dict[str, dict[str, Any]] = {}
         for event in self.read_events(limit=2000):
-            node_id = event.get("node_id")
-            if node_id:
-                latest_by_node[node_id] = event
+            stage_id = event.get("stage_id")
+            if stage_id in WORKFLOW_STAGES:
+                latest_by_stage[stage_id] = event
 
         nodes = []
-        for node_id, node in config["nodes"].items():
-            latest = latest_by_node.get(node_id, {})
+        for stage_id, stage in WORKFLOW_STAGES.items():
+            latest = latest_by_stage.get(stage_id, {})
             nodes.append({
-                "id": node_id,
-                "name": latest.get("node_name") or _node_display_name(node_id),
-                "enabled": node.get("enabled", True),
-                "locked": node.get("locked", False),
+                "id": stage_id,
+                "name": stage["name"],
                 "status": latest.get("status", "idle"),
                 "summary": latest.get("summary", ""),
                 "last_event_id": latest.get("event_id", ""),
-                "phase": latest.get("phase", ""),
+                "phase": stage["phase"],
                 "started_at": latest.get("started_at", ""),
                 "ended_at": latest.get("ended_at", ""),
                 "duration_ms": latest.get("duration_ms", 0),
@@ -382,6 +285,7 @@ class WorkflowEventStore:
             "error": event.pop("error", ""),
             "artifact_dir": event.pop("artifact_dir", ""),
         }
+        row["stage_id"] = workflow_stage_id(row["node_id"], row["phase"])
         self.output_dir.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -416,22 +320,6 @@ class WorkflowEventStore:
             (artifact_dir / "error.txt").write_text(error_text, encoding="utf-8")
             wrote_any = True
         return f"{WORKFLOW_ARTIFACTS_DIR}/{event_id}" if wrote_any else ""
-
-
-def _node_display_name(node_id: str) -> str:
-    names = {
-        "market_snapshot": "市场快照",
-        "agent_research": "自主 Agent 研判",
-        "risk_validation": "风控校验",
-        "plan_writer": "计划写入",
-        "state_watcher": "状态观察",
-        "fastlane_tick": "盘中快车道",
-        "intraday_event_stream": "关键事件流",
-        "daily_report": "盘后日报",
-        "trade_attribution": "交易归因",
-        "strategy_feedback": "策略反馈入库",
-    }
-    return names.get(node_id, node_id)
 
 
 def _is_noisy_legacy_tick(event: dict[str, Any]) -> bool:

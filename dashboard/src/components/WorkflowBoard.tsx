@@ -14,7 +14,7 @@ import {
   type XYPosition,
 } from '@xyflow/react';
 import { api } from '../api';
-import type { AgentRunTimeline, LedgerEntry, PlanData, WorkflowConfig, WorkflowConfigNode, WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
+import type { AgentRunTimeline, LedgerEntry, PlanData, WorkflowEvent, WorkflowGraph, WorkflowGraphNode } from '../types';
 
 type FlowNodeData = {
   node: WorkflowGraphNode;
@@ -48,10 +48,6 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [selectedEdgeId, setSelectedEdgeId] = useState('');
   const [artifact, setArtifact] = useState<{ title: string; content: string } | null>(null);
-  const [config, setConfig] = useState<WorkflowConfig | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [configMessage, setConfigMessage] = useState('');
-  const [rerunMessage, setRerunMessage] = useState('');
   const [nodePositions, setNodePositions] = useState<Record<string, XYPosition>>({});
   const [agentTimeline, setAgentTimeline] = useState<AgentRunTimeline | null>(null);
   const [agentTimelineMessage, setAgentTimelineMessage] = useState('');
@@ -62,7 +58,7 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
   }, [graph, selectedNodeId, selectedEdgeId]);
   const selectedEvents = useMemo(() => {
     if (!selectedNode) return events;
-    return sortWorkflowEvents(events.filter((event) => event.node_id === selectedNode.id));
+    return sortWorkflowEvents(events.filter((event) => workflowEventStage(event) === selectedNode.id));
   }, [events, selectedNode]);
   const flow = useMemo(
     () => graph ? buildWorkflowFlow(graph, events, selectedNode?.id || '', selectedEdgeId, nodePositions) : { nodes: [], edges: [] },
@@ -72,24 +68,8 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
   const selectedEdge = useMemo(() => (
     flow.edges.find((edge) => edge.id === selectedEdgeId) as Edge<FlowEdgeData> | undefined
   ), [flow.edges, selectedEdgeId]);
-  const selectedConfig = selectedNode ? config?.nodes?.[selectedNode.id] : undefined;
   const context = useMemo(() => workflowViewContext(graph, plan || {}), [graph, plan]);
   const calendarNotice = workflowCalendarNotice(graph);
-
-  useEffect(() => {
-    if (!graph?.run_id) return;
-    let active = true;
-    api.workflowConfig(graph.run_id)
-      .then((data) => {
-        if (active) setConfig(data);
-      })
-      .catch((error: Error) => {
-        if (active) setConfigMessage(error.message || '配置读取失败');
-      });
-    return () => {
-      active = false;
-    };
-  }, [graph?.run_id]);
 
   useEffect(() => {
     if (!graph?.run_id) return;
@@ -118,7 +98,7 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
       return;
     }
     let active = true;
-    setAgentTimelineMessage('读取 Agent 子任务审计轨迹...');
+    setAgentTimelineMessage('读取 Agent 任务审计轨迹...');
     api.agentRunTimeline(graph.run_id, taskId)
       .then((timeline) => {
         if (!active) return;
@@ -128,7 +108,7 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
       .catch((error: Error) => {
         if (!active) return;
         setAgentTimeline(null);
-        setAgentTimelineMessage(error.message || 'Agent 子任务审计轨迹读取失败');
+        setAgentTimelineMessage(error.message || 'Agent 任务审计轨迹读取失败');
       });
     return () => {
       active = false;
@@ -136,56 +116,6 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
   }, [graph?.run_id, selectedNode?.id]);
 
   if (!graph) return <div className="empty">暂无工作流数据</div>;
-
-  async function saveConfig() {
-    if (!graph?.run_id || !config) return;
-    setSaving(true);
-    setConfigMessage('');
-    try {
-      const next = await api.saveWorkflowConfig(graph.run_id, config);
-      setConfig(next);
-      setConfigMessage('配置已保存，并写入审计事件');
-    } catch (error) {
-      setConfigMessage(error instanceof Error ? error.message : '配置保存失败');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function requestRerun() {
-    if (!graph?.run_id || !selectedNode) return;
-    setRerunMessage('');
-    try {
-      const result = await api.workflowNodeRerun(graph.run_id, selectedNode.id);
-      setRerunMessage(`已入队: ${String(result.request.request_id || selectedNode.id)}`);
-    } catch (error) {
-      setRerunMessage(error instanceof Error ? error.message : '重跑请求失败');
-    }
-  }
-
-  function updateSelectedNode(patch: Partial<WorkflowConfigNode>) {
-    if (!selectedNode || !config) return;
-    setConfig({
-      ...config,
-      nodes: {
-        ...config.nodes,
-        [selectedNode.id]: {
-          ...config.nodes[selectedNode.id],
-          ...patch,
-        },
-      },
-    });
-  }
-
-  function updateParam(key: string, value: string) {
-    if (!selectedConfig) return;
-    updateSelectedNode({
-      params: {
-        ...selectedConfig.params,
-        [key]: parseParamValue(value),
-      },
-    });
-  }
 
   function handleNodesChange(changes: NodeChange<Node<FlowNodeData>>[]) {
     const nextNodes = applyNodeChanges(changes, flow.nodes);
@@ -267,9 +197,6 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
               <Controls className="workflow-controls" showInteractive={false} />
             </ReactFlow>
           </ReactFlowProvider>
-          <div className="workflow-lane-label premarket">盘前计划</div>
-          <div className="workflow-lane-label intraday">盘中执行</div>
-          <div className="workflow-lane-label postclose">盘后复盘</div>
         </div>
       </div>
       <aside className="workflow-inspector">
@@ -279,7 +206,6 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
             {!selectedEdge && selectedNode && onCopyPrompt ? (
               <button onClick={() => onCopyPrompt(buildNodeAgentPrompt(selectedNode, selectedEvents))}>复制 Codex 提示</button>
             ) : null}
-            {!selectedEdge && selectedNode?.locked ? <span className="lock-pill">锁定</span> : null}
           </span>
         </header>
         {selectedEdge ? (
@@ -304,44 +230,6 @@ export function WorkflowBoard({ graph, events, plan, ledger, onCopyPrompt }: {
             ) : null}
           </>
         )}
-        {!selectedEdge && selectedNode && selectedConfig ? (
-          <section className="workflow-config-editor workflow-inspector-section">
-            <header><strong>配置</strong><span>{selectedConfig.locked ? '锁定' : '可调整'}</span></header>
-            <div className="config-row">
-              <span>节点开关</span>
-              <div className="config-switch-group">
-                <span className={`config-state-text ${selectedConfig.enabled ? 'enabled' : 'disabled'}`}>
-                  {selectedConfig.enabled ? '已启用' : '已禁用'}{selectedConfig.locked ? ' / 锁定' : ''}
-                </span>
-                {!selectedConfig.locked ? (
-                  <button
-                    className={selectedConfig.enabled ? 'danger' : 'active'}
-                    onClick={() => updateSelectedNode({ enabled: !selectedConfig.enabled })}
-                  >
-                    {selectedConfig.enabled ? '禁用节点' : '启用节点'}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="config-params">
-              <strong>安全参数</strong>
-              {Object.keys(selectedConfig.params || {}).length ? Object.entries(selectedConfig.params).map(([key, value]) => (
-                <label key={key}>
-                  <span>{key}</span>
-                  <input value={String(value)} onChange={(event) => updateParam(key, event.target.value)} disabled={selectedConfig.locked && key === 'enabled'} />
-                </label>
-              )) : <small>该节点暂无可调参数</small>}
-            </div>
-            <div className="config-actions">
-              <button onClick={saveConfig} disabled={saving}>{saving ? '保存中' : '保存配置'}</button>
-              {configMessage ? <span>{configMessage}</span> : null}
-            </div>
-            <div className="config-actions">
-              <button onClick={requestRerun} disabled={isRerunBlocked(selectedNode.id)}>请求重跑</button>
-              <span>{rerunMessage || (isRerunBlocked(selectedNode.id) ? '盘中实时节点暂不开放重跑' : '只登记请求，不直接执行')}</span>
-            </div>
-          </section>
-        ) : null}
         {!selectedEdge ? (
           <section className="workflow-inspector-section">
             <header><strong>事件时间线</strong><span>{selectedEvents.length} 条</span></header>
@@ -389,8 +277,8 @@ function AgentTimelinePanel({
   return (
     <section className="workflow-inspector-section agent-timeline-panel">
       <header>
-        <strong>Agent 子任务</strong>
-        <span>{timeline ? `${tasks.length} 个任务 / ${timeline.events.length} 条事件` : '--'}</span>
+        <strong>Agent 任务轨迹</strong>
+        <span>{timeline ? `${tasks.length} 个步骤 / ${timeline.events.length} 条事件` : '--'}</span>
       </header>
       {message ? <p>{message}</p> : null}
       {timeline?.warnings.length ? (
@@ -400,12 +288,12 @@ function AgentTimelinePanel({
         </div>
       ) : null}
       {timeline && !tasks.length && !timeline.warnings.length ? (
-        <div className="empty compact">Agent 尚未提交子任务审计轨迹</div>
+        <div className="empty compact">Agent 尚未提交任务审计轨迹</div>
       ) : null}
       <div className="workflow-events">
         {tasks.map((task) => (
           <article className={`workflow-event ${task.status}`} key={task.task_id}>
-            <span>{task.role || '子任务'} / {statusLabel(task.status)}</span>
+            <span>{task.role || '步骤'} / {statusLabel(task.status)}</span>
             <strong>{task.task_id}</strong>
             <p>{task.summary || '--'}</p>
             <div className="artifact-actions">
@@ -446,10 +334,10 @@ function WorkflowNodeArtifact({ nodeId, plan, ledger, events }: {
   ledger: LedgerEntry[];
   events: WorkflowEvent[];
 }) {
-  if (['agent_research', 'plan_writer', 'risk_validation'].includes(nodeId)) {
+  if (nodeId === 'research') {
     return <PlanArtifact plan={plan} />;
   }
-  if (['daily_report', 'trade_attribution', 'strategy_feedback'].includes(nodeId)) {
+  if (nodeId === 'evaluation') {
     return <ReviewArtifact plan={plan} ledger={ledger} events={events} />;
   }
   return null;
@@ -569,8 +457,8 @@ function workflowLayoutStorageKey(runId: string) {
 }
 
 export function agentTaskIdForNode(nodeId?: string) {
-  if (nodeId === 'agent_research') return 'premarket_plan';
-  if (nodeId === 'trade_attribution') return 'postclose_review';
+  if (nodeId === 'research') return 'premarket_plan';
+  if (nodeId === 'evaluation') return 'postclose_review';
   return '';
 }
 
@@ -585,23 +473,11 @@ function runDateFromId(runId?: string) {
   return datePart(runId.replace('T', ' '));
 }
 
-function parseParamValue(value: string) {
-  const trimmed = value.trim();
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-  if (trimmed !== '' && Number.isFinite(Number(trimmed))) return Number(trimmed);
-  return value;
-}
-
 export function buildNodeAgentPrompt(node: WorkflowGraphNode, events: WorkflowEvent[]) {
   const recent = events.slice(0, 3).map((event) => (
     `${event.status}/${event.phase || '--'}: ${event.summary || event.error || '--'}`
   )).join('；');
-  return `请结合 OpenAlphaStack 当前流程节点分析：节点=${node.name}(${node.id})；状态=${node.status}；启用=${node.enabled}；锁定=${node.locked}；摘要=${node.summary || '--'}；最近事件=${recent || '暂无'}。`;
-}
-
-export function isRerunBlocked(nodeId: string) {
-  return ['state_watcher', 'fastlane_tick', 'intraday_event_stream'].includes(nodeId);
+  return `请结合 OpenAlphaStack 当前流程阶段分析：阶段=${node.name}(${node.id})；状态=${node.status}；摘要=${node.summary || '--'}；最近事件=${recent || '暂无'}。`;
 }
 
 function WorkflowFlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
@@ -616,7 +492,7 @@ function WorkflowFlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
       {current ? <span className="node-runtime-badge">当前运行</span> : null}
       {waiting ? <span className="node-runtime-badge waiting">等待中</span> : null}
       <strong>{node.name}</strong>
-      <small>{node.summary || (node.enabled ? '等待输入' : '已禁用')}</small>
+      <small>{node.summary || '等待输入'}</small>
       <div className="node-io">
         <span>IN {inputRefs.length}</span>
         <span>OUT {outputRefs.length}</span>
@@ -637,9 +513,11 @@ export function buildWorkflowFlow(
 ): { nodes: Node<FlowNodeData>[]; edges: Edge<FlowEdgeData>[] } {
   const latestEvents = new Map<string, WorkflowEvent[]>();
   sortWorkflowEvents(events).forEach((event) => {
-    const rows = latestEvents.get(event.node_id) || [];
+    const stageId = workflowEventStage(event);
+    if (!stageId) return;
+    const rows = latestEvents.get(stageId) || [];
     rows.push(event);
-    latestEvents.set(event.node_id, rows);
+    latestEvents.set(stageId, rows);
   });
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const runtimeNodeId = currentRuntimeNodeId(graph, events);
@@ -701,34 +579,31 @@ function currentRuntimeNodeId(graph: WorkflowGraph, events: WorkflowEvent[] = []
 
   const latestEvent = sortWorkflowEvents(events)[0];
   if (!graph.is_alive) return latestEvent ? runtimeNodeFromEvent(latestEvent) : '';
-  if (latestEvent?.status === 'running') return latestEvent.node_id;
+  if (latestEvent?.status === 'running') return workflowEventStage(latestEvent);
   if (graph.observation_mode) return '';
 
   const canInferRuntime = canInferRuntimeFromGraphClock(graph);
-  if (latestEvent && canInferRuntime && ['fastlane_tick', 'intraday_event_stream'].includes(latestEvent.node_id)) {
-    return 'fastlane_tick';
+  if (latestEvent && canInferRuntime && workflowEventStage(latestEvent) === 'execution') {
+    return 'execution';
   }
 
   if (!canInferRuntime) return '';
   const phase = runtimePhaseFromDataTime(graph.data_time);
-  if (phase === 'intraday') return 'fastlane_tick';
-  if (phase === 'lunch') return 'state_watcher';
-  if (phase === 'postclose') return 'daily_report';
+  if (phase === 'intraday' || phase === 'lunch') return 'execution';
+  if (phase === 'postclose') return 'evaluation';
+  if (phase === 'premarket') return 'research';
   return '';
 }
 
 function runtimeNodeFromEvent(event: WorkflowEvent) {
-  if (event.node_id === 'intraday_event_stream') return 'fastlane_tick';
-  return event.node_id || '';
+  return workflowEventStage(event);
 }
 
 function waitingRuntimeNodeId(graph: WorkflowGraph) {
   if (!graph.is_alive || !graph.observation_mode) return '';
   const reason = graph.observation_reason || '';
-  if (reason.includes('盘前计划') || reason.includes('盘中启动')) return 'state_watcher';
-  if (reason.includes('post_market') || reason.includes('盘后')) return 'daily_report';
-  if (reason.includes('pre_market') || reason.includes('盘前')) return 'market_snapshot';
-  return 'state_watcher';
+  if (reason.includes('post_market') || reason.includes('盘后')) return 'evaluation';
+  return 'research';
 }
 
 function getRuntimeFocus(graph?: WorkflowGraph, events: WorkflowEvent[] = []) {
@@ -784,27 +659,18 @@ function workflowEventStamp(event: WorkflowEvent) {
 }
 
 function inferNodePhase(nodeId: string) {
-  if (['market_snapshot', 'agent_research', 'risk_validation', 'plan_writer'].includes(nodeId)) {
-    return 'premarket';
-  }
-  if (['daily_report', 'trade_attribution', 'strategy_feedback'].includes(nodeId)) return 'postclose';
-  return 'intraday';
+  if (nodeId === 'research') return 'research';
+  if (nodeId === 'evaluation') return 'evaluation';
+  return 'execution';
 }
 
 function blueprintPosition(nodeId: string, fallback: number) {
   const positions: Record<string, { x: number; y: number }> = {
-    market_snapshot: { x: 70, y: 220 },
-    agent_research: { x: 310, y: 220 },
-    risk_validation: { x: 550, y: 220 },
-    plan_writer: { x: 790, y: 220 },
-    state_watcher: { x: 70, y: 600 },
-    fastlane_tick: { x: 310, y: 600 },
-    intraday_event_stream: { x: 550, y: 600 },
-    daily_report: { x: 70, y: 900 },
-    trade_attribution: { x: 310, y: 900 },
-    strategy_feedback: { x: 550, y: 900 },
+    research: { x: 90, y: 320 },
+    execution: { x: 410, y: 320 },
+    evaluation: { x: 730, y: 320 },
   };
-  return positions[nodeId] || { x: 70 + (fallback % 5) * 240, y: 1010 + Math.floor(fallback / 5) * 130 };
+  return positions[nodeId] || { x: 90 + fallback * 320, y: 320 };
 }
 
 function edgeDataLabel(edge: { label?: string; refs?: string[]; kind?: string }) {
@@ -818,7 +684,7 @@ function edgeRefs(edge: { refs?: string[] }) {
 }
 
 function emptyGraphNode(id: string): WorkflowGraphNode {
-  return { id, name: id, enabled: true, locked: false, status: 'idle' };
+  return { id, name: id, status: 'idle' };
 }
 
 function isRuntimeEdge(edge: { from?: string; to?: string; source?: string; target?: string }, runtimeNodeId: string) {
@@ -853,12 +719,23 @@ function statusLabel(status: string) {
 
 function phaseLabel(phase: string) {
   const labels: Record<string, string> = {
+    research: '研究',
+    execution: '执行',
+    evaluation: '评估',
     premarket: '盘前',
     intraday: '盘中',
     postclose: '盘后',
     system: '系统',
   };
   return labels[phase] || phase || '未分组';
+}
+
+function workflowEventStage(event: WorkflowEvent) {
+  if (event.stage_id) return event.stage_id;
+  if (['market_snapshot', 'agent_research', 'risk_validation', 'plan_writer', 'research'].includes(event.node_id)) return 'research';
+  if (['daily_report', 'trade_attribution', 'strategy_feedback', 'evaluation'].includes(event.node_id)) return 'evaluation';
+  if (['state_watcher', 'fastlane_tick', 'intraday_event_stream', 'execution'].includes(event.node_id)) return 'execution';
+  return '';
 }
 
 function formatTraceTime(value?: string) {

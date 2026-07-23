@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 MCP_SCHEMA_VERSION = "openalphastack.mcp/v1"
@@ -54,7 +54,9 @@ class PublishedPlan(BaseModel):
     status: str = "active"
     plan_date: str
     market_bias: str = Field(default="neutral", pattern=r"^(bullish|neutral|bearish)$")
-    bias_confidence: int = Field(default=50, ge=0, le=100)
+    # These fields are audit/display metadata. Invalid model-authored values are
+    # normalized rather than allowed to block an otherwise executable plan.
+    bias_confidence: int = 50
     bias_reasoning: str = ""
     position_cap_pct: float = Field(default=80.0, ge=0, le=100)
     rules: PlanRules = Field(default_factory=PlanRules)
@@ -80,6 +82,27 @@ class PublishedPlan(BaseModel):
     cooldown: dict[str, Any] = Field(default_factory=dict)
     today_stopped_out: list[str] = Field(default_factory=list)
     emergency_tiers: dict[str, Any] = Field(default_factory=lambda: {"date": "", "tiers": {}})
+
+    @field_validator("bias_confidence", mode="before")
+    @classmethod
+    def normalize_confidence_metadata(cls, value: Any) -> int:
+        try:
+            parsed = int(float(value))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(100, parsed))
+
+    @field_validator("bias_reasoning", mode="before")
+    @classmethod
+    def normalize_reasoning_metadata(cls, value: Any) -> str:
+        return "" if value is None else str(value)
+
+    @field_validator("risk_report", mode="before")
+    @classmethod
+    def normalize_risk_report_metadata(cls, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        return {"unstructured": value}
 
 
 def normalize_published_plan(payload: dict[str, Any]) -> dict[str, Any]:

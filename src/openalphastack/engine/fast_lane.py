@@ -968,13 +968,9 @@ class FastLane:
                     already_holding = holdings.get("shares", 0) > 0
 
                     variant = self.plan.get_variant()
-                    min_conf = variant.get("signal_min_confidence", 65)
                     sig_pos_pct = variant.get("signal_position_pct", 0.075)
 
                     for sig in res.get("signals", []):
-                        if sig.get("confidence", 0) < min_conf:
-                            continue
-
                         rule_name = sig.get("rule", "")
                         action = sig.get("action", "alert")
                         q = quotes.get(code, {})

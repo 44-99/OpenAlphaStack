@@ -145,14 +145,10 @@ def validate_paper_plan(plan: dict[str, Any]) -> dict[str, Any]:
         total_position += max(position, 0)
         try:
             entry = float(candidate.get("entry_max", 0))
-            stop = float(candidate.get("stop_loss", 0) or 0)
-            stop_pct = float(candidate.get("stop_loss_pct", 0) or 0)
         except (TypeError, ValueError):
-            entry, stop, stop_pct = 0, 0, 0
+            entry = 0
         if entry <= 0:
             errors.append(f"{prefix}.entry_max must be positive")
-        if stop <= 0 and stop_pct >= 0:
-            errors.append(f"{prefix} must define stop_loss or a negative stop_loss_pct")
 
     if total_position > cap + 1e-9:
         errors.append("sum of candidate position_pct exceeds position_cap_pct")

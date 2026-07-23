@@ -15,6 +15,8 @@ validation, state, risk rules, backtests, and mechanical paper execution.
 6. Public engine modes are paper and backtest only. MCP mutations are paper-only; historical live runs remain read-only.
 7. Missing or stale plans keep the engine in observation mode; the engine must not invent a plan.
 8. The Dashboard is an observability surface, not an Agent terminal.
+9. The default research workflow uses one Codex Agent that composes domain Skills. Do not spawn or require subagents unless the user explicitly requests independent parallel work.
+10. Confidence, narrative reasoning, and model-authored risk reports are audit metadata, never execution gates.
 
 ## Safety and privacy
 

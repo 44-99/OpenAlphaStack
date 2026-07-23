@@ -23,13 +23,13 @@ def test_workflow_graph_model_serializes_edge_from_alias():
     graph = {
         "run_id": "paper_test",
         "nodes": [
-            {"id": "market_snapshot", "name": "市场快照", "enabled": True, "locked": False, "status": "success"},
-            {"id": "agent_research", "name": "自主 Agent 研判", "enabled": True, "locked": False, "status": "idle"},
+            {"id": "research", "name": "Research", "status": "success"},
+            {"id": "execution", "name": "Execution", "status": "idle"},
         ],
         "edges": [
             {
-                "from": "market_snapshot",
-                "to": "agent_research",
+                "from": "research",
+                "to": "execution",
                 "kind": "data",
                 "label": "Agent 任务上下文",
                 "refs": ["artifact.market.snapshot", "account.state", "rule.skills"],
@@ -40,7 +40,7 @@ def test_workflow_graph_model_serializes_edge_from_alias():
 
     payload = app_dashboard.WorkflowGraphModel.model_validate(graph).model_dump(by_alias=True)
 
-    assert payload["edges"][0]["from"] == "market_snapshot"
+    assert payload["edges"][0]["from"] == "research"
     assert "from_" not in payload["edges"][0]
 
 
@@ -363,6 +363,7 @@ def test_workflow_events_api_reads_active_run(tmp_path, monkeypatch):
 
     assert result["run_id"] == "paper_2026-06-04T09-30-00"
     assert result["events"][0]["node_id"] == "risk_validation"
+    assert result["events"][0]["stage_id"] == "research"
 
 
 def test_workflow_graph_api_returns_default_nodes(tmp_path, monkeypatch):
@@ -375,7 +376,7 @@ def test_workflow_graph_api_returns_default_nodes(tmp_path, monkeypatch):
     result = asyncio.run(app_dashboard.api_workflow_graph("paper_2026-06-04T09-30-00"))
 
     assert result["run_id"] == "paper_2026-06-04T09-30-00"
-    assert any(node["id"] == "risk_validation" for node in result["nodes"])
+    assert [node["id"] for node in result["nodes"]] == ["research", "execution", "evaluation"]
     assert result["edges"]
     assert result["is_alive"] is False
     assert result["run_status"] in {"stopped", "unknown"}
@@ -500,21 +501,6 @@ def test_kline_annotations_api_generates_when_missing(tmp_path, monkeypatch):
 
     assert result["annotations"][0]["label"] == "自动支撑"
     assert (run_dir / "kline_annotations" / "300913.json").exists()
-
-
-def test_workflow_node_rerun_queues_only_safe_nodes(tmp_path, monkeypatch):
-    output = tmp_path / "output"
-    run_dir = output / "paper_2026-06-04T09-30-00"
-    run_dir.mkdir(parents=True)
-    monkeypatch.setattr(app_dashboard, "OUTPUT_BASE", str(output))
-
-    accepted = asyncio.run(app_dashboard.api_workflow_node_rerun("paper_2026-06-04T09-30-00", "market_snapshot"))
-    blocked = asyncio.run(app_dashboard.api_workflow_node_rerun("paper_2026-06-04T09-30-00", "intraday_event_stream"))
-
-    assert accepted.status_code == 202
-    assert (run_dir / app_dashboard.RERUN_REQUESTS_FILE).exists()
-    assert isinstance(blocked, JSONResponse)
-    assert blocked.status_code == 409
 
 
 def test_workflow_artifact_rejects_path_traversal(tmp_path, monkeypatch):

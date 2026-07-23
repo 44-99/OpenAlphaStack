@@ -13,8 +13,10 @@ of execution time. Codex tasks and scheduled prompts compose them as needed.
 ## Scheduled-task composition
 
 A premarket task normally composes `market-analyzer`, `stock-screener`, and
-`stock-analyzer`, then uses the plan MCP tools directly to validate and save a
-draft. Publication must be explicitly requested and remains paper-only.
+`stock-analyzer` inside one Codex Agent. These are instruction modules, not
+subagents. The Agent publishes an automated paper plan with one
+`publish_paper_plan` call; validation is internal to publication. Draft and
+validation-preview tools are reserved for explicit manual-review workflows.
 
 A postclose task reads the run snapshot and immutable ledger directly, then may
 invoke `market-analyzer` or `stock-analyzer` for attribution. Strategy and cost

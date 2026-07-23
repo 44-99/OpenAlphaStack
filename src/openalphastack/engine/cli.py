@@ -137,6 +137,9 @@ def start_daemon(args: argparse.Namespace) -> dict:
             return _existing_run_info(existing)
 
     run_id = args.resume or _daemon_run_id(args.mode)
+    run_dir = _output_base() / run_id
+    previous_state = _read_json(run_dir / "state.json")
+    previous_pid = (previous_state.get("engine_meta") or {}).get("process_id")
     log_prefix = _logs_dir() / run_id
     out_path = log_prefix.with_suffix(".out.log")
     err_path = log_prefix.with_suffix(".err.log")
@@ -169,15 +172,25 @@ def start_daemon(args: argparse.Namespace) -> dict:
         out_f.close()
         err_f.close()
 
-    # Give the child a brief chance to create state.json, but do not wait on it.
-    run_dir = _output_base() / run_id
+    # On Windows the console-script launcher may exit after spawning the real
+    # Python process. Prefer the PID persisted by the engine itself. For resume,
+    # wait until the old state PID changes instead of accepting stale metadata.
+    engine_pid = proc.pid
     for _ in range(10):
-        if (run_dir / "state.json").exists():
+        state = _read_json(run_dir / "state.json")
+        candidate = (state.get("engine_meta") or {}).get("process_id")
+        try:
+            candidate_pid = int(candidate)
+        except (TypeError, ValueError):
+            candidate_pid = 0
+        if candidate_pid > 0 and (candidate_pid != previous_pid or candidate_pid == proc.pid):
+            engine_pid = candidate_pid
             break
         time.sleep(0.2)
 
     return {
-        "pid": proc.pid,
+        "pid": engine_pid,
+        "launcher_pid": proc.pid,
         "run_id": run_id,
         "run_dir": str(run_dir),
         "stdout": str(out_path),

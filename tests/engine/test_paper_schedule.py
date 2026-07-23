@@ -77,7 +77,7 @@ def test_new_paper_run_without_plan_is_not_actionable(output_base):
     assert "pre-market plan" in meta["observation_reason"]
 
 
-def test_generated_plan_makes_paper_run_actionable(output_base):
+def test_reasoning_only_plan_remains_observation_only(output_base):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
     engine.clock = FakeClock(datetime(2026, 5, 13, 8, 30))
     engine.plan.set_sim_now(datetime(2026, 5, 13, 8, 30))
@@ -89,13 +89,13 @@ def test_generated_plan_makes_paper_run_actionable(output_base):
     )
     engine.plan.mark_premarket_plan_generated(datetime(2026, 5, 13, 8, 30))
 
-    assert engine._has_actionable_plan_for_today()
+    assert not engine._has_actionable_plan_for_today()
 
-    engine._set_observation_mode(False)
+    engine._set_observation_mode(True, "no executable candidates or holding adjustments")
     meta = engine.state.load()["engine_meta"]
 
-    assert meta["observation_mode"] is False
-    assert meta["observation_reason"] == ""
+    assert meta["observation_mode"] is True
+    assert meta["observation_reason"] == "no executable candidates or holding adjustments"
 
 
 def test_stale_plan_does_not_make_resumed_paper_run_actionable(output_base):
@@ -147,7 +147,7 @@ def test_metadata_update_does_not_make_stale_plan_actionable(output_base):
     assert not engine._has_actionable_plan_for_today()
 
 
-def test_today_plan_remains_actionable_after_metadata_update(output_base):
+def test_today_metadata_update_does_not_create_an_action(output_base):
     engine = PaperEngine(mode="paper", capital=100000, universe=["600036"])
     engine.clock = FakeClock(datetime(2026, 5, 19, 8, 30))
     engine.plan.set_sim_now(datetime(2026, 5, 19, 8, 30))
@@ -162,7 +162,7 @@ def test_today_plan_remains_actionable_after_metadata_update(output_base):
     engine.plan.mark_stopped_out("600036", cooldown_hours=24)
 
     assert engine.plan.load()["updated_by"] == "stop_cooldown"
-    assert engine._has_actionable_plan_for_today()
+    assert not engine._has_actionable_plan_for_today()
 
 
 def test_non_trading_day_premarket_sends_skip_notice(output_base, monkeypatch):

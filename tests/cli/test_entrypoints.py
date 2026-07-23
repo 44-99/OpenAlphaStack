@@ -178,6 +178,12 @@ def test_engine_cli_daemon_starts_detached_process(monkeypatch, workspace_tmp, c
 
     def fake_popen(cmd, **kwargs):
         popen_calls.append((cmd, kwargs))
+        run_dir = workspace_tmp / "output" / "paper_test_run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "state.json").write_text(
+            json.dumps({"engine_meta": {"process_id": 54321, "status": "observation"}}),
+            encoding="utf-8",
+        )
         return FakeProcess()
 
     (workspace_tmp / "output").mkdir()
@@ -198,7 +204,8 @@ def test_engine_cli_daemon_starts_detached_process(monkeypatch, workspace_tmp, c
     engine_cli.main()
 
     out = json.loads(capsys.readouterr().out)
-    assert out["pid"] == 12345
+    assert out["pid"] == 54321
+    assert out["launcher_pid"] == 12345
     assert out["run_id"] == "paper_test_run"
     assert out["stdout"].endswith("paper_test_run.out.log")
     assert out["stderr"].endswith("paper_test_run.err.log")

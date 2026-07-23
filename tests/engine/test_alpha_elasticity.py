@@ -86,16 +86,17 @@ def test_fast_lane_records_only_key_workflow_ticks():
     assert kwargs["output_payload"]["events"][0]["event"] == "rule_signal_buy"
 
 
-def test_plan_normalizes_strategy_type_defaults_to_automatic(alpha_dir):
+def test_plan_uses_explicit_strategy_type_and_ignores_reasoning_keywords(alpha_dir):
     _state, plan, _clock, _ledger, _execution = _engine_parts(
         alpha_dir, datetime(2025, 3, 14, 9, 20)
     )
 
     plan.set_candidates([
         _candidate("300001", source="B"),
-        _candidate("600001", reasoning="高股息红利银行，低波动防御仓"),
-        _candidate("300002", reasoning="缩量回踩 MA10 支撑，趋势仍在"),
+        _candidate("600001", strategy_type="defensive", reasoning="任意说明文字"),
+        _candidate("300002", strategy_type="pullback", reasoning="任意说明文字"),
         _candidate("600999", reasoning="信息不足"),
+        _candidate("600888", reasoning="高股息红利银行，低波动防御仓"),
     ])
 
     assert plan.get_candidate("300001")["strategy_type"] == "breakout"
@@ -104,6 +105,7 @@ def test_plan_normalizes_strategy_type_defaults_to_automatic(alpha_dir):
     assert plan.get_candidate("300002")["strategy_type"] == "pullback"
     assert plan.get_candidate("600999")["strategy_type"] == "breakout"
     assert plan.get_candidate("600999")["confirm_after"] == "09:45"
+    assert plan.get_candidate("600888")["strategy_type"] == "breakout"
 
 
 def test_explicit_watch_only_is_preserved(alpha_dir):

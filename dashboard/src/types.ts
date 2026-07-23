@@ -200,6 +200,7 @@ export interface WorkflowEvent {
   run_id: string;
   phase: string;
   node_id: string;
+  stage_id?: 'research' | 'execution' | 'evaluation' | '';
   node_name: string;
   status: string;
   started_at?: string;
@@ -250,8 +251,6 @@ export interface AgentRunTimeline {
 export interface WorkflowGraphNode {
   id: string;
   name: string;
-  enabled: boolean;
-  locked: boolean;
   status: string;
   summary?: string;
   last_event_id?: string;
@@ -288,16 +287,4 @@ export interface WorkflowGraph {
   is_trading_day?: boolean;
   market_status?: 'trading' | 'closed' | 'stale';
   market_message?: string;
-}
-
-export interface WorkflowConfigNode {
-  enabled: boolean;
-  locked: boolean;
-  params: Record<string, number | string | boolean>;
-}
-
-export interface WorkflowConfig {
-  version: number;
-  nodes: Record<string, WorkflowConfigNode>;
-  updated_at?: string;
 }
