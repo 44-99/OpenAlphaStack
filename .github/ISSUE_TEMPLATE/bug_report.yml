@@ -1,0 +1,79 @@
+name: Bug report
+description: 报告可复现的安装、MCP、Skill、引擎或 Dashboard 问题
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请不要公开提交，请阅读 SECURITY.md。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题概述
+      description: 简洁说明发生了什么，以及它阻断了哪个工作流。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      description: 请从干净状态开始，列出可复制的命令或提示词。
+      placeholder: |
+        1. git clone ...
+        2. python -m pip install ...
+        3. openalphastack ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为与完整错误
+      description: 粘贴完整错误文本；提交前删除 token、路径中的隐私信息和账户数据。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: |
+        OpenAlphaStack commit/version:
+        OS:
+        Python:
+        Node.js / npm:
+        Codex surface/version:
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响区域
+      options:
+        - 安装 / doctor
+        - Codex Plugin / Skill
+        - MCP 工具或协议
+        - Dashboard
+        - 模拟盘引擎
+        - 回测
+        - 文档
+        - 其他
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同问题。
+          required: true
+        - label: 我没有附带 secret、真实账户信息或私密消息。
+          required: true
+        - label: 这不是未公开的安全漏洞。
+          required: true

@@ -16,7 +16,7 @@
 [![MCP](https://img.shields.io/badge/MCP-local--first-1f9d8a.svg)](.mcp.json)
 [![GitHub stars](https://img.shields.io/github/stars/44-99/OpenAlphaStack?style=flat&logo=github)](https://github.com/44-99/OpenAlphaStack/stargazers)
 
-[Website](https://44-99.github.io/OpenAlphaStack/en.html) · [Quick start](#quick-start) · [Architecture](docs/architecture.md) · [Skills](docs/skills.md) · [Roadmap](docs/roadmap.md)
+[Website](https://44-99.github.io/OpenAlphaStack/en.html) · [Getting started](docs/getting-started.md) · [Architecture](docs/architecture.md) · [Skills](docs/skills.md) · [Roadmap](docs/roadmap.md)
 
 </div>
 
@@ -77,23 +77,28 @@ Domain Skills ───────► typed local MCP
 
 ## Quick start
 
-Requirements: Python 3.10+, Node.js 20+, and Codex Desktop.
+Requirements: Python 3.10+, Node.js 20.19+, and Codex Desktop.
 
 ```powershell
 git clone https://github.com/44-99/OpenAlphaStack.git
 cd OpenAlphaStack
-pip install -e ".[all]"
-npm install
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[all]"
+npm ci
 npm run dashboard:build
 openalphastack doctor
+codex plugin marketplace add .
+codex plugin add open-alpha-stack@openalphastack-local
 openalphastack app start
 ```
 
-Open `http://127.0.0.1:8800/dashboard`, then open the repository in Codex
-Desktop and invoke one of the packaged Skills.
+Restart Codex Desktop and start a new task in this repository before invoking a
+packaged Skill. Open `http://127.0.0.1:8800/dashboard` for the local Dashboard.
 
 For the full setup, safety contract, engine commands and verification workflow,
-use the canonical [Simplified Chinese README](README.md).
+use the [Simplified Chinese getting-started guide](docs/getting-started.md) and
+canonical [Simplified Chinese README](README.md).
 
 Reusable screenshots, the demo GIF, and publication boundaries are documented
 in the [media kit](docs/media-kit.md).

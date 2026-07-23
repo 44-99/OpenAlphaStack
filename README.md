@@ -16,7 +16,7 @@
 [![MCP](https://img.shields.io/badge/MCP-local--first-1f9d8a.svg)](.mcp.json)
 [![GitHub stars](https://img.shields.io/github/stars/44-99/OpenAlphaStack?style=flat&logo=github)](https://github.com/44-99/OpenAlphaStack/stargazers)
 
-[官网](https://44-99.github.io/OpenAlphaStack/) · [快速开始](#快速开始) · [架构](docs/architecture.md) · [Skills](docs/skills.md) · [路线图](docs/roadmap.md)
+[官网](https://44-99.github.io/OpenAlphaStack/) · [首次使用](docs/getting-started.md) · [架构](docs/architecture.md) · [Skills](docs/skills.md) · [路线图](docs/roadmap.md)
 
 </div>
 
@@ -102,25 +102,37 @@ Codex 任务或定时提示词
 环境要求：
 
 - Python 3.10+
-- Node.js 20+
+- Node.js 20.19+
 - Codex Desktop
 
 ```powershell
 git clone https://github.com/44-99/OpenAlphaStack.git
 cd OpenAlphaStack
-pip install -e .
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
 openalphastack doctor
 ```
+
+预期第一行是 `OpenAlphaStack doctor: PASS`。然后安装仓库级本地插件：
+
+```powershell
+codex plugin marketplace add .
+codex plugin add open-alpha-stack@openalphastack-local
+```
+
+重启 Codex Desktop，并新建一个以本仓库为工作目录的任务。插件安装后的 Skills
+和 MCP 工具只保证在新任务中重新发现。
 
 基础安装包含 Codex 插件、MCP 契约和离线 Demo。按需安装功能面：
 
 ```powershell
-pip install -e ".[market]"             # AkShare 行情数据源
-pip install -e ".[engine]"             # 模拟盘/回测 Parquet 运行时
-pip install -e ".[dashboard]"          # FastAPI Dashboard 与完整股票目录搜索
-pip install -e ".[all]"                # 完整本地开发环境
+python -m pip install -e ".[market]"    # AkShare 行情数据源
+python -m pip install -e ".[engine]"    # 模拟盘/回测 Parquet 运行时
+python -m pip install -e ".[dashboard]" # FastAPI Dashboard 与完整股票目录搜索
+python -m pip install -e ".[all]"       # 完整本地开发环境
 
-npm install
+npm ci
 npm run dashboard:build
 openalphastack doctor
 openalphastack app start
@@ -129,7 +141,7 @@ openalphastack app start
 打开 `http://127.0.0.1:8800/dashboard`。Dashboard 支持按六位代码、中文名称、
 中文名称中的任意连续字符和拼音首字母查找沪深 A 股。
 
-然后在 Codex Desktop 中打开本仓库并尝试：
+然后在新建的 Codex Desktop 任务中尝试：
 
 ```text
 使用 $market-analyzer 分析今天的 A 股市场，引用实际使用的 MCP 数据，
@@ -150,6 +162,9 @@ Skill → MCP 路径：
 `read_demo_dataset` 是只读且确定性的 MCP 工具。Skills 不得把 Demo 数据生成的
 数值发布为模拟交易计划。Demo 覆盖市场概览、筛选、行情、技术面、基本面、
 新闻和基准回测。
+
+完整的 Windows/macOS/Linux 步骤、预期输出、真实计时与常见错误见
+[首次使用指南](docs/getting-started.md)。
 
 `.codex-plugin/plugin.json` 负责发现 Skills，`.mcp.json` 注册 stdio 服务。安装
 Python 包并在 Codex 中打开插件后，应能看到 `open-alpha-stack` MCP 工具。
@@ -273,22 +288,27 @@ openalphastack engine stop <paper_run_id>
 
 - [静态官网](https://44-99.github.io/OpenAlphaStack/)
 - [宣传素材与安全表述](docs/media-kit.md)
+- [首次使用指南](docs/getting-started.md)
 - [架构](docs/architecture.md)
 - [路线图](docs/roadmap.md)
 - [Skills](docs/skills.md)
 - [飞书通知](docs/feishu-bot-menu.md)
+- [Changelog](CHANGELOG.md)
+- [v0.1.0 Release Notes](docs/releases/v0.1.0.md)
 - [English discovery page](README_EN.md)
 
 ## 贡献
 
-欢迎提交 Issue 和聚焦的 Pull Request。修改前请阅读
-[AGENT_GUIDE.md](AGENT_GUIDE.md)，保持仅模拟盘的 MCP 边界，并为影响校验、
-状态、风险或幂等性的行为补充测试。
+欢迎提交 Issue 和聚焦的 Pull Request。请先阅读
+[贡献指南](CONTRIBUTING.md) 与 [AGENT_GUIDE.md](AGENT_GUIDE.md)，保持仅模拟盘的
+MCP 边界，并为影响校验、状态、风险或幂等性的行为补充测试。
 
 ## 安全
 
 Dashboard 默认只监听本机。未增加认证、TLS、CSRF 防护和明确网络策略前，
 不要直接暴露到局域网或互联网。
+
+未公开漏洞请按 [安全策略](SECURITY.md) 私下报告，不要创建公开 Issue。
 
 ## 许可证
 

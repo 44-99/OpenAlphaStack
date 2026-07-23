@@ -41,5 +41,5 @@ npm run dashboard:test
 npm run dashboard:build
 python -m pytest -q
 python -m compileall -q src\openalphastack
-python C:\Users\Admin\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\market-analyzer
+python -X utf8 C:\Users\Admin\.codex\skills\.system\skill-creator\scripts\quick_validate.py skills\market-analyzer
 ```

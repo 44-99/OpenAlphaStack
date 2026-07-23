@@ -1,0 +1,51 @@
+name: Feature request
+description: 提议符合 auditable、deterministic、paper-only 边界的功能
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 请先描述用户场景和当前阻碍，不要只给出实现方案。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 期望结果
+      description: 什么可观察结果能说明功能已经完成？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 如涉及 Skill、MCP、Python 引擎或 Dashboard，请说明应放在哪一层。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 示例或验证方式
+      description: 可提供提示词、输入/输出、界面草图或验收命令。
+    validations:
+      required: false
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: 架构边界
+      options:
+        - label: 该功能不要求真实下单或连接真实券商。
+          required: true
+        - label: 该功能不会让 Python 应用启动 Agent/LLM 子进程。
+          required: true
+        - label: 我已说明它属于 Skill、MCP、确定性引擎或 Dashboard 中的哪一层。
+          required: true

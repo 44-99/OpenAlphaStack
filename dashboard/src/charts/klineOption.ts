@@ -420,7 +420,7 @@ export function buildKlineOption(
     ],
     tooltip: {
       trigger: 'item',
-      triggerOn: 'mousemove|click',
+      triggerOn: 'mousemove|click|mousewheel',
       confine: true,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
