@@ -311,7 +311,7 @@ openalphastack engine stop <paper_run_id>
 ## 贡献
 
 欢迎提交 Issue 和聚焦的 Pull Request。请先阅读
-[贡献指南](.github/CONTRIBUTING.md) 与 [Agent 开发指南](docs/agent-guide.md)，保持仅模拟盘的
+[贡献指南](.github/CONTRIBUTING.md) 与 [Agent 开发规则](AGENTS.md)，保持仅模拟盘的
 MCP 边界，并为影响校验、状态、风险或幂等性的行为补充测试。
 
 ## 安全

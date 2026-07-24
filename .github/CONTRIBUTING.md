@@ -3,7 +3,7 @@
 感谢你帮助改进 OpenAlphaStack。项目欢迎可复现的 Bug 报告、边界清晰的功能建议
 和聚焦的 Pull Request。
 
-开始前请先阅读 [Agent 开发指南](../docs/agent-guide.md)。以下边界不能通过普通功能 PR
+开始前请先阅读 [Agent 开发规则](../AGENTS.md)。以下边界不能通过普通功能 PR
 绕过：应用不启动 Agent/LLM 子进程；Agent 工作流属于 `skills/`；MCP 工具必须
 有类型且范围受限；Python 引擎保持确定性；公开执行只允许回测和模拟盘。
 

@@ -24,13 +24,14 @@ def test_repository_metadata_uses_curated_locations():
         ROOT / "deploy" / "Dockerfile.public",
         ROOT / "deploy" / "docker-compose.yml",
         ROOT / "deploy" / "requirements.txt",
-        ROOT / "docs" / "agent-guide.md",
+        ROOT / "AGENTS.md",
         ROOT / "docs" / "CHANGELOG.md",
         ROOT / "docs" / "README_EN.md",
         ROOT / "docs" / "site" / "index.html",
     )
     legacy_root_entries = (
         ROOT / "AGENT_GUIDE.md",
+        ROOT / "docs" / "agent-guide.md",
         ROOT / "CHANGELOG.md",
         ROOT / "CONTRIBUTING.md",
         ROOT / "Dockerfile",
@@ -44,6 +45,12 @@ def test_repository_metadata_uses_curated_locations():
 
     assert all(path.exists() for path in canonical)
     assert not any(path.exists() for path in legacy_root_entries)
+
+    agent_instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "## Architecture boundaries" in agent_instructions
+    assert "## Safety and privacy" in agent_instructions
+    assert "## Development workflow" in agent_instructions
+    assert "docs/agent-guide.md" not in agent_instructions
 
 
 def test_local_markdown_links_resolve():
