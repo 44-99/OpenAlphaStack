@@ -78,7 +78,7 @@ def test_unified_public_mcp_routes_to_public_server(monkeypatch):
 
 
 def test_legacy_root_launchers_are_removed():
-    dockerfile = (paths.PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (paths.PROJECT_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
 
     assert not (paths.PROJECT_ROOT / "start_bot.bat").exists()
     assert 'CMD ["openalphastack", "app", "start"]' in dockerfile

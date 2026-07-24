@@ -1,14 +1,16 @@
 services:
   openalphastack:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     container_name: openalphastack
     restart: unless-stopped
     ports:
       - "127.0.0.1:8800:8800"
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     env_file:
-      - .env
+      - ../.env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     logging:

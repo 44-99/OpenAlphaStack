@@ -62,7 +62,7 @@ python -m pytest -q tests/contracts/test_public_mcp.py
 也可构建独立镜像：
 
 ```powershell
-docker build -f Dockerfile.public -t openalphastack-public-mcp .
+docker build -f deploy/Dockerfile.public -t openalphastack-public-mcp .
 docker run --rm -p 8000:8000 openalphastack-public-mcp
 ```
 

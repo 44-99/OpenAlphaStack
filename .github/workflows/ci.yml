@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: |
+            pyproject.toml
+            deploy/requirements.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -27,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r deploy/requirements.txt
           pip install -e .
           pip install pytest
 
@@ -96,7 +99,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.public
+          file: deploy/Dockerfile.public
           push: false
           tags: openalphastack-public-mcp:ci
           cache-from: type=gha,scope=public-mcp

@@ -3,7 +3,7 @@
 感谢你帮助改进 OpenAlphaStack。项目欢迎可复现的 Bug 报告、边界清晰的功能建议
 和聚焦的 Pull Request。
 
-开始前请先阅读 [AGENT_GUIDE.md](AGENT_GUIDE.md)。以下边界不能通过普通功能 PR
+开始前请先阅读 [Agent 开发指南](../docs/agent-guide.md)。以下边界不能通过普通功能 PR
 绕过：应用不启动 Agent/LLM 子进程；Agent 工作流属于 `skills/`；MCP 工具必须
 有类型且范围受限；Python 引擎保持确定性；公开执行只允许回测和模拟盘。
 
@@ -11,7 +11,7 @@
 
 - Bug 请使用 Bug report 模板，并提供最小复现、完整错误文本和环境版本。
 - 功能建议请先说明用户问题，再说明方案；涉及实盘下单的请求不在项目范围内。
-- 安全问题不要提交公开 Issue，请按 [SECURITY.md](SECURITY.md) 私下报告。
+- 安全问题不要提交公开 Issue，请按 [安全策略](SECURITY.md) 私下报告。
 
 ## 本地开发环境
 
@@ -44,7 +44,7 @@ openalphastack doctor
 ```
 
 预期第一行是 `OpenAlphaStack doctor: PASS`。完整首次使用流程见
-[docs/getting-started.md](docs/getting-started.md)。
+[首次使用指南](../docs/getting-started.md)。
 
 ## 修改原则
 
@@ -78,7 +78,7 @@ npm audit
 
 ## Pull Request 清单
 
-- [ ] 修改符合 `AGENT_GUIDE.md` 和 paper-only 边界。
+- [ ] 修改符合 Agent 开发指南和 paper-only 边界。
 - [ ] 新行为有测试或可复现的验证证据。
 - [ ] 文档、示例和预期输出已同步。
 - [ ] 没有提交 secret、运行数据或无关文件。

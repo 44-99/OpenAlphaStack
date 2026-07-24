@@ -3,26 +3,26 @@
 <h1>OpenAlphaStack</h1>
 
 <p>
-  <a href="README.md">简体中文</a> ·
+  <a href="../README.md">简体中文</a> ·
   <a href="README_EN.md">English</a>
 </p>
 
 <p><strong>An open-source Codex plugin stack for auditable A-share research, backtesting, and paper trading.</strong></p>
 
 [![CI](https://github.com/44-99/OpenAlphaStack/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/44-99/OpenAlphaStack/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2563eb.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab.svg?logo=python&logoColor=white)](pyproject.toml)
-[![Codex Plugin](https://img.shields.io/badge/Codex-plugin-111827.svg)](.codex-plugin/plugin.json)
-[![MCP](https://img.shields.io/badge/MCP-local--first-1f9d8a.svg)](.mcp.json)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2563eb.svg)](../LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab.svg?logo=python&logoColor=white)](../pyproject.toml)
+[![Codex Plugin](https://img.shields.io/badge/Codex-plugin-111827.svg)](../.codex-plugin/plugin.json)
+[![MCP](https://img.shields.io/badge/MCP-local--first-1f9d8a.svg)](../.mcp.json)
 [![GitHub stars](https://img.shields.io/github/stars/44-99/OpenAlphaStack?style=flat&logo=github)](https://github.com/44-99/OpenAlphaStack/stargazers)
 
-[Website](https://44-99.github.io/OpenAlphaStack/en.html) · [Getting started](docs/getting-started.md) · [Architecture](docs/architecture.md) · [Skills](docs/skills.md) · [Roadmap](docs/roadmap.md)
+[Website](https://44-99.github.io/OpenAlphaStack/en.html) · [Getting started](getting-started.md) · [Architecture](architecture.md) · [Skills](skills.md) · [Roadmap](roadmap.md)
 
 </div>
 
 <p align="center">
   <a href="https://44-99.github.io/OpenAlphaStack/en.html">
-    <img src="docs/assets/openalphastack-social-preview.png" alt="OpenAlphaStack: Codex MCP and Skills for auditable A-share research" width="100%">
+    <img src="assets/openalphastack-social-preview-en.png" alt="OpenAlphaStack: Codex MCP and Skills for auditable A-share research" width="100%">
   </a>
 </p>
 
@@ -41,7 +41,7 @@ China's A-share market, and MCP/Codex tool builders evaluating the architecture.
 ## See it in action
 
 <p align="center">
-  <img src="docs/assets/openalphastack-demo.gif" alt="OpenAlphaStack stock search, K-line dashboard and three-stage workflow demo" width="960">
+  <img src="assets/openalphastack-demo.gif" alt="OpenAlphaStack stock search, K-line dashboard and three-stage workflow demo" width="960">
 </p>
 
 The recording comes from the local paper-trading Dashboard. The public
@@ -52,7 +52,7 @@ GitHub Pages cannot execute MCP requests. A separate stateless Streamable HTTP
 entrypoint is available for deployment to an HTTPS container host. It exposes
 only read-only market research, deterministic calculations, and synthetic demo
 tools; it excludes local runs, ledgers, plan publication, broker access, files,
-and shell execution. See the [public MCP deployment guide](docs/public-mcp.md).
+and shell execution. See the [public MCP deployment guide](public-mcp.md).
 
 ## What it provides
 
@@ -103,11 +103,11 @@ Restart Codex Desktop and start a new task in this repository before invoking a
 packaged Skill. Open `http://127.0.0.1:8800/dashboard` for the local Dashboard.
 
 For the full setup, safety contract, engine commands and verification workflow,
-use the [Simplified Chinese getting-started guide](docs/getting-started.md) and
-canonical [Simplified Chinese README](README.md).
+use the [Simplified Chinese getting-started guide](getting-started.md) and
+canonical [Simplified Chinese README](../README.md).
 
 Reusable screenshots, the demo GIF, and publication boundaries are documented
-in the [media kit](docs/media-kit.md).
+in the [media kit](media-kit.md).
 
 ## License
 

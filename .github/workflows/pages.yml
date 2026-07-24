@@ -4,7 +4,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'site/**'
+      - 'docs/site/**'
       - 'docs/assets/openalphastack-*.png'
       - 'docs/assets/openalphastack-*.gif'
       - 'docs/assets/dashboard-search-results.png'
@@ -34,7 +34,7 @@ jobs:
       - name: Assemble static site
         run: |
           mkdir -p _site/assets
-          cp -R site/. _site/
+          cp -R docs/site/. _site/
           cp docs/assets/openalphastack-demo.gif _site/assets/
           cp docs/assets/openalphastack-social-preview.png _site/assets/
           cp docs/assets/openalphastack-social-preview-en.png _site/assets/

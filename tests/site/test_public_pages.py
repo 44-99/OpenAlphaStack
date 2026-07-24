@@ -8,7 +8,7 @@ from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SITE = ROOT / "site"
+SITE = ROOT / "docs" / "site"
 PUBLIC_PAGES = (
     "index.html",
     "en.html",

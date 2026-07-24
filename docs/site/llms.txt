@@ -23,7 +23,7 @@ English discovery page: https://44-99.github.io/OpenAlphaStack/en.html
 ## Primary documentation
 
 - README: https://github.com/44-99/OpenAlphaStack/blob/master/README.md
-- English README: https://github.com/44-99/OpenAlphaStack/blob/master/README_EN.md
+- English README: https://github.com/44-99/OpenAlphaStack/blob/master/docs/README_EN.md
 - Architecture: https://github.com/44-99/OpenAlphaStack/blob/master/docs/architecture.md
 - Skills: https://github.com/44-99/OpenAlphaStack/blob/master/docs/skills.md
 - Roadmap: https://github.com/44-99/OpenAlphaStack/blob/master/docs/roadmap.md
